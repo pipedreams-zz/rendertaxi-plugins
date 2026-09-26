@@ -32,16 +32,26 @@ xattr -dr com.apple.quarantine "/Applications/Graphisoft/Archicad 28/Add-Ons/ren
 ### Windows (Vorschau)
 
 1. Archicad beenden.
-2. `win/rendertaxi.apx` nach `C:\Program Files\Graphisoft\Archicad 28\Add-Ons\`
-   kopieren oder unter **Optionen › Add-On-Manager** hinzufügen.
-3. Archicad starten.
+2. **Download freigeben:** Die `.apx` ist nicht signiert. Vor dem Entpacken
+   Rechtsklick auf die Zip › **Eigenschaften** › unten **Zulassen** anhaken ›
+   OK. Sonst trägt die entpackte Datei die Download-Markierung, und Windows
+   (SmartScreen) oder Archicad können das Laden verweigern. Nachträglich geht
+   dasselbe an der `.apx` selbst oder in PowerShell mit
+   `Unblock-File -Path "…\rendertaxi.apx"`.
+3. `win/rendertaxi.apx` nach `C:\Program Files\Graphisoft\Archicad 28\Add-Ons\`
+   kopieren (Windows fragt nach Administratorrechten) oder die Datei an einem
+   beliebigen Ort ablegen und unter **Optionen › Add-On-Manager** hinzufügen.
+4. Archicad starten. Im Menü erscheint **rendertaxi.ai**.
 
-**Die Windows-Fassung ist eine Vorschau.** Sie wird automatisch gebaut, ist
-aber noch nicht mit Archicad unter Windows erprobt. Die Anmeldung ist unter
-Windows noch nicht möglich, weil der sichere Schlüsselspeicher (unter macOS
-die Keychain) für Windows noch fehlt; die Palette meldet dann
-„Keine Keychain verfügbar — Anmeldung nicht möglich.“ Für die Arbeit mit
-rendertaxi.ai bitte vorerst die macOS-Fassung benutzen.
+Die Anmeldung läuft wie unter macOS über den Browser (siehe
+[Verbinden](#verbinden)); das Token liegt unter Windows in der
+**Anmeldeinformationsverwaltung** (Credential Manager) unter
+„Windows-Anmeldeinformationen › Generische Anmeldeinformationen“ als
+`rendertaxi/archicad/<Serveradresse>`.
+
+**Die Windows-Fassung ist eine Vorschau.** Sie ist vollständig umgesetzt und
+automatisch geprüft, der Lauf mit Archicad unter Windows steht aber noch aus.
+Rückmeldungen bitte als Issue in diesem Repository.
 
 ### Aktualisieren und entfernen
 
@@ -60,7 +70,8 @@ starten.
    danach „Angemeldet als …“.
 
 Das Add-on hat **kein Passwortfeld** und sieht nie Zugangsdaten; es erhält nur
-ein widerrufbares Token und legt es in der macOS-Keychain ab. Angemeldete
+ein widerrufbares Token und legt es im Schlüsselspeicher des Systems ab (macOS:
+Keychain, Windows: Anmeldeinformationsverwaltung). Angemeldete
 Geräte lassen sich in der Webanwendung unter **Verbundene Geräte** (`/geraete`) einsehen und
 abmelden.
 
@@ -107,7 +118,8 @@ unter **Verbundene Geräte** abmelden, etwa wenn der Rechner nicht mehr zugängl
 
 ## Hinweise
 
-- Einstellungen und angefangene Übernahmen liegen unter
+- Einstellungen und angefangene Übernahmen liegen unter macOS in
   `~/Library/Application Support/rendertaxi/archicad/`, Meldungen des Add-ons
-  unter `~/Library/Logs/rendertaxi/`. Beide enthalten kein Token.
+  in `~/Library/Logs/rendertaxi/`. Unter Windows liegt beides in
+  `%LOCALAPPDATA%\rendertaxi\archicad\`. Keines davon enthält ein Token.
 - Das Add-on ist für Archicad 28 gebaut; andere Hauptversionen laden es nicht.

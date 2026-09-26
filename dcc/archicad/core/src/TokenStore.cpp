@@ -125,6 +125,17 @@ private:
 
 } // namespace
 
+std::unique_ptr<TokenStore> MakeSystemTokenStore ()
+{
+#if defined (__APPLE__)
+	return MakeKeychainTokenStore ();
+#elif defined (_WIN32)
+	return MakeCredentialManagerTokenStore ();
+#else
+	return nullptr;
+#endif
+}
+
 std::unique_ptr<TokenStore> MakeMemoryTokenStore ()
 {
 	return std::unique_ptr<TokenStore> (new MemoryTokenStore ());

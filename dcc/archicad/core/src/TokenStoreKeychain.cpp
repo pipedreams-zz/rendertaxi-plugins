@@ -134,18 +134,4 @@ std::unique_ptr<TokenStore> MakeKeychainTokenStore ()
 
 } // namespace rtx
 
-#else
-
-namespace rtx {
-
-std::unique_ptr<TokenStore> MakeKeychainTokenStore ()
-{
-	// Windows bekäme hier den Credential Manager. Issue #20 nennt den
-	// Windows-Build ausdrücklich als Nicht-Ziel; eine Dateifassung wäre die
-	// Klartextablage, die Festlegung 4 verbietet.
-	return nullptr;
-}
-
-} // namespace rtx
-
 #endif

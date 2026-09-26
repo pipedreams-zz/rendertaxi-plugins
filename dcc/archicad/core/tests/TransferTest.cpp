@@ -14,6 +14,7 @@
 #include "rtx/CaptureTransfer.hpp"
 #include "rtx/DeviceLogin.hpp"
 #include "rtx/Ids.hpp"
+#include "rtx/Platform.hpp"
 #include "rtx/Sha256.hpp"
 #include "rtx/TokenStore.hpp"
 
@@ -882,7 +883,7 @@ RTX_TEST (VorgangOhneLokaleDateiWirdVorDerNeuenAufnahmeGeraeumt)
 	const std::string manifestPath = pending.directory + "/capture-manifest.json";
 	std::string manifestText;
 	RTX_CHECK (ReadTextFile (manifestPath, manifestText));
-	std::remove (manifestPath.c_str ());
+	RemoveFile (manifestPath);
 	RTX_CHECK (!HasLocalMaterial (pending));
 	RTX_CHECK (WriteTextFile (manifestPath, manifestText));
 	RTX_CHECK (HasLocalMaterial (pending));
@@ -891,7 +892,7 @@ RTX_TEST (VorgangOhneLokaleDateiWirdVorDerNeuenAufnahmeGeraeumt)
 	RTX_CHECK (!HasLocalMaterial (pending));
 	RTX_CHECK (WriteTextFile (manifestPath, manifestText));
 	const std::string imagePath = pending.directory + "/viewport.png";
-	std::remove (imagePath.c_str ());
+	RemoveFile (imagePath);
 	RTX_CHECK (!HasLocalMaterial (pending));
 
 	// Geräumt wird lokal, sofort und ohne Netz: Eintrag und Verzeichnis.

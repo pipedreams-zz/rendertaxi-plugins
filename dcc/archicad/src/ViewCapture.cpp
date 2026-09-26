@@ -9,6 +9,7 @@
 #include "HostInfo.hpp"
 #include "rtx/ImageCrop.hpp"
 #include "rtx/Log.hpp"
+#include "rtx/Platform.hpp"
 #include "rtx/TransferStore.hpp"
 
 namespace rtxaddon {
@@ -61,7 +62,7 @@ rtx::Result<ViewCaptureResult> SaveCurrentWindowAsPng (const std::string& direct
 
 	API_FileSavePars savePars = {};
 	savePars.fileTypeID = APIFType_PNGFile;
-	IO::Location target (GS::UniString (result.filePath.c_str (), CC_UTF8));
+	IO::Location target (GS::UniString (rtx::NativePath (result.filePath).c_str (), CC_UTF8));
 	savePars.file = &target;
 
 	API_SavePars_Picture picturePars = {};
@@ -173,11 +174,11 @@ rtx::Result<ViewCaptureResult> RenderCurrentViewAsPng (const std::string& direct
 	// PhotoRender kennt kein PNG. TIFF ist verlustfrei; die Umwandlung danach
 	// ist es auch.
 	const std::string tiffPath = directory + "/render.tiff";
-	std::remove (tiffPath.c_str ());
+	rtx::RemoveFile (tiffPath);
 
 	API_PhotoRenderPars renderPars = {};
 	renderPars.fileTypeID = APIFType_TIFFFile;
-	IO::Location target (GS::UniString (tiffPath.c_str (), CC_UTF8));
+	IO::Location target (GS::UniString (rtx::NativePath (tiffPath).c_str (), CC_UTF8));
 	renderPars.file = &target;
 #if defined (macintosh)
 	renderPars.colorDepth = APIColorDepth_MiCP;
@@ -201,7 +202,7 @@ rtx::Result<ViewCaptureResult> RenderCurrentViewAsPng (const std::string& direct
 					 "Archicad meldete Erfolg, hat aber kein gerendertes Bild geschrieben.");
 
 	const rtx::Status converted = rtx::ConvertImageToPng (tiffPath, result.filePath);
-	std::remove (tiffPath.c_str ());
+	rtx::RemoveFile (tiffPath);
 	if (!converted) return Fail (converted.GetError ().code, converted.GetError ().message);
 
 	rtx::LogLine ("Gerendert und umgeschrieben (" + std::to_string (result.milliseconds) + " ms).");

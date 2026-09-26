@@ -9,15 +9,10 @@
 
 #include "rtx/Ids.hpp"
 #include "rtx/Json.hpp"
+#include "rtx/Platform.hpp"
 
 namespace rtx {
 namespace {
-
-std::string HomeDirectory ()
-{
-	const char* home = std::getenv ("HOME");
-	return home != nullptr ? std::string (home) : std::string (".");
-}
 
 std::string Text (const JsonPtr& node, const char* key)
 {
@@ -31,20 +26,20 @@ std::string Text (const JsonPtr& node, const char* key)
 bool EnsureDirectory (const std::string& path)
 {
 	std::error_code code;
-	std::filesystem::create_directories (path, code);
-	return !code && std::filesystem::is_directory (path, code);
+	std::filesystem::create_directories (FsPath (path), code);
+	return !code && std::filesystem::is_directory (FsPath (path), code);
 }
 
 bool RemoveDirectory (const std::string& path)
 {
 	std::error_code code;
-	std::filesystem::remove_all (path, code);
+	std::filesystem::remove_all (FsPath (path), code);
 	return !code;
 }
 
 bool WriteTextFile (const std::string& path, const std::string& content)
 {
-	std::ofstream stream (path, std::ios::binary | std::ios::trunc);
+	std::ofstream stream (FsPath (path), std::ios::binary | std::ios::trunc);
 	if (!stream) return false;
 	stream.write (content.data (), static_cast<std::streamsize> (content.size ()));
 	return stream.good ();
@@ -52,7 +47,7 @@ bool WriteTextFile (const std::string& path, const std::string& content)
 
 bool ReadTextFile (const std::string& path, std::string& content)
 {
-	std::ifstream stream (path, std::ios::binary);
+	std::ifstream stream (FsPath (path), std::ios::binary);
 	if (!stream) return false;
 	std::ostringstream buffer;
 	buffer << stream.rdbuf ();
@@ -63,19 +58,19 @@ bool ReadTextFile (const std::string& path, std::string& content)
 long long FileSize (const std::string& path)
 {
 	std::error_code code;
-	const auto size = std::filesystem::file_size (path, code);
+	const auto size = std::filesystem::file_size (FsPath (path), code);
 	if (code) return -1;
 	return static_cast<long long> (size);
 }
 
 std::string TransferStore::DefaultPath ()
 {
-	return HomeDirectory () + "/Library/Application Support/rendertaxi/archicad/transfers.json";
+	return AppDataDirectory () + "/transfers.json";
 }
 
 std::string TransferStore::DefaultWorkDirectory ()
 {
-	return HomeDirectory () + "/Library/Application Support/rendertaxi/archicad/captures";
+	return AppDataDirectory () + "/captures";
 }
 
 TransferStore::TransferStore (std::string filePath) : path (std::move (filePath))
@@ -178,7 +173,7 @@ Status TransferStore::Save () const
 	if (!WriteTextFile (temporary, root->SerializePretty ()))
 		return Status::Fail (errc::IoFailed, "Der Zustand ließ sich nicht schreiben.");
 	std::error_code code;
-	std::filesystem::rename (temporary, path, code);
+	std::filesystem::rename (FsPath (temporary), FsPath (path), code);
 	if (code) return Status::Fail (errc::IoFailed, "Der Zustand ließ sich nicht ersetzen.");
 	return Status::Ok ();
 }

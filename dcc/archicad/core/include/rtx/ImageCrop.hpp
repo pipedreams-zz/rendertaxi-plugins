@@ -27,6 +27,24 @@ struct CropResult {
 	int height = 0;
 };
 
+/** Das Rechteck, das ein Zuschnitt aus einem Bild nimmt. */
+struct CropPlan {
+	/** Falsch: nichts zu tun (Verhältnis unbekannt oder schon passend). */
+	bool needed = false;
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+};
+
+/**
+ * Die Rechnung des Zuschnitts ohne Bildbibliothek: mittig, ganzzahlige Ränder,
+ * unter einem halben Prozent Abweichung nichts. Dieselben Regeln wie die
+ * macOS-Umsetzung; die Windows-Umsetzung benutzt sie, die Tests prüfen sie auf
+ * beiden Systemen.
+ */
+CropPlan PlanCrop (int width, int height, int aspectWidth, int aspectHeight);
+
 /**
  * Schneidet `sourcePath` mittig auf das Verhältnis `aspectWidth:aspectHeight`
  * zu und schreibt das Ergebnis als PNG nach `targetPath`.

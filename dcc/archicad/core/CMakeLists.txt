@@ -2,13 +2,15 @@
 #
 # `development-environments.md`, Abschnitt 4 verlangt, dass Manifest, Uploader,
 # Tokenablage und HTTP ohne DevKit bau- und testbar bleiben. Dieses Ziel hängt
-# deshalb ausschließlich von der C++-Standardbibliothek, der libcurl des
-# Systems und — für die Keychain — von Security.framework ab.
+# deshalb ausschließlich von der C++-Standardbibliothek, libcurl und den
+# Systembibliotheken ab: unter macOS Security.framework (Keychain) und ImageIO,
+# unter Windows Credential Manager, WinHTTP (URL-Zerlegung) und WIC.
 
 add_library (rtxcore STATIC
 	src/Canonical.cpp
 	src/CaptureManifest.cpp
 	src/CaptureTransfer.cpp
+	src/CropPlan.cpp
 	src/DeviceLogin.cpp
 	src/HttpCurl.cpp
 	src/Ids.cpp
@@ -17,10 +19,12 @@ add_library (rtxcore STATIC
 	src/Json.cpp
 	src/Log.cpp
 	src/PaletteText.cpp
+	src/Platform.cpp
 	src/PluginApi.cpp
 	src/Sha256.cpp
 	src/TokenStore.cpp
 	src/TokenStoreKeychain.cpp
+	src/TokenStoreWinCred.cpp
 	src/TransferStore.cpp
 	src/UrlHost.cpp
 )
@@ -42,6 +46,12 @@ endif ()
 # siehe `.github/workflows/archicad-windows.yml`.
 find_package (CURL REQUIRED)
 target_link_libraries (rtxcore PUBLIC CURL::libcurl)
+
+if (WIN32)
+	# Credential Manager (Advapi32), URL-Zerlegung (WinHTTP), Bilder (WIC über
+	# COM), Known Folders (Shell32). Alles Systembibliotheken von Windows.
+	target_link_libraries (rtxcore PUBLIC advapi32 winhttp windowscodecs ole32 shell32)
+endif ()
 
 if (APPLE)
 	find_library (SecurityFramework Security)

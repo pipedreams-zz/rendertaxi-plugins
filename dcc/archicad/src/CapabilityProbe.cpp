@@ -10,6 +10,7 @@
 #include "ViewCapture.hpp"
 #include "rtx/Ids.hpp"
 #include "rtx/ImageFile.hpp"
+#include "rtx/Platform.hpp"
 #include "rtx/TransferStore.hpp"
 
 namespace rtxaddon {
@@ -52,7 +53,7 @@ Measurement MeasurePhotoRender (const std::string& directory)
 	// `APIFType_PictFile`, `BMPFile`, `TIFFFile`, `JPEGFile` und `GIFFile` —
 	// kein PNG. Gemessen wird deshalb JPEG.
 	const std::string path = directory + "/photorender.jpg";
-	IO::Location target (GS::UniString (path.c_str (), CC_UTF8));
+	IO::Location target (GS::UniString (rtx::NativePath (path).c_str (), CC_UTF8));
 
 	API_PhotoRenderPars pars = {};
 	pars.fileTypeID = APIFType_JPEGFile;
@@ -60,7 +61,8 @@ Measurement MeasurePhotoRender (const std::string& directory)
 #if defined (macintosh)
 	pars.colorDepth = APIColorDepth_MiC;
 #else
-	pars.colorDepth = APIColorDepth_TC24;
+	// Wie in `ViewCapture.cpp`: True Color mit Alphakanal (`capabilities.md`).
+	pars.colorDepth = APIColorDepth_TC32;
 #endif
 	pars.dithered = false;
 

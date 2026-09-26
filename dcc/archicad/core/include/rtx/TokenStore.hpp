@@ -5,9 +5,12 @@
 // Keychain, nie in Klartextdateien, Projektdateien oder Logs, und ist
 // serverseitig widerrufbar."
 //
-// Der Port hat zwei Umsetzungen: die Keychain für das Add-On und eine
-// Speicherfassung für die Tests. Es gibt bewusst **keine** Dateifassung — sie
-// wäre genau die Klartextablage, die die Festlegung verbietet.
+// Der Port hat je Plattform eine Umsetzung im Schlüsselspeicher des Systems —
+// die Keychain unter macOS, den Windows-Anmeldeinformationsspeicher
+// (Credential Manager) unter Windows, gewählt zur Übersetzungszeit über
+// `MakeSystemTokenStore` — und eine Speicherfassung für die Tests. Es gibt
+// bewusst **keine** Dateifassung — sie wäre genau die Klartextablage, die die
+// Festlegung verbietet.
 #pragma once
 
 #include <cstdint>
@@ -61,8 +64,27 @@ public:
 	virtual Status Erase (const std::string& serverUrl) = 0;
 };
 
+/**
+ * Der Schlüsselspeicher dieses Systems; `nullptr` auf einer Plattform ohne
+ * Umsetzung. Das Add-On benutzt nur diesen Aufruf.
+ */
+std::unique_ptr<TokenStore> MakeSystemTokenStore ();
+
+#if defined (__APPLE__)
 /** macOS Keychain (`kSecClassGenericPassword`, Dienst `ai.rendertaxi.archicad`). */
 std::unique_ptr<TokenStore> MakeKeychainTokenStore ();
+#endif
+
+#if defined (_WIN32)
+/**
+ * Windows Credential Manager (`CRED_TYPE_GENERIC`, Ziel
+ * `rendertaxi/archicad/<Serveradresse>`, `CRED_PERSIST_LOCAL_MACHINE`).
+ */
+std::unique_ptr<TokenStore> MakeCredentialManagerTokenStore ();
+
+/** Das Ziel im Credential Manager für eine Serveradresse. */
+std::wstring CredentialTarget (const std::string& serverUrl);
+#endif
 
 /** Nur für Tests: hält das Token im Speicher des Prozesses. */
 std::unique_ptr<TokenStore> MakeMemoryTokenStore ();

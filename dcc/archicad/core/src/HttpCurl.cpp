@@ -5,6 +5,8 @@
 
 #include <curl/curl.h>
 
+#include "rtx/Platform.hpp"
+
 namespace rtx {
 namespace {
 
@@ -106,7 +108,7 @@ public:
 
 		std::FILE* upload = nullptr;
 		if (!request.bodyFilePath.empty ()) {
-			upload = std::fopen (request.bodyFilePath.c_str (), "rb");
+			upload = OpenFile (request.bodyFilePath, "rb");
 			if (upload == nullptr) {
 				curl_slist_free_all (headerList);
 				curl_easy_cleanup (handle);

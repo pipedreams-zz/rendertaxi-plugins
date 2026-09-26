@@ -1,9 +1,34 @@
 #include "MockServer.hpp"
 
+#if defined (_WIN32)
+// Winsock: dieselben Aufrufe, andere Namen für Schließen und Beenden. Der
+// Scheinserver lauscht auch unter Windows nur auf 127.0.0.1.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+using ssize_t = int;
+using socklen_t = int;
+#define SHUT_RDWR SD_BOTH
+namespace {
+int CloseSocket (SOCKET fd) { return ::closesocket (fd); }
+/** `WSAStartup` einmal je Prozess; Winsock gibt es sonst nicht. */
+struct WinsockInit {
+	WinsockInit () { WSADATA data; WSAStartup (MAKEWORD (2, 2), &data); }
+};
+void EnsureWinsock () { static WinsockInit init; }
+} // namespace
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+namespace {
+int CloseSocket (int fd) { return ::close (fd); }
+void EnsureWinsock () {}
+} // namespace
+#endif
 
 #include <cctype>
 #include <cstring>
@@ -58,9 +83,11 @@ std::string MockRequest::Header (const std::string& name) const
 MockServer::MockServer (MockHandler requestHandler, int port) :
 	handler (std::move (requestHandler))
 {
-	listenFd = ::socket (AF_INET, SOCK_STREAM, 0);
+	EnsureWinsock ();
+	listenFd = static_cast<int> (::socket (AF_INET, SOCK_STREAM, 0));
 	int reuse = 1;
-	::setsockopt (listenFd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse);
+	::setsockopt (listenFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*> (&reuse),
+				  sizeof reuse);
 
 	sockaddr_in address {};
 	address.sin_family = AF_INET;
@@ -88,19 +115,19 @@ MockServer::~MockServer ()
 {
 	running.store (false);
 	if (listenFd >= 0) ::shutdown (listenFd, SHUT_RDWR);
-	if (listenFd >= 0) ::close (listenFd);
+	if (listenFd >= 0) CloseSocket (listenFd);
 	if (worker.joinable ()) worker.join ();
 }
 
 void MockServer::Serve ()
 {
 	while (running.load ()) {
-		const int client = ::accept (listenFd, nullptr, nullptr);
+		const int client = static_cast<int> (::accept (listenFd, nullptr, nullptr));
 		if (client < 0) break;
 
 		std::string buffer;
 		std::string line;
-		if (!ReadLine (client, buffer, line)) { ::close (client); continue; }
+		if (!ReadLine (client, buffer, line)) { CloseSocket (client); continue; }
 
 		MockRequest request;
 		std::istringstream requestLine (line);
@@ -138,8 +165,8 @@ void MockServer::Serve ()
 		out << "Connection: close\r\n\r\n";
 		out << response.body;
 		const std::string payload = out.str ();
-		::send (client, payload.data (), payload.size (), 0);
-		::close (client);
+		::send (client, payload.data (), static_cast<int> (payload.size ()), 0);
+		CloseSocket (client);
 	}
 }
 

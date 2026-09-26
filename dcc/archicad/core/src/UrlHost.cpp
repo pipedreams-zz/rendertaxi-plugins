@@ -1,6 +1,7 @@
 #include "rtx/UrlHost.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 #if defined (__APPLE__)
 
@@ -78,6 +79,109 @@ UrlParts ParseUrl (const std::string& url)
 
 } // namespace rtx
 
+#elif defined (_WIN32)
+
+// Unter Windows beantwortet `WinHttpCrackUrl` dieselbe Frage — der Parser, mit
+// dem WinHTTP selbst Adressen zerlegt. Er kennt nur `http` und `https`; jedes
+// andere Schema ist damit ungültig und wird abgelehnt, wie unter macOS über
+// die Schemaprüfung in `IsTokenSafeBaseUrl`.
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winhttp.h>
+
+#include "rtx/Platform.hpp"
+
+namespace rtx {
+namespace {
+
+std::string ToLower (std::string value)
+{
+	std::transform (value.begin (), value.end (), value.begin (),
+					[] (unsigned char c) { return static_cast<char> (std::tolower (c)); });
+	return value;
+}
+
+/**
+ * Zeichen, die in keiner gültigen URL stehen (RFC 3986): Leer- und
+ * Steuerzeichen und die ausdrücklich ausgeschlossenen `\ " < > ^ ` { | }`.
+ * CFURL lehnt eine solche Adresse ab; `WinHttpCrackUrl` ist nachsichtiger
+ * (etwa bei `\`, das es als Pfadtrenner liest). Damit beide Plattformen
+ * dieselbe Menge annehmen, wird hier vorher abgelehnt — das ist keine eigene
+ * Zerlegung, sondern die Zeichenmenge, die der Parser gar nicht sehen soll.
+ */
+bool HasForbiddenCharacter (const std::string& url)
+{
+	for (const char raw : url) {
+		const unsigned char c = static_cast<unsigned char> (raw);
+		if (c <= 0x20 || c == 0x7F) return true;
+		switch (c) {
+			case '\\': case '"': case '<': case '>': case '^': case '`': case '{': case '|': case '}':
+				return true;
+			default:
+				break;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+UrlParts ParseUrl (const std::string& url)
+{
+	UrlParts parts;
+	if (url.empty () || HasForbiddenCharacter (url)) return parts;
+
+	const std::wstring wide = Widen (url);
+	if (wide.empty ()) return parts;
+
+	// Längen `-1`: der Parser liefert Zeiger in die Eingabe, statt zu kopieren.
+	URL_COMPONENTS components = {};
+	components.dwStructSize = sizeof components;
+	components.dwSchemeLength = static_cast<DWORD> (-1);
+	components.dwHostNameLength = static_cast<DWORD> (-1);
+	components.dwUserNameLength = static_cast<DWORD> (-1);
+	components.dwPasswordLength = static_cast<DWORD> (-1);
+	components.dwUrlPathLength = static_cast<DWORD> (-1);
+	components.dwExtraInfoLength = static_cast<DWORD> (-1);
+	if (!WinHttpCrackUrl (wide.c_str (), static_cast<DWORD> (wide.size ()), 0, &components))
+		return parts;
+
+	if (components.lpszScheme == nullptr || components.dwSchemeLength == 0) return parts;
+	parts.scheme = ToLower (Narrow (std::wstring (components.lpszScheme, components.dwSchemeLength)));
+
+	if (components.lpszHostName == nullptr || components.dwHostNameLength == 0) return parts;
+	std::wstring host (components.lpszHostName, components.dwHostNameLength);
+	// Eine IPv6-Adresse kommt mit Klammern; CFURL liefert sie ohne. Verglichen
+	// wird ohne, auf Gleichheit.
+	if (host.size () >= 2 && host.front () == L'[' && host.back () == L']')
+		host = host.substr (1, host.size () - 2);
+	parts.host = ToLower (Narrow (host));
+
+	// **Benutzerangabe:** Name oder Passwort vom Parser — und zusätzlich jedes
+	// `@` in der Autorität, wie der Parser sie abgegrenzt hat (zwischen `://`
+	// und dem Pfad). Das fängt auch die leere Angabe `http://@host` ab.
+	parts.hasUserInfo = components.dwUserNameLength > 0 || components.dwPasswordLength > 0;
+	const std::size_t authorityStart = wide.find (L"://");
+	if (authorityStart != std::wstring::npos) {
+		const std::size_t from = authorityStart + 3;
+		std::size_t to = wide.size ();
+		if (components.lpszUrlPath != nullptr && components.dwUrlPathLength > 0)
+			to = static_cast<std::size_t> (components.lpszUrlPath - wide.c_str ());
+		else if (components.lpszExtraInfo != nullptr && components.dwExtraInfoLength > 0)
+			to = static_cast<std::size_t> (components.lpszExtraInfo - wide.c_str ());
+		if (to > from && wide.substr (from, to - from).find (L'@') != std::wstring::npos)
+			parts.hasUserInfo = true;
+	}
+
+	parts.valid = !parts.scheme.empty () && !parts.host.empty ();
+	return parts;
+}
+
+} // namespace rtx
+
 #else
 
 namespace rtx {
@@ -85,8 +189,7 @@ namespace rtx {
 UrlParts ParseUrl (const std::string&)
 {
 	// Ohne Systemparser wird **nichts** angenommen. Lieber eine Adresse zu
-	// viel abgelehnt als ein Token zu viel gesendet; Windows ist in Issue #20
-	// ohnehin Nicht-Ziel.
+	// viel abgelehnt als ein Token zu viel gesendet.
 	return UrlParts {};
 }
 

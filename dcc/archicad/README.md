@@ -33,10 +33,20 @@ gestartet werden.
 
 Die Windows-`.apx` baut `.github/workflows/archicad-windows.yml` auf GitHub
 Actions (DevKit 28.4001, Visual Studio 2022 mit Toolset v142, libcurl aus
-vcpkg). Sie ist bisher **nur gebaut, nicht mit Archicad unter Windows
-erprobt**, und die Anmeldung fehlt dort noch: Tokenablage, URL-Prüfung und
-Zuschnitt haben unter Windows nur ihre ablehnenden Platzhalter (siehe
-`core/src/TokenStoreKeychain.cpp`, `UrlHost.cpp`, `ImageCrop.cpp`).
+vcpkg) und lässt dort auch die Kerntests laufen. Die Plattformteile haben je
+System eine Umsetzung (#161):
+
+| Baustein                             | macOS                                                 | Windows                                            |
+| ------------------------------------ | ----------------------------------------------------- | -------------------------------------------------- |
+| Tokenablage (`MakeSystemTokenStore`) | Keychain                                              | Credential Manager, `rendertaxi/archicad/<Server>` |
+| Adresszerlegung (`ParseUrl`)         | CFURL                                                 | `WinHttpCrackUrl`                                  |
+| PNG und Zuschnitt                    | ImageIO                                               | WIC, Rechnung in `PlanCrop`                        |
+| Ablage (`rtx/Platform.hpp`)          | `~/Library/Application Support/…`, `~/Library/Logs/…` | `%LOCALAPPDATA%\rendertaxi\archicad\`              |
+| Browser                              | `/usr/bin/open`                                       | `ShellExecuteW`                                    |
+
+Der Lauf mit Archicad unter Windows steht aus (Vorlage in
+`../docs/first-run-protocol.md`, Abschnitt 9); bis dahin ist die Windows-Fassung
+„Vorschau“.
 
 ```bash
 integrations/archicad/addon/scripts/dist.sh macos   # Bundle nach dist/macos/ (eingecheckt)
@@ -83,7 +93,7 @@ keine neu aufgenommene Abhängigkeit im Sinne der Reiferichtlinie aus
 | `PluginApiClient` | Die elf Endpunkte der Plugin API v1 und die beiden Lesewege                                                |
 | `CaptureTransfer` | Der Zustandsautomat der Übernahme: anlegen, übertragen, Manifest, finalisieren, wiederaufnehmen            |
 | `TransferStore`   | Was einen Neustart von Archicad überlebt — Idempotenzschlüssel, angefangene Vorgänge, der letzte Vorschlag |
-| `TokenStore`      | macOS Keychain. Es gibt bewusst **keine** Dateifassung                                                     |
+| `TokenStore`      | macOS Keychain, Windows Credential Manager. Es gibt bewusst **keine** Dateifassung                         |
 | `Log`             | Redigiert Bearer-Kopfzeilen, Geheimnisfelder und Abfrageteile von URLs, bevor eine Zeile entsteht          |
 | `ViewCapture`     | Der Bildzugriff auf Archicad; Belege in [`../docs/capabilities.md`](../docs/capabilities.md)               |
 | `CapabilityProbe` | Die Messung hinter dem Menüpunkt „Bildzugriff messen"                                                      |
@@ -150,7 +160,8 @@ und ein von außen auslösbarer Upload wäre eine Angriffsfläche ohne Gegenwert
 **Es gibt kein Passwortfeld, und das ist Absicht** (Festlegung 4 des Auftrags).
 Die Anmeldung ist ein Gerätelogin nach RFC 8628: das Add-On zeigt einen Code,
 öffnet den Systembrowser, und der Nutzer bestätigt dort. Das Add-On sieht nie
-Zugangsdaten, sondern nur ein Token — und das liegt in der **macOS Keychain**,
+Zugangsdaten, sondern nur ein Token — und das liegt in der **macOS Keychain**
+(Windows: Credential Manager),
 nie in einer Klartextdatei, nie in der Archicad-Projektdatei, nie im Protokoll.
 „Abmelden" löscht es lokal **und** widerruft es serverseitig.
 
@@ -159,7 +170,8 @@ nie in einer Klartextdatei, nie in der Archicad-Projektdatei, nie im Protokoll.
 Ein Übernahmevorgang trägt **einen** Idempotenzschlüssel, der Session, Dateien,
 Manifest, Finalisierung und die Zuordnung zum Blickpunkt umfasst. Er wird
 **vor** dem ersten Netzaufruf in
-`~/Library/Application Support/rendertaxi/archicad/transfers.json` geschrieben
+`~/Library/Application Support/rendertaxi/archicad/transfers.json` (Windows:
+`%LOCALAPPDATA%\rendertaxi\archicad\transfers.json`) geschrieben
 und überlebt damit einen Absturz oder Neustart von Archicad. Er bleibt
 derselbe, bis der Vorgang abgeschlossen oder vom Nutzer verworfen ist.
 

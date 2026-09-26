@@ -70,12 +70,31 @@ jobs:
         run: >
           cmake -S "$ADDON_DIR" -B build -G "Visual Studio 17 2022" -A x64 -T v142
           -DAC_API_DEVKIT_DIR="$AC_API_DEVKIT_DIR"
-          -DRTX_BUILD_TESTS=OFF
+          -DRTX_BUILD_TESTS=ON
           -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT_DIR/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET"
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
       - name: Bauen
-        run: cmake --build build --config Release --target AddOn
+        run: cmake --build build --config Release --target AddOn rtxcore-tests
+      # Die Kerntests unter Windows (#161): Credential Manager, Adresszerlegung,
+      # Zuschnitt über WIC, UTF-8-Pfade unter %LOCALAPPDATA% und der ganze
+      # Uploadweg gegen den Scheinserver auf 127.0.0.1 — ohne Archicad.
+      - name: Kerntests
+        run: |
+          mkdir -p test-artifacts
+          RTX_OPENAPI_TRANSCRIPT="$(pwd -W)/test-artifacts/openapi-transcript.jsonl" \
+          RTX_MANIFEST_SAMPLE="$(pwd -W)/test-artifacts/capture-manifest.json" \
+            "$(find build -name rtxcore-tests.exe | head -1)"
+      # Die Vertragsprüfungen brauchen den Plattformvertrag unter docs/api und
+      # integrations/_shared; im öffentlichen Spiegel fehlen beide.
+      - name: Vertragsprüfungen
+        run: |
+          if [ -f "$ADDON_DIR/tools/check-openapi.mjs" ] && [ -f docs/api/plugin-api-v1.openapi.json ]; then
+            node "$ADDON_DIR/tools/check-openapi.mjs" test-artifacts/openapi-transcript.jsonl
+            node "$ADDON_DIR/tools/check-manifest.mjs" test-artifacts/capture-manifest.json
+          else
+            echo "Vertrag nicht im Baum (Spiegel) — übersprungen"
+          fi
       - name: Ergebnis prüfen
         run: |
           find build -name "rendertaxi.apx" -print

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "rtx/Ids.hpp"
+#include "rtx/Platform.hpp"
 
 namespace rtx {
 namespace {
@@ -119,7 +120,7 @@ void LogLine (const std::string& line)
 	const std::string safe = Redact (line);
 	std::lock_guard<std::mutex> guard (LogMutex ());
 	if (LogPath ().empty ()) return;
-	std::FILE* file = std::fopen (LogPath ().c_str (), "ab");
+	std::FILE* file = OpenFile (LogPath (), "ab");
 	if (file == nullptr) return;
 	std::fprintf (file, "%s %s\n", NowTimestampUtc ().c_str (), safe.c_str ());
 	std::fclose (file);

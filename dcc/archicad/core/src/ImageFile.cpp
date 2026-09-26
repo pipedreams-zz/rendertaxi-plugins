@@ -4,6 +4,8 @@
 #include <cstring>
 #include <vector>
 
+#include "rtx/Platform.hpp"
+
 namespace rtx {
 namespace {
 
@@ -75,7 +77,7 @@ Result<ImageInfo> ReadJpeg (const std::vector<std::uint8_t>& bytes)
 
 Result<ImageInfo> ReadImageInfo (const std::string& path)
 {
-	std::FILE* file = std::fopen (path.c_str (), "rb");
+	std::FILE* file = OpenFile (path, "rb");
 	if (file == nullptr) return Fail ("Bilddatei nicht lesbar: " + path);
 	std::vector<std::uint8_t> head (4096);
 	const std::size_t read = std::fread (head.data (), 1, head.size (), file);

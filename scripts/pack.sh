@@ -46,7 +46,7 @@ Release $RELEASE
 **Archicad installieren:** Zip entpacken, Archicad beenden.
 
 - macOS: \`macos/rendertaxi.bundle\` nach \`/Applications/Graphisoft/Archicad 28/Add-Ons/\` kopieren. Das Bundle ist nicht notarisiert; meldet macOS beim Start eine Sperre, einmal \`xattr -dr com.apple.quarantine "/Applications/Graphisoft/Archicad 28/Add-Ons/rendertaxi.bundle"\` im Terminal ausführen.
-- Windows: \`win/rendertaxi.apx\` nach \`C:\\Program Files\\Graphisoft\\Archicad 28\\Add-Ons\\\` kopieren. Die Windows-Fassung ist eine Vorschau, siehe Anleitung.
+- Windows: \`win/rendertaxi.apx\` nach \`C:\\Program Files\\Graphisoft\\Archicad 28\\Add-Ons\\\` kopieren. Vorher die Zip freigeben (Rechtsklick › Eigenschaften › Zulassen), sie ist nicht signiert. Die Windows-Fassung ist eine Vorschau, siehe Anleitung.
 
 Danach Archicad starten, Menü **rendertaxi.ai › Palette**. Vollständige Anleitung: [docs/dcc/archicad.md](docs/dcc/archicad.md) (liegt auch als ANLEITUNG.md in der Zip).
 EOF

@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "rtx/Platform.hpp"
+
 namespace rtx {
 namespace {
 
@@ -124,7 +126,7 @@ std::string Sha256::OfString (const std::string& text)
 std::string Sha256OfFile (const std::string& path, bool* ok)
 {
 	if (ok != nullptr) *ok = false;
-	std::FILE* file = std::fopen (path.c_str (), "rb");
+	std::FILE* file = OpenFile (path, "rb");
 	if (file == nullptr) return {};
 	Sha256 hash;
 	std::uint8_t chunk[65536];

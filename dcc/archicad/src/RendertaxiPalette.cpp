@@ -21,6 +21,7 @@
 #include "rtx/ImageFile.hpp"
 #include "rtx/Log.hpp"
 #include "rtx/PaletteText.hpp"
+#include "rtx/Platform.hpp"
 #include "rtx/Sha256.hpp"
 
 namespace rtxaddon {
@@ -149,7 +150,7 @@ RendertaxiPalette::RendertaxiPalette () :
 	rtx::SetLogFile (LogPath ());
 
 	http = rtx::MakeCurlHttpClient ();
-	tokens = rtx::MakeKeychainTokenStore ();
+	tokens = rtx::MakeSystemTokenStore ();
 	store.reset (new rtx::TransferStore (rtx::TransferStore::DefaultPath ()));
 	store->Load ();
 	serverUrl = ServerUrl ();
@@ -1431,8 +1432,10 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			return;
 		}
 		if (cropped.Value ().cropped) {
-			std::remove (imagePath.c_str ());
-			if (std::rename (croppedPath.c_str (), imagePath.c_str ()) != 0) {
+			// Ersetzen statt erst löschen, dann umbenennen: scheitert es, bleibt
+			// die Aufnahme erhalten (#164, F-01). Über UTF-8-Pfade, auch unter
+			// Windows (`rtx/Platform.hpp`).
+			if (!rtx::RenameReplacing (croppedPath, imagePath)) {
 				shared.SetProgress ("Das zugeschnittene Bild ließ sich nicht ablegen.");
 				return;
 			}

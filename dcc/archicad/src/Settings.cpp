@@ -1,23 +1,17 @@
 #include "Settings.hpp"
 
-#include <cstdlib>
-
 #include "Version.hpp"
 #include "rtx/Json.hpp"
+#include "rtx/Platform.hpp"
 #include "rtx/TransferStore.hpp"
 
 namespace rtxaddon {
 namespace {
 
-std::string Home ()
-{
-	const char* home = std::getenv ("HOME");
-	return home != nullptr ? std::string (home) : std::string (".");
-}
-
+/** macOS: `~/Library/Application Support/…`, Windows: `%LOCALAPPDATA%\…` (`rtx/Platform.hpp`). */
 std::string ConfigPath ()
 {
-	return Home () + "/Library/Application Support/rendertaxi/archicad/settings.json";
+	return rtx::AppDataDirectory () + "/settings.json";
 }
 
 std::string Trim (std::string url)
@@ -89,7 +83,7 @@ bool SetFrameSize (const std::string& value)
 
 std::string LogPath ()
 {
-	const std::string directory = Home () + "/Library/Logs/rendertaxi";
+	const std::string directory = rtx::LogDirectory ();
 	rtx::EnsureDirectory (directory);
 	return directory + "/archicad-addon.log";
 }
