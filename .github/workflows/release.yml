@@ -1,0 +1,39 @@
+name: Release
+
+# Bei einem Tag (Datum wie 2026.09.26) baut der Spiegel die Windows-.apx aus
+# genau diesem Stand selbst, legt sie nach dcc/archicad/dist/win/, packt alle
+# Plugins (scripts/pack.sh) und hängt die Zips als Release an; die Notiz nennt
+# die Version jedes Plugins. Das macOS-Bundle liegt eingecheckt unter
+# dcc/archicad/dist/macos/ (auf dem Mac gebaut).
+on:
+  push:
+    tags: ["v*", "20*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  archicad-windows:
+    uses: ./.github/workflows/archicad-windows.yml
+
+  release:
+    needs: archicad-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: rendertaxi-archicad-windows
+          path: dcc/archicad/dist/win
+      # Das Tag ist die Release-Nummer im Dateinamen; ohne Tag (Handstart) das Datum.
+      - run: bash scripts/pack.sh ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      - name: Release anlegen
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "rendertaxi.ai-Plugins $GITHUB_REF_NAME" \
+            --notes-file dist/RELEASE.md \
+            dist/*.zip

@@ -1,0 +1,4 @@
+# Ausgabe von scripts/pack.sh
+/dist/
+.DS_Store
+dcc/archicad/build/

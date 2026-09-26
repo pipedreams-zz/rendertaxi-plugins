@@ -1,0 +1,17 @@
+# Gebaut wird außerhalb des Repositorys (siehe scripts/common.sh). Diese
+# Einträge fangen ab, wenn jemand RTX_BUILD_DIR auf den Baum zeigen lässt.
+build/
+build-tests/
+
+# Das Token des Prüfgeräts aus `tools/live-check.mjs`. Es gehört niemandem
+# außer dieser Maschine und steht deshalb nie im Baum.
+tools/.rtx-live-token.json
+
+# Das macOS-Bundle (scripts/dist.sh macos) ist eingecheckt, wie beim
+# gisloader-Add-on: es entsteht nur auf dem Mac, und der öffentliche Spiegel
+# packt es ohne eigenen Mac-Build. Die Wurzel-.gitignore schließt jedes `dist/`
+# aus; hier gilt das nicht. Die Windows-.apx dagegen baut der Release-Workflow
+# des Spiegels aus genau dem getaggten Stand selbst — eine eingecheckte Kopie
+# wäre ein zweiter, möglicherweise veralteter Stand.
+!dist/
+dist/win/

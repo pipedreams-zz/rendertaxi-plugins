@@ -1,0 +1,88 @@
+name: Archicad Windows
+
+# Baut das Archicad-Add-on als Windows-.apx (Muster: gisloader,
+# .github/workflows/archicad-windows.yml). Das DevKit veröffentlicht Graphisoft
+# unter github.com/GRAPHISOFT/archicad-api-devkit (Release 28.4001); Archicad 28
+# verlangt den Toolset v142 (Visual Studio 2019), der im windows-2022-Runner
+# liegt. libcurl kommt aus vcpkg, festgelegt auf den vcpkg-Release
+# VCPKG_REF (curl 8.21.0#1), statisch gegen die DLL-Laufzeit gelinkt.
+#
+# Ergebnis als Artefakt `rendertaxi-archicad-windows`. Die .apx wird nicht
+# eingecheckt: plugins.yml spiegelt diese Datei (Pfade auf dcc/archicad
+# umgeschrieben) nach pipedreams-zz/rendertaxi-plugins, und dessen
+# Release-Workflow baut die .apx aus dem getaggten Stand selbst.
+on:
+  push:
+    branches: [main]
+    paths: ["dcc/archicad/**", ".github/workflows/archicad-windows.yml"]
+    tags: ["plugins-*"]
+  pull_request:
+    paths: ["dcc/archicad/**", ".github/workflows/archicad-windows.yml"]
+  workflow_dispatch:
+  # Der Release-Workflow des Spiegels ruft diese Datei auf.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archicad-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ADDON_DIR: dcc/archicad
+  DEVKIT_VERSION: "28.4001"
+  VCPKG_REF: "2026.07.29"
+  VCPKG_TRIPLET: x64-windows-static-md
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: DevKit laden
+        run: |
+          curl -sSfL -o devkit.zip "https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/${DEVKIT_VERSION}/API.Development.Kit.WIN.${DEVKIT_VERSION}.zip"
+          mkdir -p devkit && unzip -q devkit.zip -d devkit
+          ls devkit
+          echo "AC_API_DEVKIT_DIR=$(cd devkit && pwd -W)" >> "$GITHUB_ENV"
+      - name: vcpkg festlegen
+        run: |
+          git clone --quiet --depth 1 --branch "$VCPKG_REF" https://github.com/microsoft/vcpkg.git vcpkg
+          ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          mkdir -p vcpkg-cache
+          echo "VCPKG_ROOT_DIR=$(cd vcpkg && pwd -W)" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$(cd vcpkg-cache && pwd -W)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_REF }}-${{ env.VCPKG_TRIPLET }}-curl
+      - name: libcurl bauen
+        run: ./vcpkg/vcpkg.exe install "curl:${VCPKG_TRIPLET}"
+      - name: Konfigurieren
+        run: >
+          cmake -S "$ADDON_DIR" -B build -G "Visual Studio 17 2022" -A x64 -T v142
+          -DAC_API_DEVKIT_DIR="$AC_API_DEVKIT_DIR"
+          -DRTX_BUILD_TESTS=OFF
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT_DIR/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET"
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+      - name: Bauen
+        run: cmake --build build --config Release --target AddOn
+      - name: Ergebnis prüfen
+        run: |
+          find build -name "rendertaxi.apx" -print
+          mkdir -p out && cp "$(find build -name rendertaxi.apx | head -1)" out/rendertaxi.apx
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendertaxi-archicad-windows
+          path: out/rendertaxi.apx
+          if-no-files-found: error

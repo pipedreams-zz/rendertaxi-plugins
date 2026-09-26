@@ -1,0 +1,13 @@
+/* *****************************************************************************
+// rendertaxi.ai für Archicad 28 — Windows-Ressourcen.
+//
+// Die aus RINT/*.grc und RFIX/*.grc erzeugten .rc2 (ResConv, Ordner
+// ResourceObjects) müssen hier eingebunden werden, sonst fehlen MDID, Menü und
+// Palette in der .apx und Archicad lehnt das Add-On beim Laden ab (Muster:
+// gisloader-Add-on, RFIX.win/gisloader.rc2).
+// ****************************************************************************/
+
+#include "rendertaxi.grc.rc2"
+#include "rendertaxiFix.grc.rc2"
+
+1	ICON	LOADONCALL MOVEABLE IMPURE	ACAP.ico

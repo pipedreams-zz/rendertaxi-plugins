@@ -1,0 +1,174 @@
+/* *****************************************************************************
+// rendertaxi.ai für Archicad 28 — lokalisierbare Ressourcen.
+//
+// Die Palette hat genau die vier Bereiche aus Festlegung 3 des Issues #20:
+// Verbindung · Projekt/Blickpunkt · Bild übernehmen · im Browser öffnen.
+// Generierung und Ergebnisbearbeitung bleiben in der Webanwendung; deshalb gibt
+// es hier keinen Prompt, kein Rezept und keinen Auftrag.
+// ****************************************************************************/
+
+'STR#' 32000 "Add-on Name and Description" {
+/* [  1] */		"rendertaxi.ai"
+/* [  2] */		"Die aktuelle Ansicht als Bild an rendertaxi.ai uebergeben und dem passenden Blickpunkt zuordnen."
+}
+
+/* **Zwei Ressourcen, zwei Befehle, keine Zwischenebene.**
+
+   `ACAPI_MenuItem_RegisterMenu` mit `MenuCode_UserDef` kennt laut DevKit genau
+   zwei Formen: zwei Zeilen sind „eigenes Hauptmenü mit **einem** Befehl", drei
+   und mehr sind „eigenes Hauptmenü mit **Untermenü**". Gemessen am 24.09.2026
+   an Archicad 28: drei Zeilen ergaben „rendertaxi.ai > Palette^ES^EE… >
+   Bildzugriff" — die zweite Zeile wurde zur Überschrift des Untermenüs, samt
+   roh angezeigter Steuerzeichen.
+
+   Ein flaches Menü mit zwei Befehlen gibt es deshalb nur als zwei getrennte
+   Registrierungen mit **demselben** Menütitel.
+
+   **Alle Freigabecodes, die das DevKit kennt.** `^E…` zählt die Fensterarten
+   auf, in denen ein Befehl bedienbar ist; die Beispiele des DevKit benutzen
+   `E2` (Grundriss), `E3` (3D), `ES` (Schnitt), `EE` (Ansicht), `EI`
+   (Innenansicht), `ED` (Detail), `EW` (Arbeitsblatt), `EL` (Layout), `ET`
+   (3D-Dokument) und `EM`. Eine Palette zu öffnen ist keine Handlung am
+   Modell — sie gehört in jedes Fenster, also stehen hier alle.
+
+   Zwei Fehlversuche am 24.09.2026, beide gemessen: mit der Teilmenge aus den
+   Beispielen (`^ES^EE^EI^ED^EW^E3^EL`) war der Befehl im **Renderfenster**
+   ausgegraut; **ganz ohne** Codes war er auch im **3D-Fenster** ausgegraut —
+   „keine Angabe" heißt in Archicad also nicht „überall", sondern „nur im
+   Vorgabefall". */
+'STR#' 32500 "Strings for the Menu" {
+/* [   ] */		"rendertaxi.ai"
+/* [  1] */			"Palette^E2^E3^ES^EE^EI^ED^EW^EL^ET^EM"
+}
+
+'STR#' 32501 "Strings for the Second Menu" {
+/* [   ] */		"rendertaxi.ai"
+/* [  1] */			"Über rendertaxi.ai^E2^E3^ES^EE^EI^ED^EW^EL^ET^EM"
+}
+
+/* --- Palette ------------------------------------------------------------- */
+
+'GDLG'  32500    Palette | topCaption | close   0   0  424  818  "rendertaxi.ai"  {
+/* [  1] */ GroupBox             8    6  408  118  LargePlain  Primary  "Verbindung"
+/* [  2] */ LeftText            20   28   76   20  SmallPlain  vCenter  "Server"
+/* [  3] */ TextEdit           100   26  308   22  SmallPlain  200
+/* [  4] */ LeftText            20   54  388   20  SmallPlain  vCenter  ""
+/* [  5] */ Button              20   84  180   24  LargePlain  "Anmelden…"
+/* [  6] */ Button             210   84  180   24  LargePlain  "Abmelden"
+
+/* [  7] */ GroupBox             8  130  408  200  LargePlain  Primary  "Projekt und Blickpunkt"
+/* [  8] */ LeftText            20  152   76   20  SmallPlain  vCenter  "Projekt"
+/* [  9] */ PopupControl       100  150  308   22  80  64
+/* [ 10] */ RadioButton         20  180  388   18  SmallPlain  1  "Neuer Blickpunkt"
+/* [ 11] */ LeftText            38  204   58   20  SmallPlain  vCenter  "Name"
+/* [ 12] */ TextEdit           100  202  308   22  SmallPlain  120
+/* [ 13] */ RadioButton         20  232  388   18  SmallPlain  1  "Bestehenden Blickpunkt aktualisieren"
+/* [ 14] */ LeftText            38  256   58   20  SmallPlain  vCenter  "Blickpunkt"
+/* [ 15] */ PopupControl       100  254  308   22  80  64
+/* [ 16] */ CheckBox            38  280  370   18  SmallPlain  "Rahmen an Aufnahme anpassen"
+
+/* [ 17] */ GroupBox             8  358  408  332  LargePlain  Primary  "Bild übernehmen"
+/* [ 18] */ LeftText            20  380  388   18  SmallPlain  vCenter  ""
+/* [ 19] */ Button              20  550  250   24  LargePlain  "Aktuelle Ansicht übernehmen"
+/* [ 20] */ Button             280  550  128   24  LargePlain  "Abbrechen"
+/* [ 21] */ LeftText            20  634  388   18  SmallPlain  vCenter  ""
+
+/* [ 22] */ GroupBox             8  696  408  114  LargePlain  Primary  "Im Browser öffnen"
+/* [ 23] */ LeftText            20  718  388   18  SmallPlain  vCenter  ""
+/* [ 24] */ Button              20  776  250   24  LargePlain  "Blickpunkt im Browser öffnen"
+
+/* Die Reihenfolge **im Text** vergibt die Kennungen der Dialogelemente, nicht
+   der Kommentar davor. Ein neues Element kommt deshalb ans Ende, auch wenn es
+   in der Anzeige weiter oben steht — sonst rutschten 21 bis 24 um eins. */
+/* [ 25] */ Button              20  606  388   24  LargePlain  "Angefangene Übernahme verwerfen"
+
+/* Die Angaben zum Ausschnitt stehen **im Dialog**, nicht im Tooltip: eine
+   Zeile, die nur beim Überfahren lesbar ist, ist für einen Abgleich vor der
+   Übernahme wertlos (Befund vom 24.09.2026). */
+/* [ 26] */ LeftText            20  398  388   18  SmallPlain  vCenter  ""
+/* [ 27] */ LeftText            20  416  388   18  SmallPlain  vCenter  ""
+/* [ 28] */ LeftText            20  434  388   18  SmallPlain  vCenter  ""
+/* [ 29] */ LeftText            20  452  388   18  SmallPlain  vCenter  ""
+
+
+/* Das fertige Rendering als zweite Quelle. Es hat einen **eigenen** Knopf,
+   weil das Renderfenster die Palette verdrängt: Archicad blendet sie aus,
+   sobald das Bildfenster vorn steht, und dann ist dort nichts mehr zu
+   bedienen. Der Knopf holt das Bild, ohne dass der Nutzer das Fenster
+   wechseln muss (Befund vom 24.09.2026). */
+/* [ 30] */ Button              20  578  388   24  LargePlain  "Rendern und übernehmen"
+
+/* Zwei Zeilen Reserve: die Angaben werden **umgebrochen**, nicht gekürzt.
+   Sie stehen in der Anzeige über den Knöpfen, im Text aber hinter ihnen —
+   die Reihenfolge im Text vergibt die Kennungen. */
+/* [ 31] */ LeftText            20  470  388   18  SmallPlain  vCenter  ""
+/* [ 32] */ LeftText            20  488  388   18  SmallPlain  vCenter  ""
+
+/* Zweite Zeile für Fortschritt und Ergebnis. Auch hier gilt: umbrechen, nicht
+   abschneiden — ein Satz, der nur im Tooltip steht, ist keine Meldung. */
+/* [ 33] */ LeftText            20  670  388   18  SmallPlain  vCenter  ""
+/* [ 34] */ LeftText            20  736  388   18  SmallPlain  vCenter  ""
+
+/* Die Einstellung „Rahmengröße" (§7.2, `target.viewpoint.size`). Sie steht bei
+   Projekt und Blickpunkt, weil sie zum **Ziel** gehört und nicht zur Aufnahme —
+   und sie gehört zum Vorgangsschlüssel. */
+/* [ 35] */ LeftText           20  304  110   20  SmallPlain  vCenter  "Rahmengröße"
+/* [ 36] */ PopupControl      134  302  274   22  80  64
+
+/* Dritte Zeile für das Ergebnis: „Neuer Blickpunkt …, Aufnahme … Pixel, Rahmen
+   wird angepasst" braucht sie, und abgeschnitten ist keine Meldung. */
+/* [ 37] */ LeftText            20  754  388   18  SmallPlain  vCenter  ""
+
+/* Dritte Fortschrittszeile — aus demselben Grund wie die dritte Ergebniszeile. */
+/* [ 38] */ LeftText            20  652  388   18  SmallPlain  vCenter  ""
+
+/* Siebte und achte Infozeile (Issue #88, Punkt 17). Sechs reichten nicht: die
+   Zeile „Zielgröße: …" stand an fünfter oder sechster Stelle, und ihr Umbruch
+   fiel hinter die letzte Zeile — sie wirkte rechts abgeschnitten. Die Knöpfe
+   darunter rücken dafür um zwei Zeilen nach unten. */
+/* [ 39] */ LeftText            20  506  388   18  SmallPlain  vCenter  ""
+/* [ 40] */ LeftText            20  524  388   18  SmallPlain  vCenter  ""
+}
+
+'DLGH'  32500  DLG_32500_rendertaxi_Palette {
+1	""	GroupBox_0
+2	""	LeftText_0
+3	""	TextEdit_0
+4	""	LeftText_1
+5	""	Button_0
+6	""	Button_1
+7	""	GroupBox_1
+8	""	LeftText_2
+9	""	PopUp_0
+10	""	RadioButton_0
+11	""	LeftText_3
+12	""	TextEdit_1
+13	""	RadioButton_1
+14	""	LeftText_4
+15	""	PopUp_1
+16	""	CheckBox_0
+17	""	GroupBox_2
+18	""	LeftText_5
+19	""	Button_2
+20	""	Button_3
+21	""	LeftText_6
+22	""	GroupBox_3
+23	""	LeftText_7
+24	""	Button_4
+25	""	Button_5
+26	""	LeftText_6
+27	""	LeftText_7
+28	""	LeftText_8
+29	""	LeftText_9
+30	""	Button_6
+31	""	LeftText_10
+32	""	LeftText_11
+33	""	LeftText_12
+34	""	LeftText_13
+35	""	LeftText_14
+36	""	PopupControl_2
+37	""	LeftText_15
+38	""	LeftText_16
+39	""	LeftText_17
+40	""	LeftText_18
+}

@@ -1,0 +1,17 @@
+/* *****************************************************************************
+// rendertaxi.ai für Archicad 28 — nicht lokalisierte Ressourcen.
+//
+// MDID: Entwickler-ID und Local-ID aus dem Graphisoft-Developer-Programm.
+// Beide sind registriert; eine frei gewählte Local-ID lehnt Archicad beim Laden
+// mit „Das Add-On kann nicht freigeschaltet werden" ab.
+//
+// Die Entwickler-ID ist dieselbe wie beim gisloader-Add-on desselben
+// Entwicklers; die **Local-ID ist eine andere** (gisloader: 1830946092), damit
+// Archicad beide Add-Ons gemeinsam laden kann — Festlegung 8 aus Issue #20:
+// „Eigene MDID/Entwickler-ID, keine Kollision mit dem gisloader-Add-on."
+// ****************************************************************************/
+
+'MDID' 32500 "Add-On Identifier" {
+	963855185
+	1702429828
+}
