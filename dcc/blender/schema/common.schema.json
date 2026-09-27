@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendertaxi.ai/contracts/plugin/v1/common.schema.json",
+  "title": "Plugin contracts — shared primitives v1",
+  "description": "Host-neutrale Primitivtypen der Plugin-Verträge v1. Diese Datei definiert kein eigenständiges Dokument, sondern ausschließlich referenzierbare Definitionen. Sie ist inhaltsgleich zu den entsprechenden $defs von integrations/archicad/contracts/v1/common.schema.json; tools/consistency.mjs lässt jede unbeabsichtigte Abweichung fehlschlagen.",
+  "$defs": {
+    "contractVersion": {
+      "type": "string",
+      "description": "Semantische Version des Vertrags. Additive optionale Felder erhöhen MINOR, inkompatible Änderungen MAJOR.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "uuidV7": {
+      "type": "string",
+      "description": "Plattformkennung als UUIDv7 in kanonischer Kleinschreibung.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "stableKey": {
+      "type": "string",
+      "description": "Vom Plugin vergebener, im Hostprojekt persistierter Schlüssel. Niemals aus Arrayposition, Listenindex oder Anzeigename abgeleitet.",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "description": "SHA-256 als 64 Hexziffern in Kleinschreibung.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestampUtc": {
+      "type": "string",
+      "description": "Zeitpunkt in UTC nach RFC 3339 mit Millisekunden und Suffix Z.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "displayText": {
+      "type": "string",
+      "description": "Reine Anzeigeinformation. Niemals Identität, niemals Vergleichsgrundlage.",
+      "maxLength": 512
+    },
+    "relativePath": {
+      "type": "string",
+      "description": "Pfad relativ zum Wurzelverzeichnis des Captures. Nur Vorwärtsschrägstriche, kein führender Schrägstrich, kein Laufwerksbuchstabe, kein '..'-Segment.",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+    },
+    "mediaType": {
+      "type": "string",
+      "description": "IANA-Medientyp ohne Parameter.",
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+    },
+    "byteSize": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "meters": {
+      "type": "number",
+      "description": "Länge in Metern, Präzisionsklasse \"length\": kanonisch auf genau sechs Nachkommastellen gerundet, ohne negative Null. Maßgeblich ist der Zahlenwert, nicht seine Schreibweise im JSON. Die Stellenzahl selbst ist im Schema nicht zuverlässig prüfbar (multipleOf auf binären Doubles ist unzuverlässig) und wird von tools/validate.mjs erzwungen; minimum und maximum begrenzen den Bereich, in dem ein Sechsstellenraster überhaupt exakt darstellbar ist.",
+      "minimum": -9007199254,
+      "maximum": 9007199254
+    },
+    "radians": {
+      "type": "number",
+      "description": "Winkel im Bogenmaß, Präzisionsklasse \"angle\": kanonisch auf genau neun Nachkommastellen gerundet, ohne negative Null. Die Stellenzahl erzwingt tools/validate.mjs; minimum und maximum begrenzen den exakt darstellbaren Bereich.",
+      "minimum": -9007199,
+      "maximum": 9007199
+    },
+    "unitInterval": {
+      "type": "number",
+      "description": "Normalisierter Faktor im Intervall [0, 1], Präzisionsklasse \"factor\": kanonisch auf genau sechs Nachkommastellen gerundet, ohne negative Null. Die Stellenzahl erzwingt tools/validate.mjs.",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "vector3": {
+      "type": "array",
+      "description": "Kartesischer Vektor [x, y, z] im jeweils angegebenen Raum.",
+      "items": {
+        "$ref": "#/$defs/meters"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "unitVector3": {
+      "type": "array",
+      "description": "Auf Länge 1 normierter Richtungsvektor [x, y, z]. Komponenten in der Präzisionsklasse \"direction\": kanonisch auf genau neun Nachkommastellen gerundet, ohne negative Null.",
+      "items": {
+        "type": "number",
+        "minimum": -1,
+        "maximum": 1
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "matrix3x4": {
+      "type": "object",
+      "description": "Affine Transformation als 3x4-Matrix in Zeilenreihenfolge: x' = m[0]x + m[1]y + m[2]z + m[3], y' = m[4]x + m[5]y + m[6]z + m[7], z' = m[8]x + m[9]y + m[10]z + m[11]. Die Werte tragen zwei Präzisionsklassen: die Indizes 3, 7 und 11 sind Verschiebungen in Metern (Klasse \"length\", sechs Nachkommastellen), alle übrigen sind Richtungskosinus (Klasse \"direction\", neun Nachkommastellen).",
+      "properties": {
+        "order": {
+          "const": "row-major"
+        },
+        "rows": {
+          "const": 3
+        },
+        "columns": {
+          "const": 4
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": -9007199254,
+            "maximum": 9007199254
+          },
+          "minItems": 12,
+          "maxItems": 12
+        }
+      },
+      "required": ["order", "rows", "columns", "values"],
+      "additionalProperties": false
+    },
+    "boundingBox": {
+      "type": "object",
+      "description": "Achsparallele Bounding Box im Exportraum.",
+      "properties": {
+        "space": {
+          "const": "export"
+        },
+        "min": {
+          "$ref": "#/$defs/vector3"
+        },
+        "max": {
+          "$ref": "#/$defs/vector3"
+        }
+      },
+      "required": ["space", "min", "max"],
+      "additionalProperties": false
+    },
+    "colorRgb": {
+      "type": "object",
+      "description": "Farbe mit Komponenten im Intervall [0, 1].",
+      "properties": {
+        "colorSpace": {
+          "enum": ["srgb", "linear"]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unitInterval"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "required": ["colorSpace", "components"],
+      "additionalProperties": false
+    },
+    "assetRole": {
+      "type": "string",
+      "description": "Semantische Rolle einer Bilddatei in kebab-case. viewport ist die Bildschirmansicht des Hosts, beauty das gerenderte Bild; beide sind verschiedene Rollen und werden nicht zusammengelegt. Der Katalog ist in v1 vollständig angelegt; nicht jede Rolle muss erzeugt werden.",
+      "enum": [
+        "viewport",
+        "beauty",
+        "depth",
+        "normal",
+        "albedo",
+        "mask",
+        "object-id",
+        "material-id",
+        "ambient-occlusion",
+        "cryptomatte"
+      ]
+    },
+    "errorItem": {
+      "type": "object",
+      "description": "Maschinenlesbarer Validierungs- oder Verarbeitungsfehler.",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "message": {
+          "$ref": "#/$defs/displayText"
+        },
+        "pointer": {
+          "type": "string",
+          "description": "JSON Pointer auf die fehlerhafte Stelle im geprüften Dokument.",
+          "maxLength": 512
+        }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    }
+  }
+}

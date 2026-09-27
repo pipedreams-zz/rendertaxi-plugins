@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendertaxi.ai/contracts/plugin/v1/capture-manifest.schema.json",
+  "title": "Plugin capture manifest v1",
+  "description": "Host-neutrales Manifest eines bildzentrierten Captures. Archicad, Blender, Cinema 4D und Rhino beschreiben ihre Bilddaten danach identisch. Das Manifest bettet keine Binärdaten ein und kennt kein Feld des Modellwegs (ADR 0009, Entscheidung 3).",
+  "type": "object",
+  "properties": {
+    "contract": { "const": "rendertaxi.plugin.capture-manifest" },
+    "contractVersion": { "$ref": "common.schema.json#/$defs/contractVersion" },
+    "captureId": {
+      "description": "Vom Plugin erzeugte Kennung dieses Captures. Bleibt bei Wiederholung derselben Übernahme gleich.",
+      "$ref": "common.schema.json#/$defs/uuidV7"
+    },
+    "createdAt": { "$ref": "common.schema.json#/$defs/timestampUtc" },
+    "source": { "$ref": "#/$defs/source" },
+    "project": { "$ref": "#/$defs/project" },
+    "view": { "$ref": "#/$defs/view" },
+    "intent": { "$ref": "#/$defs/intent" },
+    "camera": {
+      "description": "Kamerablock. In v1 immer null; Ausbaustufe 2 führt ihn als MINOR-Erweiterung ein.",
+      "type": "null"
+    },
+    "geometry": {
+      "description": "Geometrieblock. In v1 immer null; Ausbaustufe 2 führt ihn als MINOR-Erweiterung ein.",
+      "type": "null"
+    },
+    "contentHash": {
+      "description": "SHA-256 über die sortierten Assetzeilen aller Assets mit status present, nach tools/canonical-hash.mjs.",
+      "$ref": "common.schema.json#/$defs/sha256"
+    },
+    "assets": {
+      "type": "array",
+      "description": "Je Rolle höchstens ein Eintrag; mindestens ein Eintrag trägt status present. Beides erzwingt tools/validate.mjs.",
+      "items": { "$ref": "#/$defs/asset" },
+      "minItems": 1,
+      "maxItems": 10
+    }
+  },
+  "required": [
+    "contract",
+    "contractVersion",
+    "captureId",
+    "createdAt",
+    "source",
+    "project",
+    "view",
+    "intent",
+    "camera",
+    "geometry",
+    "contentHash",
+    "assets"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "description": "Herkunft des Captures. Dient der Kompatibilitätsprüfung und der Fehlersuche. Kein Rechnername, kein Benutzername, kein Pfad.",
+      "properties": {
+        "host": {
+          "type": "object",
+          "description": "Die Hostanwendung. key ist bewusst keine geschlossene Aufzählung: die Hostliste bleibt offen für künftige Plugins.",
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "Hostschlüssel in kebab-case, etwa archicad, blender, cinema-4d, rhino.",
+              "minLength": 2,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+            },
+            "version": {
+              "type": "string",
+              "description": "Version der Hostanwendung als punktgetrennte Dezimalzahlen.",
+              "maxLength": 32,
+              "pattern": "^[0-9]+(\\.[0-9]+){0,3}$"
+            },
+            "build": {
+              "type": "string",
+              "description": "Optionale Buildkennung der Hostanwendung.",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "capabilities": {
+              "description": "Seit 1.1.0, optional: Selbstauskunft des Plugins über die Host-Capabilities (host-capabilities.schema.json). Der Server glaubt der Selbstauskunft nicht: Capabilities steuern die Oberfläche des Plugins und die Vorauswahl von Presets. Die Planung eines Jobs erfolgt ausschließlich nach den Dateien, die tatsächlich mit status: present angekommen und serverseitig verifiziert sind. In einem Dokument mit contractVersion 1.0.x ist das Feld unzulässig; erzwingt tools/validate.mjs.",
+              "$ref": "host-capabilities.schema.json#/$defs/hostCapabilities"
+            }
+          },
+          "required": ["key", "version"],
+          "additionalProperties": false
+        },
+        "plugin": {
+          "type": "object",
+          "properties": {
+            "identifier": {
+              "type": "string",
+              "description": "Stabile Kennung des Plugins in Reverse-DNS-Schreibweise.",
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+            },
+            "version": { "$ref": "common.schema.json#/$defs/contractVersion" }
+          },
+          "required": ["identifier", "version"],
+          "additionalProperties": false
+        },
+        "machine": {
+          "type": "object",
+          "description": "Betriebssystem und Architektur der erzeugenden Maschine. Kein Rechnername, kein Benutzername, kein Pfad.",
+          "properties": {
+            "os": { "enum": ["macos", "windows", "linux"] },
+            "osVersion": { "type": "string", "maxLength": 32, "pattern": "^[0-9A-Za-z._ -]*$" },
+            "architecture": { "enum": ["arm64", "x64"] }
+          },
+          "required": ["os", "architecture"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["host", "plugin", "machine"],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "description": "Projektidentität. Sie wird niemals aus Dateiname oder Dateipfad abgeleitet. platformProjectId ist autoritativ; sourceProjectKey ist für den Server ein Hinweis, keine Autorität (ADR 0009, Entscheidung 8).",
+      "properties": {
+        "platformProjectId": {
+          "description": "Plattform-Projekt-ID, sofern das Hostprojekt bereits einem Plattformprojekt zugeordnet ist. Vor der Zuordnung null.",
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/uuidV7" }, { "type": "null" }]
+        },
+        "sourceProjectKey": {
+          "description": "Vom Plugin erzeugter und im Hostprojekt persistierter Schlüssel. null, wenn der Host keinen Schlüssel persistieren kann.",
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/stableKey" }, { "type": "null" }]
+        },
+        "displayName": {
+          "description": "Optionaler Anzeigename. Reine Anzeigeinformation ohne Identitätswirkung.",
+          "$ref": "common.schema.json#/$defs/displayText"
+        }
+      },
+      "required": ["platformProjectId", "sourceProjectKey"],
+      "additionalProperties": false
+    },
+    "view": {
+      "type": "object",
+      "description": "Die Quellansicht des Hosts, aus der das Capture stammt.",
+      "properties": {
+        "sourceViewKey": {
+          "description": "Stabiler Schlüssel der Quellansicht, soweit der Host einen hergibt; sonst null. Niemals aus dem Anzeigenamen abgeleitet.",
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/stableKey" }, { "type": "null" }]
+        },
+        "displayName": {
+          "description": "Optionaler Name der Quellansicht. Reine Anzeigeinformation.",
+          "$ref": "common.schema.json#/$defs/displayText"
+        }
+      },
+      "required": ["sourceViewKey"],
+      "additionalProperties": false
+    },
+    "intent": {
+      "type": "object",
+      "description": "Was mit dem Capture geschehen soll — ausschließlich in Plattformbegriffen. Kein Providername, kein Modellname, kein Workflowgraph, kein Feld, das ein Backendformat abbildet (ADR 0009, Entscheidung 7). Ein leeres Objekt bedeutet: nur übergeben, nichts anstoßen.",
+      "properties": {
+        "presetKey": {
+          "description": "Plattformschlüssel einer Voreinstellung.",
+          "$ref": "common.schema.json#/$defs/stableKey"
+        },
+        "recipeId": {
+          "description": "Plattformkennung eines Rezepts.",
+          "$ref": "common.schema.json#/$defs/uuidV7"
+        },
+        "promptText": {
+          "type": "string",
+          "description": "Freier Prompttext des Nutzers.",
+          "maxLength": 4000
+        }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "description": "Bildbeschreibung. Ein Konsument liest Farbraum, Bittiefe, Zahlenformat und Kanäle, statt sie zu erraten.",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "colorSpace": {
+          "description": "srgb und linear für Farbbilder; non-color für Datenbilder wie Tiefe, Normalen, Masken und IDs.",
+          "enum": ["srgb", "linear", "non-color"]
+        },
+        "bitDepth": {
+          "type": "integer",
+          "description": "Bits je Kanal.",
+          "enum": [8, 16, 32],
+          "minimum": 8,
+          "maximum": 32
+        },
+        "sampleFormat": {
+          "description": "Zahlenformat je Kanal. 16 Bit sind ohne diese Angabe mehrdeutig (Ganzzahl oder Halbgenauigkeit).",
+          "enum": ["uint", "float"]
+        },
+        "channels": {
+          "description": "Kanalbelegung der Datei.",
+          "enum": ["gray", "gray-alpha", "rgb", "rgba"]
+        }
+      },
+      "required": ["width", "height", "colorSpace", "bitDepth", "sampleFormat", "channels"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "sampleFormat": { "const": "float" } },
+            "required": ["sampleFormat"]
+          },
+          "then": { "properties": { "bitDepth": { "enum": [16, 32] } } }
+        }
+      ]
+    },
+    "depth": {
+      "type": "object",
+      "description": "Kodierung eines Tiefenbildes. linear-metric: der Pixelwert ist der Abstand in Metern. normalized-linear: 0 entspricht near, 1 entspricht far, linear dazwischen. normalized-inverse: 1 entspricht near, 0 entspricht far, linear im Kehrwert des Abstands.",
+      "properties": {
+        "encoding": { "enum": ["linear-metric", "normalized-linear", "normalized-inverse"] },
+        "near": {
+          "description": "Abstand in Metern, der dem nahen Ende des Wertebereichs entspricht.",
+          "$ref": "common.schema.json#/$defs/meters",
+          "minimum": 0
+        },
+        "far": {
+          "description": "Abstand in Metern, der dem fernen Ende des Wertebereichs entspricht. Größer als near; erzwingt tools/validate.mjs.",
+          "$ref": "common.schema.json#/$defs/meters",
+          "minimum": 0
+        }
+      },
+      "required": ["encoding"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "encoding": { "enum": ["normalized-linear", "normalized-inverse"] } },
+            "required": ["encoding"]
+          },
+          "then": { "required": ["near", "far"] }
+        }
+      ]
+    },
+    "normal": {
+      "type": "object",
+      "description": "Bezugsraum eines Normalenbildes.",
+      "properties": {
+        "space": { "enum": ["world", "camera", "tangent"] }
+      },
+      "required": ["space"],
+      "additionalProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "description": "Beschreibung einer Bilddatei. Binärdaten werden niemals in das Manifest eingebettet.",
+      "properties": {
+        "role": { "$ref": "common.schema.json#/$defs/assetRole" },
+        "path": { "$ref": "common.schema.json#/$defs/relativePath" },
+        "status": {
+          "description": "present: erzeugt und vorhanden. planned: vom Host vorgesehen, in diesem Capture nicht erzeugt. unavailable: in diesem Host oder für diese Ansicht nicht erzeugbar.",
+          "enum": ["present", "planned", "unavailable"]
+        },
+        "mediaType": { "$ref": "common.schema.json#/$defs/mediaType" },
+        "byteSize": { "$ref": "common.schema.json#/$defs/byteSize" },
+        "sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "image": { "$ref": "#/$defs/image" },
+        "depth": { "$ref": "#/$defs/depth" },
+        "normal": { "$ref": "#/$defs/normal" },
+        "note": { "$ref": "common.schema.json#/$defs/displayText" }
+      },
+      "required": ["role", "path", "status"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "present" } }, "required": ["status"] },
+          "then": { "required": ["mediaType", "byteSize", "sha256", "image"] },
+          "else": { "properties": { "byteSize": false, "sha256": false } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "depth" } }, "required": ["role"] },
+          "then": {
+            "if": { "properties": { "status": { "const": "present" } }, "required": ["status"] },
+            "then": { "required": ["depth"] }
+          },
+          "else": { "properties": { "depth": false } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "normal" } }, "required": ["role"] },
+          "then": {
+            "if": { "properties": { "status": { "const": "present" } }, "required": ["status"] },
+            "then": { "required": ["normal"] }
+          },
+          "else": { "properties": { "normal": false } }
+        },
+        {
+          "if": {
+            "properties": { "role": { "enum": ["viewport", "beauty", "albedo"] } },
+            "required": ["role"]
+          },
+          "then": {
+            "properties": {
+              "image": { "properties": { "colorSpace": { "enum": ["srgb", "linear"] } } }
+            }
+          },
+          "else": {
+            "properties": {
+              "image": { "properties": { "colorSpace": { "const": "non-color" } } }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

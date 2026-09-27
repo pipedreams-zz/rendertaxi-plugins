@@ -7,8 +7,13 @@
 # Dateinamen tragen Hostprogramm, Hostversion, Plugin-Version und
 # Release-Nummer, damit Nutzer Stände unterscheiden können:
 #   rendertaxi-archicad28-1.0.0-2026.09.26.zip
+#   rendertaxi-blender5.2-0.1.0-2026.09.26.zip
 # RELEASE ist das Tag des Releases (der Release-Workflow übergibt es); ohne
 # Angabe das heutige Datum.
+#
+# Blender: die Zip **ist** die Extension (blender_manifest.toml an der Wurzel),
+# installierbar über „Install from Disk"; Version und Mindestversion kommen aus
+# dcc/blender/blender_manifest.toml.
 #
 # Archicad: dcc/archicad/dist/ muss macos/rendertaxi.bundle **und**
 # win/rendertaxi.apx enthalten; fehlt eines, bricht das Skript ab, statt ein
@@ -36,12 +41,23 @@ cp docs/dcc/archicad.md "$ARCHICAD_DIST/ANLEITUNG.md"
 (cd "$ARCHICAD_DIST" && zip -qry "../../../dist/$ARCHICAD_ZIP" ANLEITUNG.md macos win -x '*.DS_Store')
 rm -f "$ARCHICAD_DIST/ANLEITUNG.md"
 
+# Blender: Version und Mindestversion (MAJOR.MINOR) aus blender_manifest.toml.
+BLENDER_MANIFEST=dcc/blender/blender_manifest.toml
+test -f "$BLENDER_MANIFEST" || { echo "Fehlt: $BLENDER_MANIFEST" >&2; exit 1; }
+BLENDER=$(grep -E '^version = "[0-9]+\.[0-9]+\.[0-9]+"' "$BLENDER_MANIFEST" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+BLENDER_HOST=$(grep -E '^blender_version_min = ' "$BLENDER_MANIFEST" | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)
+test -n "$BLENDER" -a -n "$BLENDER_HOST" || { echo "Blender: Version oder Mindestversion nicht lesbar" >&2; exit 1; }
+BLENDER_ZIP="rendertaxi-blender${BLENDER_HOST}-${BLENDER}-${RELEASE}.zip"
+(cd dcc/blender && zip -qr "../../dist/$BLENDER_ZIP" . -x '*__pycache__*' -x '*.DS_Store' -x '.gitignore')
+unzip -l "dist/$BLENDER_ZIP" | grep -q ' blender_manifest.toml$' || { echo "Blender-Zip ohne blender_manifest.toml an der Wurzel" >&2; exit 1; }
+
 cat > dist/RELEASE.md <<EOF
 Release $RELEASE
 
 | Plugin | Hostprogramm | Version | Datei |
 | --- | --- | --- | --- |
 | Archicad | Archicad $ARCHICAD_HOST (macOS, Windows) | $ARCHICAD | $ARCHICAD_ZIP (macOS-Bundle und Windows-.apx) |
+| Blender | Blender $BLENDER_HOST LTS (macOS, Windows, Linux) | $BLENDER | $BLENDER_ZIP (Extension, Vorschau) |
 
 **Archicad installieren:** Zip entpacken, Archicad beenden.
 
@@ -49,7 +65,10 @@ Release $RELEASE
 - Windows: \`win/rendertaxi.apx\` nach \`C:\\Program Files\\Graphisoft\\Archicad 28\\Add-Ons\\\` kopieren. Vorher die Zip freigeben (Rechtsklick › Eigenschaften › Zulassen), sie ist nicht signiert. Die Windows-Fassung ist eine Vorschau, siehe Anleitung.
 
 Danach Archicad starten, Menü **rendertaxi.ai › Palette**. Vollständige Anleitung: [docs/dcc/archicad.md](docs/dcc/archicad.md) (liegt auch als ANLEITUNG.md in der Zip).
+
+**Blender installieren:** Zip **nicht** entpacken. In Blender **Edit › Preferences › Get Extensions ›** Menü oben rechts **› Install from Disk…** und die Zip wählen; **Allow Online Access** unter **System › Network** einschalten. Danach in der 3D-Ansicht **N › rendertaxi**. Vollständige Anleitung: [docs/dcc/blender.md](docs/dcc/blender.md).
 EOF
 ls -l dist
 unzip -l "dist/$ARCHICAD_ZIP" | tail -n +1
+unzip -l "dist/$BLENDER_ZIP" | tail -n +1
 cat dist/RELEASE.md

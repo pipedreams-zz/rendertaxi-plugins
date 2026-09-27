@@ -13,7 +13,7 @@ Webanwendung verlinkt dieselbe Seite unter **Verbundene Geräte › Plugins heru
 | Plugin    | Ordner         | Voraussetzung                           | Stand           |
 | --------- | -------------- | --------------------------------------- | --------------- |
 | Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64) | verfügbar       |
-| Blender   | `dcc/blender`  | —                                       | in Vorbereitung |
+| Blender   | `dcc/blender`  | Blender 5.2 LTS (macOS, Win, Linux)     | Vorschau        |
 | Cinema 4D | `dcc/cinema4d` | —                                       | in Vorbereitung |
 | Rhino     | `dcc/rhino`    | —                                       | in Vorbereitung |
 
@@ -23,6 +23,7 @@ Jedes Plugin zählt seine Version eigenständig. Releases tragen ein Datum
 ## Anleitungen
 
 - [Archicad](docs/dcc/archicad.md)
+- [Blender](docs/dcc/blender.md)
 
 ## Herkunft
 
@@ -33,7 +34,8 @@ Release hierher übertragen. Pull Requests hier werden deshalb nicht
 
 Ein Release baut die Windows-Fassung des Archicad-Add-ons selbst
 (`.github/workflows/archicad-windows.yml`) und packt sie mit dem
-macOS-Bundle aus `dcc/archicad/dist/macos/` (`scripts/pack.sh`).
+macOS-Bundle aus `dcc/archicad/dist/macos/` (`scripts/pack.sh`). Die
+Blender-Extension ist Python und wird ohne Build aus `dcc/blender/` gepackt.
 
 ## Lizenz
 
