@@ -341,6 +341,13 @@ def validate_manifest(document: dict) -> list[str]:
         if isinstance(host, dict) and "capabilities" in host:
             problems.append("/source/host/capabilities: in 1.0.x unzulässig (erst ab 1.1.0)")
     assets = document.get("assets") if isinstance(document, dict) else None
+    if isinstance(document, dict) and re.fullmatch(r"1\.[01]\.[0-9]+", version):
+        for block in ("camera", "geometry"):
+            if document.get(block) is not None:
+                problems.append(f"/{block}: ein Objekt ist erst ab contractVersion 1.2.0 zulässig")
+        for index, asset in enumerate(assets if isinstance(assets, list) else []):
+            if isinstance(asset, dict) and asset.get("role") == "model":
+                problems.append(f"/assets/{index}/role: model ist erst ab contractVersion 1.2.0 zulässig")
     if isinstance(assets, list):
         roles = [a.get("role") for a in assets if isinstance(a, dict)]
         paths = [a.get("path") for a in assets if isinstance(a, dict)]

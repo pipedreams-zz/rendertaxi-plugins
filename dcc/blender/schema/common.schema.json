@@ -156,7 +156,7 @@
     },
     "assetRole": {
       "type": "string",
-      "description": "Semantische Rolle einer Bilddatei in kebab-case. viewport ist die Bildschirmansicht des Hosts, beauty das gerenderte Bild; beide sind verschiedene Rollen und werden nicht zusammengelegt. Der Katalog ist in v1 vollständig angelegt; nicht jede Rolle muss erzeugt werden.",
+      "description": "Semantische Rolle einer Datei in kebab-case. viewport ist die Bildschirmansicht des Hosts, beauty das gerenderte Bild; beide sind verschiedene Rollen und werden nicht zusammengelegt. model ist seit Capture-Manifest 1.2.0 die GLB-Datei des Modells (Ausbaustufe 2) und die einzige Rolle, die kein Bild beschreibt. Nicht jede Rolle muss erzeugt werden.",
       "enum": [
         "viewport",
         "beauty",
@@ -167,7 +167,8 @@
         "object-id",
         "material-id",
         "ambient-occlusion",
-        "cryptomatte"
+        "cryptomatte",
+        "model"
       ]
     },
     "errorItem": {
