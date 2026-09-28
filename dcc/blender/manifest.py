@@ -1,4 +1,4 @@
-"""Capture-Manifest 1.1.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
+"""Capture-Manifest 1.1.0 und 1.2.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
 Dieses Modul kennt ``bpy`` nicht. Es ist die Python-Fassung dessen, was der
 Referenzclient (``integrations/_shared/tools/capture-client.mjs``) und das
@@ -30,6 +30,11 @@ from dataclasses import dataclass, field
 
 CONTRACT = "rendertaxi.plugin.capture-manifest"
 CONTRACT_VERSION = "1.1.0"
+# Mit Modell: 1.2.0 bringt ``camera``, ``geometry`` und die Rolle ``model`` (ADR 0032).
+MODEL_CONTRACT_VERSION = "1.2.0"
+MODEL_ROLE = "model"
+MODEL_MEDIA_TYPE = "model/gltf-binary"
+IMPLEMENTED_MINOR = 2
 CLIENT_ID = "ai.rendertaxi.plugin.blender"
 HOST_KEY = "blender"
 
@@ -320,8 +325,10 @@ def validate_manifest(document: dict) -> list[str]:
 
     Dieselben Zusatzregeln wie ``validate.mjs`` und der Prüfer des Servers:
     je Rolle und je Pfad höchstens ein Eintrag, mindestens ein vorhandenes
-    Asset, ``contentHash`` passt zum Inhalt, ``depth`` nie ``present``
-    (QB-01, ``integrations/blender/docs/open-questions.md``).
+    **Bild**, ``contentHash`` passt zum Inhalt, ``depth`` nie ``present``
+    (QB-01, ``integrations/blender/docs/open-questions.md``); seit 1.2.0
+    ``geometry`` genau dann, wenn eine Datei der Rolle ``model`` vorhanden ist,
+    und die Kamera mit normierten, nicht parallelen Vektoren.
     """
     reg = registry()
     schema = reg.documents["capture-manifest.schema.json"]
@@ -334,7 +341,7 @@ def validate_manifest(document: dict) -> list[str]:
         major, minor, _patch = (int(x) for x in version.split("."))
         if major != 1:
             problems.append("/contractVersion: unsupported_contract_major")
-        elif minor > 1:
+        elif minor > IMPLEMENTED_MINOR:
             problems.append("/contractVersion: unsupported_contract_minor")
     if isinstance(document, dict) and version.startswith("1.0."):
         host = ((document.get("source") or {}).get("host") or {})
@@ -356,8 +363,8 @@ def validate_manifest(document: dict) -> list[str]:
         if len(set(paths)) != len(paths):
             problems.append("/assets: ein Pfad steht mehr als einmal")
         present = [a for a in assets if isinstance(a, dict) and a.get("status") == "present"]
-        if not present:
-            problems.append("/assets: kein Asset mit status present")
+        if not any(a.get("role") != MODEL_ROLE for a in present):
+            problems.append("/assets: kein Bild mit status present — das Modell allein ist kein Capture")
         if any(a.get("role") == "depth" for a in present):
             problems.append("/assets: depth ist für Blender nie present (QB-01)")
         try:
@@ -365,6 +372,71 @@ def validate_manifest(document: dict) -> list[str]:
                 problems.append("/contentHash: passt nicht zum Inhalt der Assets")
         except (KeyError, TypeError):
             pass
+        problems.extend(_geometry_problems(document, assets))
+    if isinstance(document, dict):
+        problems.extend(_camera_problems(document.get("camera")))
+        geometry = document.get("geometry")
+        georeference = geometry.get("georeference") if isinstance(geometry, dict) else None
+        if isinstance(georeference, dict):
+            problems.extend(_transform_chain_problems(georeference.get("transformChain")))
+    return problems
+
+
+def _transform_chain_problems(chain) -> list[str]:
+    """Geordnet und geschlossen von ``model`` nach ``project`` — wie ``checkTransformChain``."""
+    if not isinstance(chain, list) or not chain:
+        return []
+    pointer = "/geometry/georeference/transformChain"
+    steps = [step if isinstance(step, dict) else {} for step in chain]
+    problems = []
+    if not all(step.get("order") == index + 1 for index, step in enumerate(steps)):
+        problems.append(f"{pointer}: order zählt nicht lückenlos ab 1")
+    linked = all(index == 0 or steps[index - 1].get("targetFrame") == step.get("sourceFrame")
+                 for index, step in enumerate(steps))
+    if steps[0].get("sourceFrame") != "model" or steps[-1].get("targetFrame") != "project" or not linked:
+        problems.append(f"{pointer}: führt nicht lückenlos von model nach project")
+    return problems
+
+
+def _geometry_problems(document: dict, assets: list) -> list[str]:
+    """``geometry`` beschreibt genau die eine GLB-Datei — und steht genau dann da."""
+    model = next((a for a in assets if isinstance(a, dict) and a.get("role") == MODEL_ROLE
+                  and a.get("status") == "present"), None)
+    geometry = document.get("geometry")
+    described = isinstance(geometry, dict)
+    if model is not None and not described:
+        return ["/geometry: ein Asset mit role model und status present verlangt den Block geometry"]
+    if described and model is None:
+        return ["/geometry: der Block verlangt ein Asset mit role model und status present"]
+    if described and geometry.get("assetPath") != model.get("path"):
+        return ["/geometry/assetPath: zeigt nicht auf das Asset mit role model"]
+    return []
+
+
+_UNIT_TOLERANCE = 1e-6
+
+
+def _camera_problems(camera) -> list[str]:
+    """Was JSON Schema nicht ausdrücken kann — wortgleich zu ``checkCamera`` in ``validate.mjs``."""
+    if not isinstance(camera, dict):
+        return []
+    problems = []
+    vectors = {}
+    for key in ("direction", "up"):
+        vector = camera.get(key)
+        if not isinstance(vector, list) or len(vector) != 3 or not all(_type_of(c) == "number" for c in vector):
+            continue
+        vectors[key] = vector
+        if abs(sum(c * c for c in vector) ** 0.5 - 1) > _UNIT_TOLERANCE:
+            problems.append(f"/camera/{key}: kein normierter Vektor")
+    if "direction" in vectors and "up" in vectors:
+        dot = sum(a * b for a, b in zip(vectors["direction"], vectors["up"]))
+        if abs(dot) >= 1 - _UNIT_TOLERANCE:
+            problems.append("/camera/up: parallel zu direction")
+    clip = camera.get("clip") if isinstance(camera.get("clip"), dict) else {}
+    near, far = clip.get("near"), clip.get("far")
+    if _type_of(near) == "number" and _type_of(far) == "number" and far <= near:
+        problems.append("/camera/clip/far: ist nicht größer als near")
     return problems
 
 
@@ -375,12 +447,15 @@ def validate_manifest(document: dict) -> list[str]:
 
 @dataclass
 class CaptureFile:
-    """Eine erzeugte Bilddatei mit dem, was das Manifest über sie sagt."""
+    """Eine erzeugte Datei mit dem, was das Manifest über sie sagt.
+
+    Ein Bild trägt ``image``; die GLB-Datei der Rolle ``model`` nicht (§11.1).
+    """
 
     role: str
     path: str  # relativ zur Capture-Wurzel, etwa images/beauty.png
     media_type: str
-    image: dict
+    image: dict | None
     note: str | None = None
     byte_size: int = 0
     sha256: str = ""
@@ -426,8 +501,9 @@ def asset_entries(data: ManifestInput) -> list[dict]:
             "mediaType": f.media_type,
             "byteSize": f.byte_size,
             "sha256": f.sha256,
-            "image": dict(f.image),
         }
+        if f.image is not None:
+            entry["image"] = dict(f.image)
         if f.note:
             entry["note"] = f.note[:512]
         assets.append(entry)
@@ -467,7 +543,7 @@ def build_manifest(data: ManifestInput) -> dict:
         "project": project,
         "view": view,
         "intent": {},
-        # Ausbaustufe 2 (#177, RTX-P-011): export.py liefert heute None.
+        # Seit 1.2.0 aus export.py (RTX-B-003); ohne Modell null.
         "camera": data.camera,
         "geometry": data.geometry,
         "contentHash": content_hash(assets),
@@ -487,7 +563,13 @@ def check_limits(manifest: dict, manifest_size: int, limits: dict | None) -> str
     present = [a for a in manifest["assets"] if a["status"] == "present"]
     allowed = limits.get("allowedMediaTypes") or []
     for asset in present:
-        if limits.get("maxAssetBytes") and asset["byteSize"] > limits["maxAssetBytes"]:
+        if asset["role"] == MODEL_ROLE:
+            # Die Modelldatei hat ihre eigene Grenze (``maxGeometryBytes``, RTX-P-011).
+            cap = limits.get("maxGeometryBytes") or limits.get("maxAssetBytes")
+            if cap and asset["byteSize"] > cap:
+                return (f"Das Modell ist {asset['byteSize'] / 1048576:.1f} MB groß; "
+                        f"der Server nimmt höchstens {cap / 1048576:.1f} MB an.")
+        elif limits.get("maxAssetBytes") and asset["byteSize"] > limits["maxAssetBytes"]:
             return f"Die Datei {asset['path']} ist größer, als der Server annimmt."
         if allowed and asset["mediaType"] not in allowed:
             return f"Der Server nimmt den Medientyp {asset['mediaType']} nicht an."

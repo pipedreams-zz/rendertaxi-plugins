@@ -3,9 +3,9 @@ schema_version = "1.0.0"
 # Die eine Quelle der Pluginversion: manifest.plugin_version() liest sie hier,
 # scripts/pack.sh im öffentlichen Spiegel ebenso.
 id = "rendertaxi"
-version = "0.1.0"
+version = "0.2.0"
 name = "rendertaxi.ai"
-tagline = "Ansicht oder Rendering als Bild an rendertaxi.ai übergeben"
+tagline = "Ansicht, Rendering und Modell an rendertaxi.ai übergeben"
 maintainer = "rendertaxi.ai"
 type = "add-on"
 website = "https://github.com/pipedreams-zz/rendertaxi-plugins"
@@ -16,7 +16,7 @@ blender_version_min = "5.2.0"
 license = ["SPDX:MIT"]
 
 [permissions]
-network = "Überträgt Bilder und Anmeldung an rendertaxi.ai"
+network = "Überträgt Bilder, Modell und Anmeldung an rendertaxi.ai"
 files = "Legt Aufnahmen und die Anmeldung im Nutzerordner ab"
 
 [build]

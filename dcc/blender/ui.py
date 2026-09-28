@@ -1,8 +1,9 @@
 """N-Panel „rendertaxi" — Verbinden, Ziel wählen, Aufnehmen, Übernehmen.
 
 Vier Bereiche, wie die Palette des Archicad-Add-ons: **Verbindung**,
-**Projekt und Blickpunkt**, **Bild übernehmen**, **Im Browser öffnen**.
-Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
+**Projekt und Blickpunkt**, **Bild übernehmen** (mit „Modell mitsenden",
+RTX-B-003), **Im Browser öffnen**. Generierung und Ergebnisbearbeitung
+bleiben in der Webanwendung.
 
 **Faden-Regel.** Netzaufrufe laufen in einem Hintergrundfaden (``Job``), damit
 Blender bedienbar bleibt. Der Faden fasst ``bpy`` nie an: was er an
@@ -31,7 +32,8 @@ from . import auth, capture, export
 from . import manifest as mf
 from . import settings
 from .settings import CredentialStore, TransferStore, log, log_exception
-from .transport import ApiClient, ApiError, Cancelled, Transfer, Unauthorized, normalize_server_url, prepare
+from .transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, normalize_server_url, prepare,
+                        supports_model)
 
 # --------------------------------------------------------------------------
 # Zustand (nur Hauptfaden)
@@ -57,6 +59,7 @@ class State:
         self.result: dict | None = None
         self.job: Job | None = None
         self.deferred_viewpoints: str | None = None
+        self.model_estimate: export.Estimate | None = None
 
 
 STATE = State()
@@ -331,6 +334,10 @@ def _request_viewpoints(project_id: str) -> None:
     start_job("viewpoints", work)
 
 
+def _send_model_changed(_self, context) -> None:
+    refresh_estimate(context)
+
+
 class RTX_Props(PropertyGroup):
     project: EnumProperty(name="Projekt", items=_project_items, update=_project_changed)
     target_mode: EnumProperty(
@@ -371,6 +378,17 @@ class RTX_Props(PropertyGroup):
     pass_albedo: BoolProperty(name="Albedo", default=False)
     pass_object_id: BoolProperty(name="Objekt-ID", default=False)
     pass_material_id: BoolProperty(name="Material-ID", default=False)
+    send_model: BoolProperty(
+        name="Modell mitsenden",
+        description="Die sichtbaren Objekte als GLB und die Kamera der Aufnahme mitsenden (Capture-Manifest 1.2.0)",
+        default=False,
+        update=_send_model_changed,
+    )
+    model_materials: BoolProperty(
+        name="Materialien und Texturen",
+        description="Materialien und Texturen in die GLB-Datei einbetten; die Datei wird größer",
+        default=False,
+    )
 
 
 _PASS_PROPS = {
@@ -384,6 +402,15 @@ _PASS_PROPS = {
 
 def _props(context=None) -> RTX_Props:
     return (context or bpy.context).window_manager.rendertaxi
+
+
+def refresh_estimate(context=None) -> None:
+    """Dreiecke und Objekte neu zählen — beim Einschalten und auf Knopfdruck, nie beim Zeichnen."""
+    try:
+        STATE.model_estimate = export.estimate(context or bpy.context)
+    except (AttributeError, RuntimeError, ReferenceError) as error:
+        log_exception("Modellgröße nicht bestimmbar", error)
+        STATE.model_estimate = None
 
 
 def _suggest_assignment() -> None:
@@ -588,14 +615,33 @@ def selected_roles(props: RTX_Props) -> list[str]:
     return [role for role, name in _PASS_PROPS.items() if getattr(props, name)]
 
 
+def model_problem(context, props: RTX_Props, handshake: dict | None) -> str | None:
+    """Warum „Modell mitsenden" nicht geht — im Panel **vor** dem Senden, im Operator als Fehler."""
+    if handshake is not None and not supports_model(handshake):
+        return "Der Server nimmt Capture-Manifest 1.2.0 (mit Modell) noch nicht an."
+    problem = export.unit_problem(context.scene)
+    if problem:
+        return problem
+    return None
+
+
 def build_capture(context, props: RTX_Props, directory: str, handshake: dict | None) -> bytes:
-    """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden."""
+    """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
+
+    Ohne Modell bleibt es Capture-Manifest 1.1.0, ``camera`` und ``geometry``
+    sind ``null``; mit Modell 1.2.0 mit GLB und — wenn darstellbar — der
+    Kamera der Aufnahme.
+    """
     scene = context.scene
     size = capture_size(context, props)
     limits = (handshake or {}).get("limits") or {}
     negotiation = (handshake or {}).get("negotiation") or {}
     highest = str(negotiation.get("highestSupportedVersion") or mf.CONTRACT_VERSION)
     contract_version = "1.0.0" if highest.startswith("1.0") else mf.CONTRACT_VERSION
+    if props.send_model:
+        problem = model_problem(context, props, handshake)
+        if problem:
+            raise ValueError(problem)
     capabilities = capture.probe(context)
     if props.capture_kind == "VIEWPORT":
         files = [capture.capture_viewport(context, directory, size, props.hide_overlays)]
@@ -606,6 +652,20 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
             context, directory, size, selected_roles(props), limits.get("allowedMediaTypes"))
         files = [beauty, *passes]
         view_name = scene.camera.name if scene.camera else None
+    camera = geometry = None
+    if props.send_model:
+        image = files[0].image
+        wm = context.window_manager
+        wm.progress_begin(0, 100)
+        try:
+            wm.progress_update(10)
+            files.append(export.export_model(context, directory, props.model_materials))
+            wm.progress_update(90)
+        finally:
+            wm.progress_end()
+        camera = export.camera_block(context, props.capture_kind, (image["width"], image["height"]))
+        geometry = export.geometry_block(context, directory)
+        contract_version = mf.MODEL_CONTRACT_VERSION
     stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else None
     data = mf.ManifestInput(
         capture_id=mf.uuid_v7(),
@@ -620,8 +680,8 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
         view_display_name=view_name,
         files=files,
         planned=planned,
-        camera=export.camera_block(context),
-        geometry=export.geometry_block(context, directory),
+        camera=camera,
+        geometry=geometry,
         contract_version=contract_version,
     )
     manifest = mf.build_manifest(data)
@@ -694,7 +754,7 @@ class RTX_OT_capture(Operator):
             STATE.result = None
             raw = build_capture(context, props, directory, STATE.handshake)
             pending = prepare(transfers, key, STATE.server, target, raw, directory)
-        except (ValueError, capture.CaptureError, RuntimeError, OSError) as error:
+        except (ValueError, capture.CaptureError, export.ExportError, RuntimeError, OSError) as error:
             STATE.progress = None
             if "pending" not in locals() and "directory" in locals():
                 shutil.rmtree(directory, ignore_errors=True)  # nichts angelegt: keine Reste
@@ -746,6 +806,16 @@ class RTX_OT_discard(Operator):
             job.post(lambda: _set_message("Angefangene Übernahme verworfen."))
 
         start_job("discard", work)
+        return {"FINISHED"}
+
+
+class RTX_OT_count_model(Operator):
+    bl_idname = "rendertaxi.count_model"
+    bl_label = "Modell neu zählen"
+    bl_description = "Sichtbare Objekte und Dreiecke neu zählen"
+
+    def execute(self, context):
+        refresh_estimate(context)
         return {"FINISHED"}
 
 
@@ -894,6 +964,7 @@ class RTX_PT_panel(Panel):
             if context.scene.camera is None:
                 _wrapped(box, "Die Szene hat keine aktive Kamera.", "ERROR")
             self._passes(box.box(), context, props)
+        self._model(box.box(), context, props)
 
         key = capture.document_key(context.scene, create=False)
         pending = None
@@ -941,6 +1012,31 @@ class RTX_PT_panel(Panel):
             elif spec.blocked_by:
                 _wrapped(layout, f"wird als „geplant“ gemeldet ({spec.blocked_by})", "INFO")
 
+    def _model(self, layout, context, props):
+        """„Modell mitsenden": Größe und Grenzen vor dem Senden, und was nicht mitgeht."""
+        row = layout.row()
+        row.prop(props, "send_model")
+        if props.send_model:
+            row.operator(RTX_OT_count_model.bl_idname, text="", icon="FILE_REFRESH")
+        if not props.send_model:
+            return
+        problem = model_problem(context, props, STATE.handshake)
+        if problem:
+            _wrapped(layout, problem, "ERROR")
+            return
+        layout.prop(props, "model_materials")
+        estimate = STATE.model_estimate
+        if estimate is not None:
+            text = (f"≈ {estimate.triangles:,} Dreiecke in {estimate.objects} sichtbaren Objekten "
+                    f"(höchstens {export.MAX_TRIANGLES:,})").replace(",", " ")
+            _wrapped(layout, text, "ERROR" if estimate.triangles > export.MAX_TRIANGLES else "MESH_DATA")
+        cap = ((STATE.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
+        if cap:
+            _wrapped(layout, f"Modelldatei höchstens {cap / 1048576:.0f} MB", "INFO")
+        why = export.camera_problem(context, props.capture_kind)
+        if why:
+            _wrapped(layout, f"Ohne Kamera: {why}", "INFO")
+
     def _status(self, layout):
         if STATE.progress:
             text, percent = STATE.progress
@@ -966,6 +1062,7 @@ CLASSES = (
     RTX_OT_capture,
     RTX_OT_resume,
     RTX_OT_discard,
+    RTX_OT_count_model,
     RTX_OT_open_result,
     RTX_PT_panel,
 )

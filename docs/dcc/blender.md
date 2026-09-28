@@ -1,15 +1,16 @@
 # rendertaxi.ai für Blender 5.2 LTS
 
 Die Extension übergibt die **aktuelle Ansicht** oder das **gerenderte Bild**
-an rendertaxi.ai, ordnet es einem Projekt und einem Blickpunkt zu — neu oder
-als ausdrückliches Update — und öffnet genau diesen Blickpunkt im Browser.
-Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
+an rendertaxi.ai — auf Wunsch zusammen mit dem **Modell** und der Kamera —,
+ordnet es einem Projekt und einem Blickpunkt zu — neu oder als ausdrückliches
+Update — und öffnet genau diesen Blickpunkt im Browser. Generierung und
+Ergebnisbearbeitung bleiben in der Webanwendung.
 
 ## Installation
 
 Voraussetzung: Blender 5.2 LTS (macOS, Windows, Linux). Die Zip
 `rendertaxi-blender5.2-<Version>-<Release>.zip` (etwa
-`rendertaxi-blender5.2-0.1.0-2026.09.27.zip`) von der
+`rendertaxi-blender5.2-0.2.0-2026.09.28.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 **Nicht entpacken** — die Zip ist die Extension.
@@ -79,6 +80,36 @@ nicht an**; gewählte Pässe werden deshalb nur im Manifest als „geplant"
 vermerkt und nicht übertragen. Tiefe und Normalen bleiben unabhängig davon
 „geplant", bis ihre Kodierung geklärt ist.
 
+## Modell mitsenden
+
+Unter **Bild übernehmen** schaltet **Modell mitsenden** (Standard aus) die
+sichtbaren Objekte als eine GLB-Datei (glTF 2.0) und die Kamera der Aufnahme
+dazu. In der Webanwendung erscheint das Modell als Asset am Blickpunkt; auf
+einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
+
+- **Was exportiert wird:** alle in der 3D-Ansicht sichtbaren Objekte der
+  aktuellen Szene, Modifier angewendet, ohne Animation, Kameras und Lichter.
+  **Materialien und Texturen** nur, wenn angehakt — die Datei wird dann
+  größer.
+- **Vor dem Senden** nennt das Panel die Zahl der Dreiecke und sichtbaren
+  Objekte (**Modell neu zählen** zählt nach Änderungen neu) und die größte
+  Modelldatei, die der Server annimmt. Liegt das Modell darüber, wird nichts
+  gesendet.
+- **Kamera:** bei **Beauty** die aktive Kamera, bei **Viewport** die
+  3D-Ansicht (perspektivisch oder parallel; in der Kameraansicht die Kamera).
+  Eine Kamera mit **Shift**, eine Panoramakamera oder ein Pixel Aspect
+  ungleich 1:1 lässt sich im Vertrag nicht beschreiben: das Modell geht dann
+  ohne Kamera mit, und das Panel sagt es vorher.
+- **Einheiten:** das Modell geht nur mit **Scene › Units › Unit System**
+  „Metric" oder „Imperial" und **Unit Scale 1**. Blenders Exporter schreiben
+  eine Einheit als einen Meter, unabhängig von Unit Scale; mit einem anderen
+  Wert wäre der Maßstab nicht eindeutig. Das Panel nennt den Grund, statt zu
+  raten.
+- Ohne **Modell mitsenden** bleibt alles wie bisher: nur das Bild.
+
+Der Server muss den Modellweg kennen; tut er es nicht, sagt das Panel es, und
+übernommen wird nur ohne Modell.
+
 ## Rahmengröße
 
 Die Einstellung **Rahmengröße** gehört zum Ziel, nicht zur Aufnahme:
@@ -110,9 +141,11 @@ Webanwendung.
   gewählten Blickpunkt vorschlägt.
 - Meldungen erscheinen in der Systemkonsole (**Window › Toggle System
   Console** unter Windows, das Terminal unter macOS/Linux). „Ausführliches Protokoll" in den
-  Einstellungen schreibt zusätzlich Pfade und Namen — nur zur Fehlersuche.
-- Das Rendern für **Beauty** blockiert Blender für seine Dauer, wie ein
-  gewöhnliches Rendering.
+  Einstellungen schreibt bei Fehlern zusätzlich die Codestellen im Add-on —
+  nie Pfade, Projekt- oder Dateinamen. Der glTF-Exporter von Blender nennt
+  beim Export die Namen der Objekte selbst in der Konsole.
+- Das Rendern für **Beauty** und der Export des Modells blockieren Blender
+  für ihre Dauer, wie ein gewöhnliches Rendering oder ein Export.
 - Die Extension ist eine Vorschau: automatisch geprüft, die Bedienung am Mac
   mit echtem Display steht aus. Rückmeldungen bitte als Issue in diesem
   Repository.

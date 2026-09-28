@@ -158,10 +158,11 @@ class ApiClient:
 
     # -- Handshake und Anmeldung -----------------------------------------
 
-    def handshake(self, host_version: str, plugin_version: str) -> dict:
+    def handshake(self, host_version: str, plugin_version: str,
+                  contract_version: str = mf.CONTRACT_VERSION) -> dict:
         query = urllib.parse.urlencode({
             "contract": mf.CONTRACT,
-            "contractVersion": mf.CONTRACT_VERSION,
+            "contractVersion": contract_version,
             "hostKey": mf.HOST_KEY,
             "hostVersion": host_version,
             "pluginVersion": plugin_version,
@@ -314,6 +315,17 @@ def _needs_new_key(session: dict) -> bool:
     return session.get("state") in ("expired", "aborted")
 
 
+def supports_model(handshake: dict | None) -> bool:
+    """Setzt der Server Capture-Manifest 1.2.0 um? Aus ``highestSupportedVersion`` des Handshakes."""
+    negotiation = (handshake or {}).get("negotiation") or {}
+    highest = str(negotiation.get("highestSupportedVersion") or "")
+    try:
+        major, minor, _patch = (int(part) for part in highest.split("."))
+    except ValueError:
+        return False
+    return major == 1 and minor >= int(mf.MODEL_CONTRACT_VERSION.split(".")[1])
+
+
 class Transfer:
     """Führt eine vorbereitete Übernahme aus — oder setzt eine angefangene fort.
 
@@ -356,6 +368,17 @@ class Transfer:
             "target": target_body(pending["target"]),
         }
 
+        if manifest["contractVersion"] == mf.MODEL_CONTRACT_VERSION:
+            # Ein MINOR-Feld erst schreiben, wenn die Gegenseite die MINOR umsetzt
+            # (capture-manifest.md, §3, Regel 2) — vor der Anlage gefragt, auch beim Fortsetzen.
+            self.progress("Vertrag 1.2.0 prüfen", 2)
+            source = manifest["source"]
+            answer = self.api.handshake(source["host"]["version"], source["plugin"]["version"],
+                                        mf.MODEL_CONTRACT_VERSION)
+            result = (answer.get("negotiation") or {}).get("result")
+            if result != "supported":
+                raise ApiError(f"Der Server nimmt das Capture-Manifest {mf.MODEL_CONTRACT_VERSION} "
+                               f"mit Modell nicht an ({result}).", code=str(result or "negotiation"))
         self.progress("Übernahme anmelden", 5)
         log(f"Vorgang {'fortgesetzt' if pending.get('captureId') else 'begonnen'}, Schlüssel {pending['idempotencyKey']}")
         session = self.api.create_capture(pending["idempotencyKey"], body)
@@ -401,7 +424,8 @@ class Transfer:
                 if asset is None:
                     raise ApiError(f"Der Server erwartet eine Datei, die dieses Manifest nicht führt: {file.get('path')}",
                                    code="asset_unexpected")
-                self.progress(f"Bild übertragen: {asset['role']}", 10 + (70 * index) // outstanding)
+                what = "Modell übertragen" if asset["role"] == mf.MODEL_ROLE else f"Bild übertragen: {asset['role']}"
+                self.progress(what, 10 + (70 * index) // outstanding)
                 attempt = file.get("attempt", 0) if state == "uploading" else file.get("attempt", 0) + 1
                 begun = self.api.file_action(capture_id, key, "begin", asset["path"], attempt)
                 if _settled(begun.get("file") or {}):
