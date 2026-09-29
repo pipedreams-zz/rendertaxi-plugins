@@ -30,8 +30,9 @@ from .rendertaxi_client import auth, frame
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception, set_debug
 from .rendertaxi_client.store import CredentialStore, SettingsStore, TransferStore, has_local_material
+from .rendertaxi_client.glb import MAX_TRIANGLES
 from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, handshake_problem,
-                                          normalize_server_url, prepare)
+                                          normalize_server_url, prepare, supports_model)
 
 DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False}
@@ -57,6 +58,7 @@ class Form:
     capture_kind: str = VIEWPORT
     resolution: str = RESOLUTION_DOCUMENT
     passes: set[str] = field(default_factory=set)
+    send_model: bool = False
 
 
 class State:
@@ -132,6 +134,8 @@ class Controller:
         self.state = State()
         self.form = Form()
         self._jobs: list[Job] = []
+        # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke) — nur ein Hinweis.
+        self.model_estimate: tuple[str, int, int] | None = None
 
     # -- Ablage und Einstellungen -------------------------------------------
 
@@ -472,17 +476,86 @@ class Controller:
             return []
         return [role for role in ("depth", "normal", "albedo") if role in self.form.passes]
 
+    # -- Modell --------------------------------------------------------------
+
+    def model_problem(self) -> str | None:
+        """Warum „Modell mitsenden" nicht geht — im Dialog **vor** dem Senden, beim Aufnehmen als Fehler."""
+        if self.state.handshake is not None and not supports_model(self.state.handshake):
+            return "Der Server nimmt Capture-Manifest 1.2.0 (mit Modell) noch nicht an."
+        return self.adapter.model_problem()
+
+    def set_send_model(self, on: bool) -> None:
+        self.form.send_model = bool(on)
+        if self.form.send_model:
+            self.count_model()
+
+    def count_model(self) -> None:
+        """Sichtbare Objekte und Dreiecke zählen — auf Wunsch, nicht bei jedem Zeichnen (Polygonize kostet)."""
+        self.model_estimate = None
+        if self.model_problem():
+            return
+        try:
+            counted = self.adapter.model_estimate(self.form.capture_kind)
+        except (RuntimeError, OSError) as error:  # export.ExportError ist ein RuntimeError
+            log_exception("Modellgröße nicht bestimmbar", error)
+            return
+        self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles)
+
+    def model_hint(self) -> str:
+        """Größe, Grenzen und was nicht mitgeht — der Text unter „Modell mitsenden"."""
+        if not self.form.send_model:
+            return ""
+        problem = self.model_problem()
+        if problem:
+            return problem
+        parts = []
+        estimate = self.model_estimate
+        if estimate is None or estimate[0] != self.form.capture_kind:
+            parts.append("Größe noch nicht gezählt („Neu zählen“).")
+        else:
+            _kind, objects, triangles = estimate
+            text = f"≈ {triangles:,} Dreiecke in {objects} sichtbaren Objekten (höchstens {MAX_TRIANGLES:,})."
+            parts.append(("Zu groß: " if triangles > MAX_TRIANGLES else "") + text.replace(",", " "))
+        cap = ((self.state.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
+        if cap:
+            parts.append(f"Modelldatei höchstens {cap / 1048576:.0f} MB.")
+        try:
+            why = self.adapter.camera_problem(self.capture_size() or self.document_size())
+        except RuntimeError as error:  # kein Dokument
+            why = str(error)
+        if why:
+            parts.append(f"Ohne Kamera: {why}")
+        return " ".join(parts)
+
     # -- Übernahme ------------------------------------------------------------
 
     def build_capture(self, directory: str) -> bytes:
-        """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden. Capture-Manifest 1.1.0, ohne Modell."""
+        """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
+
+        Ohne Modell bleibt es Capture-Manifest 1.1.0, ``camera`` und ``geometry``
+        sind ``null``; mit Modell 1.2.0 mit GLB und — wenn darstellbar — der
+        Kamera der Aufnahme.
+        """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
         size = self.capture_size()
-        capabilities = self.adapter.probe()
+        send_model = self.form.send_model
+        contract_version = mf.image_contract_version(handshake)
+        if send_model:
+            problem = self.model_problem()
+            if problem:
+                raise ValueError(problem)
+        capabilities = self.adapter.probe(model=send_model)
         files, planned, view_name = self.adapter.render(
             self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
             self._progress_in_main)
+        camera = geometry = None
+        if send_model:
+            image = files[0].image
+            model, geometry, camera = self.adapter.export_model(
+                self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main)
+            files.append(model)
+            contract_version = mf.MODEL_CONTRACT_VERSION
         data = mf.ManifestInput(
             capture_id=mf.uuid_v7(),
             created_at=mf.timestamp_utc(),
@@ -496,7 +569,9 @@ class Controller:
             view_display_name=view_name,
             files=files,
             planned=planned,
-            contract_version=mf.image_contract_version(handshake),
+            camera=camera,
+            geometry=geometry,
+            contract_version=contract_version,
         )
         manifest = mf.build_manifest(data)
         problems = mf.validate_manifest(manifest)

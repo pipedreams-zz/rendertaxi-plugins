@@ -563,7 +563,8 @@ def build_manifest(data: ManifestInput) -> dict:
         "project": project,
         "view": view,
         "intent": {},
-        # Seit 1.2.0 aus dem Modellweg des Hosts (Blender: export.py, RTX-B-003); ohne Modell null.
+        # Seit 1.2.0 aus dem Modellweg des Hosts (Blender: export.py, RTX-B-003; Cinema 4D:
+        # rendertaxi_c4d/export.py, RTX-C4D-003); ohne Modell null.
         "camera": data.camera,
         "geometry": data.geometry,
         "contentHash": content_hash(assets),

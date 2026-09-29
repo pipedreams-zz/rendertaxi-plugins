@@ -1,7 +1,7 @@
 # rendertaxi.ai für Cinema 4D 2026
 
 Das Plugin übergibt die **aktuelle Ansicht** oder das **gerenderte Bild** an
-rendertaxi.ai, ordnet es einem Projekt und einem Blickpunkt zu — neu oder als
+rendertaxi.ai — auf Wunsch zusammen mit dem **Modell** und der Kamera —, ordnet es einem Projekt und einem Blickpunkt zu — neu oder als
 ausdrückliches Update — und öffnet genau diesen Blickpunkt im Browser.
 Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 
@@ -87,6 +87,41 @@ nicht an**; gewählte Pässe werden deshalb nur im Manifest als „geplant"
 vermerkt und nicht übertragen. Tiefe und Normalen bleiben unabhängig davon
 „geplant", bis geklärt ist, wie Cinema 4D sie kodiert.
 
+## Modell mitsenden
+
+Unter **Bild übernehmen** schaltet **Modell mitsenden (GLB und Kamera)**
+(Standard aus) die sichtbaren Objekte als eine GLB-Datei (glTF 2.0) und die
+Kamera der Aufnahme dazu. In der Webanwendung erscheint das Modell als Asset am
+Blickpunkt; auf einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau
+dieser Kamera.
+
+- **Was exportiert wird:** alle Objekte, die in der Aufnahme sichtbar sind —
+  bei **Viewport** nach dem Editor-Punkt im Objekt-Manager, bei **Beauty** nach
+  dem Render-Punkt, jeweils samt Ebene. Generatoren und Deformer werden in Polygone
+  gewandelt, **ohne** Animation,
+  Materialien, Texturen, Kameras und Lichter. Deine Szene wird dabei nicht
+  verändert: das Plugin arbeitet auf einer Kopie und nutzt den glTF-Exporter
+  von Cinema 4D; dessen Einstellungen stellt es danach wieder her.
+- **Vor dem Senden** nennt das Fenster die Zahl der Dreiecke und sichtbaren
+  Objekte (**Neu zählen** zählt nach Änderungen neu) und die größte
+  Modelldatei, die der Server annimmt. Liegt das Modell darüber, wird nichts
+  gesendet.
+- **Maßstab:** aus **Projekteinstellungen › Projektmaßstab** (etwa 1
+  Zentimeter). Das Plugin prüft an der fertigen Datei, dass sie in Metern und
+  richtig gespiegelt vorliegt — Cinema 4D rechnet linkshändig, glTF
+  rechtshändig. Passt etwas nicht, geht **kein** Modell mit, und das Fenster
+  sagt, warum.
+- **Kamera:** die Kamera der Renderansicht (ohne Szenenkamera die
+  Editor-Kamera), perspektivisch. Eine **Parallelkamera**, **Film Offset**,
+  Stereo, sphärische Kameras, Linsenverzerrung, ein Pixelseitenverhältnis
+  ungleich 1:1 oder ein Film Aspect, der nicht zum Bild passt, lassen sich im
+  Vertrag nicht beschreiben: das Modell geht dann ohne Kamera mit, und das
+  Fenster sagt es vorher („Ohne Kamera: …").
+- Ohne **Modell mitsenden** bleibt alles wie bisher: nur das Bild.
+
+Der Server muss den Modellweg kennen; tut er es nicht, sagt das Fenster es, und
+übernommen wird nur ohne Modell.
+
 ## Rahmengröße
 
 Die Einstellung **Rahmengröße** gehört zum Ziel, nicht zur Aufnahme:
@@ -120,7 +155,9 @@ Webanwendung.
 - Meldungen erscheinen in der Konsole (**Extensions › Console**).
   „Ausführliches Protokoll" in den Einstellungen schreibt bei Fehlern
   zusätzlich die Codestellen im Plugin — nie Pfade, Projekt- oder Dateinamen.
+- Das Rendern und der Export des Modells blockieren Cinema 4D für ihre Dauer.
 - Das Plugin ist eine **Vorschau**: automatisch geprüft ohne Cinema 4D, die
-  Bedienung in Cinema 4D selbst steht aus. Seine Plugin-ID ist noch eine
+  Bedienung in Cinema 4D selbst steht aus — ebenso die Messung, ob das
+  Sichtfeld der gesendeten Kamera auf den Pixel genau zum Bild passt. Seine Plugin-ID ist noch eine
   Entwicklungs-ID von Maxon; sie kann mit einem anderen Entwicklungs-Plugin
   kollidieren. Rückmeldungen bitte als Issue in diesem Repository.

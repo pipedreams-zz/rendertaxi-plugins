@@ -12,7 +12,7 @@ import webbrowser
 
 import c4d
 
-from . import capture, host
+from . import capture, export, host
 from .controller import BEAUTY
 
 
@@ -42,8 +42,13 @@ class Cinema4DAdapter:
     def document_name(self) -> str | None:
         return capture.document_name(capture.active_document())
 
-    def probe(self) -> dict:
-        return capture.probe(capture.active_document())
+    def probe(self, model: bool = False) -> dict:
+        """Die Laufzeitprobe; mit Modell auch ``geometryExport`` und ``cameraExport``."""
+        doc = capture.active_document()
+        capabilities = capture.probe(doc)
+        if model:
+            capabilities.update(export.probe(doc, capture.document_size(doc)))
+        return capabilities
 
     def pass_rows(self):
         return capture.pass_rows(capture.active_document())
@@ -55,6 +60,23 @@ class Cinema4DAdapter:
             beauty, passes, planned = capture.render_beauty(doc, directory, size, roles, allowed_media_types, progress)
             return [beauty, *passes], planned, capture.view_name(doc)
         return [capture.render_viewport(doc, directory, size, progress)], [], capture.view_name(doc)
+
+    def model_problem(self) -> str | None:
+        return export.model_problem(capture.active_document())
+
+    def model_estimate(self, kind: str) -> export.Estimate:
+        return export.estimate(capture.active_document(), kind)
+
+    def camera_problem(self, size: tuple[int, int]) -> str | None:
+        return export.camera_problem(capture.active_document(), size)
+
+    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress):
+        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte und die Kamera für ein Bild ``size``."""
+        doc = capture.active_document()
+        progress("Modell exportieren", 10)
+        model = export.export_model(doc, kind, directory)
+        progress("Modell exportieren", 100)
+        return model.file, model.geometry, export.camera_block(doc, size, model.meters)
 
     def status(self, text: str, percent: int) -> None:
         """Fortschritt in der Statusleiste; ``percent < 0`` räumt sie."""

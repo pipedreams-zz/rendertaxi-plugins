@@ -8,8 +8,9 @@
    (``frame: fit-to-capture``, sonst ``keep``); Rahmengröße Canvas-Vorgabe
    oder Render-Einstellung (``size``).
 3. **Bild übernehmen** — Viewport oder Beauty mit optionalen Pässen; Größe
-   aus dem Dokument oder dem Blickpunkt-Rahmen; Fortsetzen oder Verwerfen
-   einer angefangenen Übernahme.
+   aus dem Dokument oder dem Blickpunkt-Rahmen; „Modell mitsenden" (GLB und
+   Kamera, Capture-Manifest 1.2.0; Standard aus) mit Größe und Grenzen vor dem
+   Senden; Fortsetzen oder Verwerfen einer angefangenen Übernahme.
 4. **Im Browser öffnen** — ``result.openUrl``.
 
 Der Dialog zeichnet nur; was geschieht, entscheidet ``controller.Controller``.
@@ -60,6 +61,9 @@ ID_RESOLUTION = 1052
 ID_CUT = 1053
 ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062}
 ID_PASS_HINT = {"depth": 1065, "normal": 1066, "albedo": 1067}
+ID_MODEL = 1100
+ID_MODEL_COUNT = 1101
+ID_MODEL_HINT = 1102  # bis 1105: vier Zeilen
 ID_CAPTURE = 1070
 ID_RESUME = 1071
 ID_DISCARD = 1072
@@ -164,6 +168,13 @@ class RendertaxiDialog(gui.GeDialog):
         for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
             self._text(ID_PASS_HINT[spec_role])
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 1, "")
+        self._gadgets[ID_MODEL] = self.AddCheckbox(ID_MODEL, c4d.BFH_SCALEFIT, 0, 0,
+                                                   "Modell mitsenden (GLB und Kamera)")
+        self._gadgets[ID_MODEL_COUNT] = self.AddButton(ID_MODEL_COUNT, c4d.BFH_RIGHT, 0, 0, "Neu zählen")
+        self.GroupEnd()
+        for line in range(LINES):
+            self._text(ID_MODEL_HINT + line)
         self._text(ID_PENDING)
         self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 1, "")
         self._gadgets[ID_CAPTURE] = self.AddButton(ID_CAPTURE, c4d.BFH_SCALEFIT, 0, 0, "Aufnehmen und übernehmen")
@@ -309,6 +320,10 @@ class RendertaxiDialog(gui.GeDialog):
             else:
                 note = "OpenEXR 32 Bit, linear"
             self.SetString(ID_PASS_HINT[role], note[:120])
+        self.SetBool(ID_MODEL, form.send_model)
+        self._enable(ID_MODEL, not busy)
+        self._enable(ID_MODEL_COUNT, not busy and form.send_model)
+        self._lines(ID_MODEL_HINT, controller.model_hint())
         pending = controller.pending()
         if pending:
             self.SetString(ID_PENDING, f"Offene Übernahme vom {pending.get('createdAt', '')[:16].replace('T', ' ')} UTC")
@@ -354,6 +369,7 @@ class RendertaxiDialog(gui.GeDialog):
             ID_RESUME: controller.resume,
             ID_DISCARD: controller.discard,
             ID_OPEN_RESULT: controller.open_result,
+            ID_MODEL_COUNT: controller.count_model,
         }
         if element_id in actions:
             actions[element_id]()
@@ -371,6 +387,8 @@ class RendertaxiDialog(gui.GeDialog):
             form.fit_to_capture = self.GetBool(ID_FIT)
         elif element_id == ID_SIZE:
             form.size = SIZES[max(0, min(len(SIZES) - 1, self.GetInt32(ID_SIZE)))]
+        elif element_id == ID_MODEL:
+            controller.set_send_model(self.GetBool(ID_MODEL))
         elif element_id == ID_KIND:
             form.capture_kind = KINDS[max(0, min(len(KINDS) - 1, self.GetInt32(ID_KIND)))]
         elif element_id == ID_RESOLUTION:

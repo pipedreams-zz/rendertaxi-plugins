@@ -33,21 +33,19 @@ Das Modul erfindet nichts: was der Vertrag nicht darstellen kann, führt zu
 
 from __future__ import annotations
 
-import json
 import math
 import os
-import struct
 from dataclasses import dataclass
 
+from .rendertaxi_client import glb
 from .rendertaxi_client import manifest as mf
 
-MODEL_PATH = "model/scene.glb"
-MODEL_MEDIA_TYPE = "model/gltf-binary"
+MODEL_PATH = glb.MODEL_PATH
+MODEL_MEDIA_TYPE = mf.MODEL_MEDIA_TYPE
 
-# Die Grenze des Servers (``GLB_LIMITS.maxTriangles`` in
-# ``packages/modules/assets/src/domain/glb.ts``). Der Handshake nennt keine
-# Dreiecksgrenze, nur ``limits.maxGeometryBytes``.
-MAX_TRIANGLES = 50_000_000
+# Die Grenze des Servers, aus dem gemeinsamen Client; hier gelesen, damit ein
+# Test sie für diesen Lauf senken kann.
+MAX_TRIANGLES = glb.MAX_TRIANGLES
 
 # Die 3D-Ansicht ohne Kamera: 36 mm Sensor, Zoomfaktor 2 (gemessen, QB-04).
 VIEWPORT_SENSOR_MM = 36.0
@@ -155,63 +153,20 @@ def geometry_dict(meters_per_unit: float = 1.0) -> dict:
 
 
 # --------------------------------------------------------------------------
-# GLB lesen (ohne bpy)
+# GLB lesen — der gemeinsame Client (``rendertaxi_client.glb``), ein Weg für alle Plugins
 # --------------------------------------------------------------------------
 
 
 def read_glb_json(path: str) -> dict:
     """Den JSON-Chunk einer GLB-Datei — oder ``ExportError``."""
-    with open(path, "rb") as handle:
-        head = handle.read(20)
-        if len(head) < 20 or head[:4] != b"glTF":
-            raise ExportError("Der Export hat keine GLB-Datei erzeugt.")
-        version, _total, chunk_length, chunk_type = struct.unpack("<IIII", head[4:20])
-        if version != 2 or chunk_type != 0x4E4F534A:
-            raise ExportError("Der Export hat keine GLB-Datei nach glTF 2.0 erzeugt.")
-        raw = handle.read(chunk_length)
     try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        raise ExportError("Der JSON-Teil der GLB-Datei ist nicht lesbar.") from None
-    if not isinstance(document, dict):
-        raise ExportError("Der JSON-Teil der GLB-Datei ist kein Objekt.")
-    return document
+        return glb.read_glb_json(path)
+    except glb.GlbError as error:
+        raise ExportError(str(error)) from None
 
 
-def glb_triangles(document: dict) -> int:
-    """Dreiecke über alle Instanzen der Szene — so, wie der Server sie zählt."""
-    nodes = document.get("nodes") or []
-    meshes = document.get("meshes") or []
-    accessors = document.get("accessors") or []
-    scenes = document.get("scenes") or []
-    roots = (scenes[document.get("scene", 0)] or {}).get("nodes", []) if scenes else []
-
-    def primitive_triangles(primitive: dict) -> int:
-        mode = primitive.get("mode", 4)
-        source = primitive.get("indices")
-        if source is None:
-            source = (primitive.get("attributes") or {}).get("POSITION")
-        count = accessors[source].get("count", 0) if isinstance(source, int) and source < len(accessors) else 0
-        if mode == 4:
-            return count // 3
-        if mode in (5, 6):
-            return max(count - 2, 0)
-        return 0
-
-    total = 0
-    stack = list(roots)
-    while stack:
-        node = nodes[stack.pop()]
-        mesh = node.get("mesh")
-        if isinstance(mesh, int) and mesh < len(meshes):
-            total += sum(primitive_triangles(p) for p in meshes[mesh].get("primitives", []))
-        stack.extend(node.get("children", []))
-    return total
-
-
-def external_references(document: dict) -> bool:
-    """Verweist die Datei über ``uri`` nach außen? Der Server nimmt das nicht an."""
-    return any("uri" in entry for key in ("buffers", "images") for entry in document.get(key) or [])
+glb_triangles = glb.glb_triangles
+external_references = glb.external_references
 
 
 # --------------------------------------------------------------------------
