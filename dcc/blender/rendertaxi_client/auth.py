@@ -1,11 +1,11 @@
 """Gerätelogin nach RFC 8628 (``docs/api/plugin-api-v1.md``, Abschnitt 5; ADR 0022).
 
-Kein Passwortfeld, kein eingebetteter Browser: das Add-on zeigt Code und
+Kein Passwortfeld, kein eingebetteter Browser: das Plugin zeigt Code und
 Adresse, öffnet auf Wunsch den Standardbrowser und fragt im vorgegebenen
 Abstand ab. ``slow_down`` erhöht den Abstand dauerhaft, Netzwerkfehler
 verdoppeln ihn.
 
-Dieses Modul kennt ``bpy`` nicht und läuft im Hintergrundfaden.
+Kein Hostmodul; läuft im Hintergrundfaden des Plugins.
 """
 
 from __future__ import annotations
@@ -14,8 +14,10 @@ import platform
 import threading
 import time
 
+from . import current
 from . import manifest as mf
-from .settings import CredentialStore, log
+from .log import log
+from .store import CredentialStore
 from .transport import ApiClient, ApiError, Cancelled, Unauthorized
 
 MAX_INTERVAL_SECONDS = 60
@@ -44,7 +46,7 @@ def device(store: CredentialStore, server: str, host_version: str, plugin_versio
         store.remember_device(server, device_id)
     entry = {
         "deviceId": device_id,
-        "hostKey": mf.HOST_KEY,
+        "hostKey": current().key,
         "hostVersion": host_version,
         "pluginVersion": plugin_version,
         "os": machine()["os"],

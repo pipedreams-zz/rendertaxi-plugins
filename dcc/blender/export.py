@@ -39,7 +39,7 @@ import os
 import struct
 from dataclasses import dataclass
 
-from . import manifest as mf
+from .rendertaxi_client import manifest as mf
 
 MODEL_PATH = "model/scene.glb"
 MODEL_MEDIA_TYPE = "model/gltf-binary"

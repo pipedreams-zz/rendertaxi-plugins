@@ -1,7 +1,11 @@
-"""Einen Pass aus Blenders Mehrschicht-EXR als eigene EXR-Datei herauslösen.
+"""OpenEXR ohne Drittpaket — den Kopf lesen, einen Pass aus einer Mehrschichtdatei lösen.
 
-Warum es das gibt: Ein Render mit Pässen landet in Blender 5.2 im
-„Render Result". Python kommt an dessen Pixel nicht heran, und
+``describe`` liest nur den Kopf einer EXR-Datei (Maße, Kanäle, Pixeltyp) —
+für jede Kompression, damit das Manifest die Werte aus der Datei nimmt statt
+aus einer Einstellung (Cinema 4D schreibt Datenpässe selbst).
+
+``extract_pass`` gibt es für Blender: Ein Render mit Pässen landet in Blender
+5.2 im „Render Result". Python kommt an dessen Pixel nicht heran, und
 ``Image.save_render`` schreibt entweder nur das Beauty-Bild (Einzelbild) oder
 **alle** Pässe in eine mehrteilige OpenEXR-Datei (``OPEN_EXR_MULTILAYER``,
 gemessen am 27.09.2026: je Pass ein Teil namens ``<ViewLayer>.<Pass>``, etwa
@@ -10,10 +14,11 @@ will je Rolle **eine** Datei. Der Compositor-Weg (File-Output-Knoten) hätte die
 Compositing-Einstellungen des Nutzers verändert; dieses Modul lässt sie in
 Ruhe und liest die Datei selbst.
 
-Unterstützt wird bewusst nur, was das Add-on selbst schreibt: Scanline-Dateien
-**ohne Kompression** (``exr_codec = 'NONE'``), einteilig oder mehrteilig,
-Pixeltypen UINT, HALF und FLOAT. Alles andere ist ein ausdrücklicher Fehler.
-Kein Drittpaket (OpenEXR, OpenImageIO) — die Python-Standardbibliothek reicht.
+Für ``parts`` und ``extract_pass`` unterstützt wird bewusst nur, was das
+Blender-Add-on selbst schreibt: Scanline-Dateien **ohne Kompression**
+(``exr_codec = 'NONE'``), einteilig oder mehrteilig, Pixeltypen UINT, HALF und
+FLOAT. Alles andere ist ein ausdrücklicher Fehler. Kein Drittpaket (OpenEXR,
+OpenImageIO) — die Python-Standardbibliothek reicht.
 """
 
 from __future__ import annotations
@@ -47,6 +52,40 @@ def _read_header(data: bytes, pos: int) -> tuple[dict, int]:
         pos += 4
         header[name] = (kind, data[pos:pos + size])
         pos += size
+
+
+def describe(data: bytes) -> dict:
+    """Maße und Kanäle einer einteiligen EXR-Datei aus ihrem Kopf — ``image`` des Manifests ohne Farbraum.
+
+    Nur der Kopf wird gelesen; Kompression und Kachelung spielen keine Rolle.
+    Kanäle ``R``/``G``/``B``/``A`` (auch mit Schichtpräfix) oder genau einer;
+    alle mit demselben Pixeltyp.
+    """
+    if len(data) < 8 or struct.unpack_from("<i", data, 0)[0] != MAGIC:
+        raise ExrError("Die Datei ist kein OpenEXR.")
+    flags = struct.unpack_from("<I", data, 4)[0]
+    if flags & (_MULTIPART | _DEEP):
+        raise ExrError("Mehrteilige oder tiefe EXR-Dateien werden nicht beschrieben.")
+    header, _pos = _read_header(data, 8)
+    if "channels" not in header or "dataWindow" not in header:
+        raise ExrError("Dem EXR-Kopf fehlen Kanäle oder Datenfenster.")
+    x0, y0, x1, y1 = struct.unpack("<iiii", header["dataWindow"][1])
+    chans = _channels(header["channels"][1])
+    types = {c[1] for c in chans}
+    if not chans or len(types) != 1:
+        raise ExrError("Ein EXR mit gemischten Pixeltypen wird nicht beschrieben.")
+    names = sorted(c[0].rsplit(".", 1)[-1] for c in chans)
+    layout = {1: "gray", 3: "rgb", 4: "rgba"}.get(len(chans))
+    if layout is None or (len(chans) > 1 and names not in (["B", "G", "R"], ["A", "B", "G", "R"])):
+        raise ExrError(f"Unbekannte Kanalbelegung: {names}")
+    pixel_type = types.pop()
+    return {
+        "width": x1 - x0 + 1,
+        "height": y1 - y0 + 1,
+        "channels": layout,
+        "bitDepth": 16 if pixel_type == 1 else 32,
+        "sampleFormat": "uint" if pixel_type == 0 else "float",
+    }
 
 
 def _channels(raw: bytes) -> list[tuple[str, int, int, int]]:

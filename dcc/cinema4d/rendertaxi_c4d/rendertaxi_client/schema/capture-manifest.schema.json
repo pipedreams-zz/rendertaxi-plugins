@@ -1,0 +1,919 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendertaxi.ai/contracts/plugin/v1/capture-manifest.schema.json",
+  "title": "Plugin capture manifest v1",
+  "description": "Host-neutrales Manifest eines Captures: die Bilder, die ein Plugin aus einer Ansicht seines Hosts erzeugt hat, seit 1.2.0 optional das Modell als GLB-Datei mit Kamera. Archicad, Blender, Cinema 4D und Rhino beschreiben ihre Daten danach identisch. Das Manifest bettet keine Binärdaten ein und kennt kein Feld des Modellwegs: keine Modellversion, keinen Vorgänger, keinen Diff, keine Aktivierung (ADR 0009, Entscheidung 3; ADR 0032).",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "const": "rendertaxi.plugin.capture-manifest"
+    },
+    "contractVersion": {
+      "$ref": "common.schema.json#/$defs/contractVersion"
+    },
+    "captureId": {
+      "description": "Vom Plugin erzeugte Kennung dieses Captures. Bleibt bei Wiederholung derselben Übernahme gleich.",
+      "$ref": "common.schema.json#/$defs/uuidV7"
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/timestampUtc"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "project": {
+      "$ref": "#/$defs/project"
+    },
+    "view": {
+      "$ref": "#/$defs/view"
+    },
+    "intent": {
+      "$ref": "#/$defs/intent"
+    },
+    "camera": {
+      "description": "Kamerablock. Seit 1.2.0 null oder die Kamera der Ansicht im Exportraum (Meter, rechtshändig, +Y oben — der Raum von glTF 2.0). In einem Dokument unter 1.2.0 immer null; erzwingt tools/validate.mjs.",
+      "if": {
+        "type": "null"
+      },
+      "else": {
+        "$ref": "#/$defs/camera"
+      }
+    },
+    "geometry": {
+      "description": "Geometrieblock. Seit 1.2.0 null oder die Beschreibung der GLB-Datei mit role model. Er steht genau dann, wenn ein Asset mit role model und status present dasteht; in einem Dokument unter 1.2.0 immer null. Beides erzwingt tools/validate.mjs.",
+      "if": {
+        "type": "null"
+      },
+      "else": {
+        "$ref": "#/$defs/geometry"
+      }
+    },
+    "contentHash": {
+      "description": "SHA-256 über die sortierten Assetzeilen aller Assets mit status present, nach tools/canonical-hash.mjs.",
+      "$ref": "common.schema.json#/$defs/sha256"
+    },
+    "assets": {
+      "type": "array",
+      "description": "Je Rolle höchstens ein Eintrag; mindestens ein Bild (jede Rolle außer model) trägt status present. Beides erzwingt tools/validate.mjs.",
+      "items": {
+        "$ref": "#/$defs/asset"
+      },
+      "minItems": 1,
+      "maxItems": 11
+    }
+  },
+  "required": [
+    "contract",
+    "contractVersion",
+    "captureId",
+    "createdAt",
+    "source",
+    "project",
+    "view",
+    "intent",
+    "camera",
+    "geometry",
+    "contentHash",
+    "assets"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "description": "Herkunft des Captures. Dient der Kompatibilitätsprüfung und der Fehlersuche. Kein Rechnername, kein Benutzername, kein Pfad.",
+      "properties": {
+        "host": {
+          "type": "object",
+          "description": "Die Hostanwendung. key ist bewusst keine geschlossene Aufzählung: die Hostliste bleibt offen für künftige Plugins.",
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "Hostschlüssel in kebab-case, etwa archicad, blender, cinema-4d, rhino.",
+              "minLength": 2,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+            },
+            "version": {
+              "type": "string",
+              "description": "Version der Hostanwendung als punktgetrennte Dezimalzahlen.",
+              "maxLength": 32,
+              "pattern": "^[0-9]+(\\.[0-9]+){0,3}$"
+            },
+            "build": {
+              "type": "string",
+              "description": "Optionale Buildkennung der Hostanwendung.",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "capabilities": {
+              "description": "Seit 1.1.0, optional: Selbstauskunft des Plugins über die Host-Capabilities (host-capabilities.schema.json). Der Server glaubt der Selbstauskunft nicht: Capabilities steuern die Oberfläche des Plugins und die Vorauswahl von Presets. Die Planung eines Jobs erfolgt ausschließlich nach den Dateien, die tatsächlich mit status: present angekommen und serverseitig verifiziert sind. In einem Dokument mit contractVersion 1.0.x ist das Feld unzulässig; erzwingt tools/validate.mjs.",
+              "$ref": "host-capabilities.schema.json#/$defs/hostCapabilities"
+            }
+          },
+          "required": ["key", "version"],
+          "additionalProperties": false
+        },
+        "plugin": {
+          "type": "object",
+          "properties": {
+            "identifier": {
+              "type": "string",
+              "description": "Stabile Kennung des Plugins in Reverse-DNS-Schreibweise.",
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+            },
+            "version": {
+              "$ref": "common.schema.json#/$defs/contractVersion"
+            }
+          },
+          "required": ["identifier", "version"],
+          "additionalProperties": false
+        },
+        "machine": {
+          "type": "object",
+          "description": "Betriebssystem und Architektur der erzeugenden Maschine. Kein Rechnername, kein Benutzername, kein Pfad.",
+          "properties": {
+            "os": {
+              "enum": ["macos", "windows", "linux"]
+            },
+            "osVersion": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[0-9A-Za-z._ -]*$"
+            },
+            "architecture": {
+              "enum": ["arm64", "x64"]
+            }
+          },
+          "required": ["os", "architecture"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["host", "plugin", "machine"],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "description": "Projektidentität. Sie wird niemals aus Dateiname oder Dateipfad abgeleitet. platformProjectId ist autoritativ; sourceProjectKey ist für den Server ein Hinweis, keine Autorität (ADR 0009, Entscheidung 8).",
+      "properties": {
+        "platformProjectId": {
+          "description": "Plattform-Projekt-ID, sofern das Hostprojekt bereits einem Plattformprojekt zugeordnet ist. Vor der Zuordnung null.",
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceProjectKey": {
+          "description": "Vom Plugin erzeugter und im Hostprojekt persistierter Schlüssel. null, wenn der Host keinen Schlüssel persistieren kann.",
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/stableKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayName": {
+          "description": "Optionaler Anzeigename. Reine Anzeigeinformation ohne Identitätswirkung.",
+          "$ref": "common.schema.json#/$defs/displayText"
+        }
+      },
+      "required": ["platformProjectId", "sourceProjectKey"],
+      "additionalProperties": false
+    },
+    "view": {
+      "type": "object",
+      "description": "Die Quellansicht des Hosts, aus der das Capture stammt.",
+      "properties": {
+        "sourceViewKey": {
+          "description": "Stabiler Schlüssel der Quellansicht, soweit der Host einen hergibt; sonst null. Niemals aus dem Anzeigenamen abgeleitet.",
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/stableKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayName": {
+          "description": "Optionaler Name der Quellansicht. Reine Anzeigeinformation.",
+          "$ref": "common.schema.json#/$defs/displayText"
+        }
+      },
+      "required": ["sourceViewKey"],
+      "additionalProperties": false
+    },
+    "intent": {
+      "type": "object",
+      "description": "Was mit dem Capture geschehen soll — ausschließlich in Plattformbegriffen. Kein Providername, kein Modellname, kein Workflowgraph, kein Feld, das ein Backendformat abbildet (ADR 0009, Entscheidung 7). Ein leeres Objekt bedeutet: nur übergeben, nichts anstoßen.",
+      "properties": {
+        "presetKey": {
+          "description": "Plattformschlüssel einer Voreinstellung.",
+          "$ref": "common.schema.json#/$defs/stableKey"
+        },
+        "recipeId": {
+          "description": "Plattformkennung eines Rezepts.",
+          "$ref": "common.schema.json#/$defs/uuidV7"
+        },
+        "promptText": {
+          "type": "string",
+          "description": "Freier Prompttext des Nutzers.",
+          "maxLength": 4000
+        }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "description": "Bildbeschreibung. Ein Konsument liest Farbraum, Bittiefe, Zahlenformat und Kanäle, statt sie zu erraten.",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "colorSpace": {
+          "description": "srgb und linear für Farbbilder; non-color für Datenbilder wie Tiefe, Normalen, Masken und IDs.",
+          "enum": ["srgb", "linear", "non-color"]
+        },
+        "bitDepth": {
+          "type": "integer",
+          "description": "Bits je Kanal.",
+          "enum": [8, 16, 32],
+          "minimum": 8,
+          "maximum": 32
+        },
+        "sampleFormat": {
+          "description": "Zahlenformat je Kanal. 16 Bit sind ohne diese Angabe mehrdeutig (Ganzzahl oder Halbgenauigkeit).",
+          "enum": ["uint", "float"]
+        },
+        "channels": {
+          "description": "Kanalbelegung der Datei.",
+          "enum": ["gray", "gray-alpha", "rgb", "rgba"]
+        }
+      },
+      "required": ["width", "height", "colorSpace", "bitDepth", "sampleFormat", "channels"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sampleFormat": {
+                "const": "float"
+              }
+            },
+            "required": ["sampleFormat"]
+          },
+          "then": {
+            "properties": {
+              "bitDepth": {
+                "enum": [16, 32]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "depth": {
+      "type": "object",
+      "description": "Kodierung eines Tiefenbildes. linear-metric: der Pixelwert ist der Abstand in Metern. normalized-linear: 0 entspricht near, 1 entspricht far, linear dazwischen. normalized-inverse: 1 entspricht near, 0 entspricht far, linear im Kehrwert des Abstands.",
+      "properties": {
+        "encoding": {
+          "enum": ["linear-metric", "normalized-linear", "normalized-inverse"]
+        },
+        "near": {
+          "description": "Abstand in Metern, der dem nahen Ende des Wertebereichs entspricht.",
+          "$ref": "common.schema.json#/$defs/meters",
+          "minimum": 0
+        },
+        "far": {
+          "description": "Abstand in Metern, der dem fernen Ende des Wertebereichs entspricht. Größer als near; erzwingt tools/validate.mjs.",
+          "$ref": "common.schema.json#/$defs/meters",
+          "minimum": 0
+        }
+      },
+      "required": ["encoding"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "encoding": {
+                "enum": ["normalized-linear", "normalized-inverse"]
+              }
+            },
+            "required": ["encoding"]
+          },
+          "then": {
+            "required": ["near", "far"]
+          }
+        }
+      ]
+    },
+    "normal": {
+      "type": "object",
+      "description": "Bezugsraum eines Normalenbildes.",
+      "properties": {
+        "space": {
+          "enum": ["world", "camera", "tangent"]
+        }
+      },
+      "required": ["space"],
+      "additionalProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "description": "Beschreibung einer Datei — eines Bildes oder, mit role model, der GLB-Datei des Modells. Binärdaten werden niemals in das Manifest eingebettet.",
+      "properties": {
+        "role": {
+          "$ref": "common.schema.json#/$defs/assetRole"
+        },
+        "path": {
+          "$ref": "common.schema.json#/$defs/relativePath"
+        },
+        "status": {
+          "description": "present: erzeugt und vorhanden. planned: vom Host vorgesehen, in diesem Capture nicht erzeugt. unavailable: in diesem Host oder für diese Ansicht nicht erzeugbar.",
+          "enum": ["present", "planned", "unavailable"]
+        },
+        "mediaType": {
+          "$ref": "common.schema.json#/$defs/mediaType"
+        },
+        "byteSize": {
+          "$ref": "common.schema.json#/$defs/byteSize"
+        },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "depth": {
+          "$ref": "#/$defs/depth"
+        },
+        "normal": {
+          "$ref": "#/$defs/normal"
+        },
+        "note": {
+          "$ref": "common.schema.json#/$defs/displayText"
+        }
+      },
+      "required": ["role", "path", "status"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "present"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["mediaType", "byteSize", "sha256"]
+          },
+          "else": {
+            "properties": {
+              "byteSize": false,
+              "sha256": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "model"
+              }
+            },
+            "required": ["role"]
+          },
+          "then": {
+            "properties": {
+              "mediaType": {
+                "const": "model/gltf-binary"
+              },
+              "image": false
+            }
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "present"
+                }
+              },
+              "required": ["status"]
+            },
+            "then": {
+              "required": ["image"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "depth"
+              }
+            },
+            "required": ["role"]
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "present"
+                }
+              },
+              "required": ["status"]
+            },
+            "then": {
+              "required": ["depth"]
+            }
+          },
+          "else": {
+            "properties": {
+              "depth": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "normal"
+              }
+            },
+            "required": ["role"]
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "present"
+                }
+              },
+              "required": ["status"]
+            },
+            "then": {
+              "required": ["normal"]
+            }
+          },
+          "else": {
+            "properties": {
+              "normal": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": ["viewport", "beauty", "albedo"]
+              }
+            },
+            "required": ["role"]
+          },
+          "then": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "colorSpace": {
+                    "enum": ["srgb", "linear"]
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "colorSpace": {
+                    "const": "non-color"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "geometry": {
+      "type": "object",
+      "description": "Die GLB-Datei eines Captures und wie ihr Exportraum im Host liegt. Die Datei selbst folgt glTF 2.0: Meter, rechtshändig, +Y oben. units, axes und origin beschreiben den Weltraum des Hosts, aus dem exportiert wurde; der Server liest Maße, Bounding Box und Dreieckszahl aus der Datei und glaubt diesen Angaben nichts davon (ADR 0032). Kein BIM-Zwilling, keine Materialbibliothek, keine Elementdaten inline.",
+      "properties": {
+        "assetPath": {
+          "description": "path des Assets mit role model und status present, das diese Beschreibung meint; erzwingt tools/validate.mjs.",
+          "$ref": "common.schema.json#/$defs/relativePath"
+        },
+        "units": {
+          "type": "object",
+          "description": "Einheit des Weltraums des Hosts.",
+          "properties": {
+            "sourceUnitScaleToMeter": {
+              "type": "number",
+              "description": "So viele Meter ist eine Einheit des Hosts lang: 1 für Meter, 0.001 für Millimeter, 0.0254 für Zoll. Präzisionsklasse \"ratio\".",
+              "exclusiveMinimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "required": ["sourceUnitScaleToMeter"],
+          "additionalProperties": false
+        },
+        "axes": {
+          "type": "object",
+          "description": "Achsen des Weltraums des Hosts. Der Exportraum ist davon unabhängig immer rechtshändig mit +Y oben (glTF 2.0).",
+          "properties": {
+            "handedness": {
+              "enum": ["right", "left"]
+            },
+            "upAxis": {
+              "enum": ["y", "z"]
+            }
+          },
+          "required": ["handedness", "upAxis"],
+          "additionalProperties": false
+        },
+        "origin": {
+          "description": "Wo der Ursprung des Exportraums im Weltraum des Hosts liegt: seine Koordinaten in Metern, in den Achsen des Hosts. [0, 0, 0], wenn der Export nicht verschoben wurde.",
+          "$ref": "common.schema.json#/$defs/vector3"
+        },
+        "georeference": {
+          "$ref": "#/$defs/georeference"
+        },
+        "elementIds": {
+          "type": "object",
+          "description": "Nur ein Hinweis: eine Datei neben dem Capture, die Element-Kennungen des Hosts den Knoten der GLB zuordnet. Das Manifest trägt keine Elementdaten inline; 1.2.0 überträgt die Datei nicht, und der Server liest den Pfad nicht.",
+          "properties": {
+            "path": {
+              "$ref": "common.schema.json#/$defs/relativePath"
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["assetPath", "units", "axes", "origin"],
+      "additionalProperties": false
+    },
+    "georeference": {
+      "type": "object",
+      "description": "Optional: EPSG-Code, Modellursprung und Transformationskette — dieselbe Form wie der Block georeference der Capture-Anlage (docs/api/plugin-api-v1.md, Abschnitt 7.9; ADR 0013). Der Rahmen model ist im Capture-Manifest der Exportraum der GLB-Datei; axisConvention und unit nennen deshalb dessen Werte (rechtshändig, +Y oben, Meter). Fehlt der Block, ist die Lage nicht festgestellt; eine leere transformChain ist die Feststellung, dass Modell- und Projektbezugsrahmen übereinstimmen.",
+      "properties": {
+        "epsg": {
+          "type": "integer",
+          "description": "EPSG-Code eines projizierten Bezugssystems.",
+          "minimum": 1024,
+          "maximum": 32767
+        },
+        "origin": {
+          "type": "object",
+          "description": "Die Lage des Punkts (0, 0, 0) des Rahmens model im Bezugssystem epsg, in dessen Einheit.",
+          "properties": {
+            "easting": {
+              "$ref": "common.schema.json#/$defs/meters"
+            },
+            "northing": {
+              "$ref": "common.schema.json#/$defs/meters"
+            },
+            "height": {
+              "$ref": "common.schema.json#/$defs/meters"
+            }
+          },
+          "required": ["easting", "northing", "height"],
+          "additionalProperties": false
+        },
+        "axisConvention": {
+          "type": "object",
+          "description": "Achsen des Rahmens model — im Capture-Manifest die des Exportraums.",
+          "properties": {
+            "handedness": {
+              "const": "right"
+            },
+            "upAxis": {
+              "const": "y"
+            }
+          },
+          "required": ["handedness", "upAxis"],
+          "additionalProperties": false
+        },
+        "unit": {
+          "description": "Längeneinheit des Rahmens model — im Capture-Manifest Meter.",
+          "const": "meter"
+        },
+        "transformChain": {
+          "type": "array",
+          "description": "Die geordnete Kette vom Rahmen model zum Rahmen project. order zählt lückenlos ab 1; jeder Schritt beginnt im targetFrame des vorigen; erzwingt tools/validate.mjs. Keine zusammengefasste Matrix.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "sourceFrame": {
+                "type": "string",
+                "description": "model, project oder ein benannter Zwischenrahmen in kebab-case.",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+              },
+              "targetFrame": {
+                "type": "string",
+                "description": "model, project oder ein benannter Zwischenrahmen in kebab-case.",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+              },
+              "kind": {
+                "enum": ["translation", "rotation", "scale", "reprojection"]
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Je kind eigene Parameter.",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "$ref": "common.schema.json#/$defs/meters"
+                  },
+                  "y": {
+                    "$ref": "common.schema.json#/$defs/meters"
+                  },
+                  "z": {
+                    "$ref": "common.schema.json#/$defs/meters"
+                  },
+                  "axis": {
+                    "enum": ["x", "y", "z"]
+                  },
+                  "angleRadians": {
+                    "$ref": "common.schema.json#/$defs/radians"
+                  },
+                  "factor": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000000
+                  },
+                  "sourceEpsg": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 32767
+                  },
+                  "targetEpsg": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 32767
+                  }
+                }
+              },
+              "provenance": {
+                "enum": ["plugin-reported", "manifest-derived", "user-set"]
+              }
+            },
+            "required": ["order", "sourceFrame", "targetFrame", "kind", "parameters", "provenance"],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "translation"
+                    }
+                  },
+                  "required": ["kind"]
+                },
+                "then": {
+                  "properties": {
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "$ref": "common.schema.json#/$defs/meters"
+                        },
+                        "y": {
+                          "$ref": "common.schema.json#/$defs/meters"
+                        },
+                        "z": {
+                          "$ref": "common.schema.json#/$defs/meters"
+                        }
+                      },
+                      "required": ["x", "y", "z"],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "rotation"
+                    }
+                  },
+                  "required": ["kind"]
+                },
+                "then": {
+                  "properties": {
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "axis": {
+                          "enum": ["x", "y", "z"]
+                        },
+                        "angleRadians": {
+                          "$ref": "common.schema.json#/$defs/radians"
+                        }
+                      },
+                      "required": ["axis", "angleRadians"],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "scale"
+                    }
+                  },
+                  "required": ["kind"]
+                },
+                "then": {
+                  "properties": {
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "factor": {
+                          "type": "number",
+                          "exclusiveMinimum": 0,
+                          "maximum": 1000000
+                        }
+                      },
+                      "required": ["factor"],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "reprojection"
+                    }
+                  },
+                  "required": ["kind"]
+                },
+                "then": {
+                  "properties": {
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "sourceEpsg": {
+                          "type": "integer",
+                          "minimum": 1024,
+                          "maximum": 32767
+                        },
+                        "targetEpsg": {
+                          "type": "integer",
+                          "minimum": 1024,
+                          "maximum": 32767
+                        }
+                      },
+                      "required": ["sourceEpsg", "targetEpsg"],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "maxItems": 16
+        }
+      },
+      "required": ["epsg", "origin", "axisConvention", "unit", "transformChain"],
+      "additionalProperties": false
+    },
+    "camera": {
+      "type": "object",
+      "description": "Die Kamera der Ansicht, im Exportraum: Meter, rechtshändig, +Y oben — dieselben Einheiten und derselbe Raum wie die GLB-Datei. Ohne Modell ist es der Weltraum des Hosts, auf Meter und diese Achsen gebracht.",
+      "properties": {
+        "space": {
+          "const": "export"
+        },
+        "projection": {
+          "enum": ["perspective", "orthographic"]
+        },
+        "position": {
+          "description": "Augpunkt im Exportraum.",
+          "$ref": "common.schema.json#/$defs/vector3"
+        },
+        "direction": {
+          "description": "Normierte Blickrichtung im Exportraum.",
+          "$ref": "common.schema.json#/$defs/unitVector3"
+        },
+        "up": {
+          "description": "Normierter Oben-Vektor der Kamera; nicht parallel zu direction. Erzwingt tools/validate.mjs.",
+          "$ref": "common.schema.json#/$defs/unitVector3"
+        },
+        "fieldOfView": {
+          "type": "object",
+          "description": "Sichtfeld mit ausdrücklicher Achse. Ohne axis ist ein Winkel bedeutungslos.",
+          "properties": {
+            "axis": {
+              "enum": ["horizontal", "vertical"]
+            },
+            "angle": {
+              "description": "Öffnungswinkel im Bogenmaß, echt zwischen 0 und pi.",
+              "$ref": "common.schema.json#/$defs/radians",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 3.141592653589793
+            }
+          },
+          "required": ["axis", "angle"],
+          "additionalProperties": false
+        },
+        "extent": {
+          "type": "object",
+          "description": "Halbe Breite und halbe Höhe des abgebildeten Ausschnitts in Metern; nur bei projection orthographic.",
+          "properties": {
+            "halfWidth": {
+              "$ref": "common.schema.json#/$defs/meters",
+              "exclusiveMinimum": 0
+            },
+            "halfHeight": {
+              "$ref": "common.schema.json#/$defs/meters",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": ["halfWidth", "halfHeight"],
+          "additionalProperties": false
+        },
+        "clip": {
+          "type": "object",
+          "description": "Nahe und ferne Schnittebene in Metern; far null heißt unendlich. far ist echt größer als near; erzwingt tools/validate.mjs.",
+          "properties": {
+            "near": {
+              "$ref": "common.schema.json#/$defs/meters",
+              "exclusiveMinimum": 0
+            },
+            "far": {
+              "oneOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/meters",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["near", "far"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["space", "projection", "position", "direction", "up", "clip"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "projection": {
+                "const": "perspective"
+              }
+            },
+            "required": ["projection"]
+          },
+          "then": {
+            "required": ["fieldOfView"],
+            "properties": {
+              "extent": false
+            }
+          },
+          "else": {
+            "required": ["extent"],
+            "properties": {
+              "fieldOfView": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

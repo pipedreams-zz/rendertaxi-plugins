@@ -28,8 +28,10 @@ from dataclasses import dataclass
 
 import bpy
 
-from . import exr
-from . import manifest as mf
+from . import host  # noqa: F401 — Host des Clients
+from .rendertaxi_client import exr
+from .rendertaxi_client import manifest as mf
+from .rendertaxi_client.frame import viewpoint_size  # noqa: F401 — Teil der Schnittstelle dieses Moduls
 
 DOCUMENT_KEY_PROPERTY = "rendertaxi_document_key"
 EXR = "image/x-exr"
@@ -204,25 +206,6 @@ def scene_size(scene) -> tuple[int, int]:
             max(1, render.resolution_y * render.resolution_percentage // 100))
 
 
-def viewpoint_size(desired: dict | None, current: tuple[int, int]) -> tuple[int, int] | None:
-    """Die Größe des Blickpunkt-Rahmens — ``exact`` direkt, ``aspect_ratio`` mit der langen Kante der Szene."""
-    if not isinstance(desired, dict):
-        return None
-    if desired.get("kind") == "exact":
-        width, height = int(desired.get("width", 0)), int(desired.get("height", 0))
-        return (width, height) if width > 0 and height > 0 else None
-    if desired.get("kind") == "aspect_ratio":
-        try:
-            a, b = (int(x) for x in str(desired.get("value", "")).split(":"))
-        except ValueError:
-            return None
-        if a <= 0 or b <= 0:
-            return None
-        long_edge = max(current)
-        return (long_edge, max(1, round(long_edge * b / a))) if a >= b else (max(1, round(long_edge * a / b)), long_edge)
-    return None
-
-
 def color_note(scene) -> str:
     view = scene.view_settings
     text = f"View Transform {view.view_transform}"
@@ -289,13 +272,6 @@ def _save_png(scene, path: str) -> None:
         image.save_render(path, scene=scene)
 
 
-def _file(path: str, root: str, role: str, media_type: str, image: dict, note: str) -> mf.CaptureFile:
-    sha, size = mf.sha256_file(path)
-    relative = os.path.relpath(path, root).replace(os.sep, "/")
-    return mf.CaptureFile(role=role, path=relative, media_type=media_type, image=image,
-                          note=note, byte_size=size, sha256=sha)
-
-
 class CaptureError(RuntimeError):
     pass
 
@@ -326,7 +302,7 @@ def capture_viewport(context, root: str, size: tuple[int, int] | None, hide_over
     engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
     note = (f"Viewport Render (bpy.ops.render.opengl, view_context), {engine}, Shading {shading}; "
             f"Overlays {'aus' if hide_overlays else 'an'}; {color_note(scene)}.")
-    return _file(path, root, "viewport", PNG, mf.describe_png(path), note)
+    return mf.capture_file(path, root, "viewport", PNG, mf.describe_png(path), note)
 
 
 def capture_beauty(context, root: str, size: tuple[int, int] | None, roles: list[str],
@@ -396,10 +372,10 @@ def capture_beauty(context, root: str, size: tuple[int, int] | None, roles: list
                          "sampleFormat": description["sampleFormat"], "channels": description["channels"]}
                 engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
                 note = f"{spec.part} aus {engine}, OpenEXR {image['bitDepth']} Bit {image['sampleFormat']}, unkomprimiert."
-                files.append(_file(path, root, spec.role, EXR, image, note))
+                files.append(mf.capture_file(path, root, spec.role, EXR, image, note))
 
     engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
-    beauty = _file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
+    beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
                    f"Beauty Render (bpy.ops.render.render), {engine}; {color_note(scene)}.")
     order = [spec.role for spec in PASSES]
     files.sort(key=lambda f: order.index(f.role))

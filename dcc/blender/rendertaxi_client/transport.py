@@ -1,7 +1,6 @@
 """Plugin API v1 über HTTP — und der Zustandsautomat der Übernahme.
 
-Dieses Modul kennt ``bpy`` nicht und läuft im Hintergrundfaden des Add-ons.
-Es tut, was ``docs/api/plugin-api-v1.md`` vorschreibt und was
+Kein Hostmodul; läuft im Hintergrundfaden des Plugins. Es tut, was ``docs/api/plugin-api-v1.md`` vorschreibt und was
 ``CaptureTransfer.cpp`` im Archicad-Add-on tut:
 
 1. Die Manifestbytes stehen **vor** der Anlage fest und liegen auf der Platte.
@@ -30,8 +29,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import current
 from . import manifest as mf
-from .settings import TransferStore, log
+from .log import log
+from .store import TransferStore
 
 TIMEOUT_SECONDS = 30
 UPLOAD_TIMEOUT_SECONDS = 300
@@ -83,14 +84,33 @@ def normalize_server_url(raw: str) -> str:
     return text
 
 
+# Zertifikatslisten des Systems, falls der Python des Hosts keine eigene kennt
+# (ein eingebettetes Python unter macOS findet die Schlüsselbundliste nicht).
+_SYSTEM_CA_FILES = ("/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt")
+
+
 def _ssl_context() -> ssl.SSLContext:
+    """TLS mit Prüfung von Zertifikat und Name — nie abgeschaltet.
+
+    Reihenfolge: ``certifi``, wenn der Host es mitbringt (Blender); sonst die
+    Standardpfade des Pythons; kennt der keine Zertifizierungsstelle, die
+    Liste des Systems (macOS ``/etc/ssl/cert.pem``).
+    """
     context = ssl.create_default_context()
-    try:  # Blender bringt certifi mit; ohne es gelten die Systemzertifikate.
+    try:
         import certifi
 
         context.load_verify_locations(certifi.where())
     except (ImportError, OSError):
         pass
+    if not context.cert_store_stats().get("x509_ca"):
+        for path in _SYSTEM_CA_FILES:
+            if os.path.isfile(path):
+                try:
+                    context.load_verify_locations(path)
+                    break
+                except (OSError, ssl.SSLError):
+                    continue
     return context
 
 
@@ -133,9 +153,10 @@ class ApiClient:
                 raw = response.read()
                 request_id = response.headers.get("x-request-id", "")
         except urllib.error.HTTPError as error:
-            status = error.code
-            raw = error.read() or b""
-            request_id = error.headers.get("x-request-id", "") if error.headers else ""
+            with error:  # die Antwort schließen, auch wenn sie ein Fehler ist
+                status = error.code
+                raw = error.read() or b""
+                request_id = error.headers.get("x-request-id", "") if error.headers else ""
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             raise ApiError("Der Server ist nicht erreichbar. Netzwerk und Serveradresse prüfen.",
                            code="network", reason=type(error).__name__) from None
@@ -163,7 +184,7 @@ class ApiClient:
         query = urllib.parse.urlencode({
             "contract": mf.CONTRACT,
             "contractVersion": contract_version,
-            "hostKey": mf.HOST_KEY,
+            "hostKey": current().key,
             "hostVersion": host_version,
             "pluginVersion": plugin_version,
         })
@@ -171,13 +192,13 @@ class ApiClient:
 
     def device_authorization(self, device: dict) -> dict:
         return self.request("POST", "/plugin/auth/device",
-                            body={"client_id": mf.CLIENT_ID, "device": device}, auth=False)
+                            body={"client_id": current().client_id, "device": device}, auth=False)
 
     def device_token(self, device_code: str) -> dict:
         return self.request("POST", "/plugin/auth/device/token", auth=False, body={
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
             "device_code": device_code,
-            "client_id": mf.CLIENT_ID,
+            "client_id": current().client_id,
         })
 
     def revoke(self, token: str) -> None:
@@ -252,6 +273,7 @@ class ApiClient:
             with self._open(request, UPLOAD_TIMEOUT_SECONDS) as response:
                 return response.status
         except urllib.error.HTTPError as error:
+            error.close()
             if error.code == 412:
                 return 412  # liegt schon da; ``complete`` prüft
             raise ApiError(f"Die Übertragung einer Datei scheiterte ({error.code}).",
@@ -313,6 +335,17 @@ def _first_problem(session: dict) -> ApiError:
 
 def _needs_new_key(session: dict) -> bool:
     return session.get("state") in ("expired", "aborted")
+
+
+def handshake_problem(handshake: dict) -> str | None:
+    """Warum dieser Server nicht bedient wird — oder ``None``: Vertrag und Pluginfassung."""
+    negotiation = handshake.get("negotiation") or {}
+    if negotiation.get("result") not in (None, "supported"):
+        return f"Der Server nimmt das Capture-Manifest {mf.CONTRACT_VERSION} nicht an ({negotiation.get('result')})."
+    update = handshake.get("update") or {}
+    if update.get("status") == "update_required":
+        return update.get("message") or "Bitte das Plugin aktualisieren; diese Fassung nimmt der Server nicht mehr an."
+    return None
 
 
 def supports_model(handshake: dict | None) -> bool:

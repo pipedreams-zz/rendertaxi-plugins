@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendertaxi.ai/contracts/plugin/v1/host-capabilities.schema.json",
+  "title": "Plugin host capabilities v1",
+  "description": "Host-Capabilities: was ein Host nach Auskunft seines Plugins liefern kann (RTX-P-003, ADR 0031). Diese Datei definiert kein eigenständiges Dokument, sondern referenzierbare Definitionen; das Capture-Manifest führt sie ab Version 1.1.0 optional unter source.host.capabilities. Nicht zu verwechseln mit der generation-capability des Servers (Fähigkeit eines Bildmodells). Der Server glaubt der Selbstauskunft nicht: Capabilities steuern die Oberfläche des Plugins und die Vorauswahl von Presets. Die Planung eines Jobs erfolgt ausschließlich nach den Dateien, die tatsächlich mit status: present angekommen und serverseitig verifiziert sind.",
+  "$defs": {
+    "capabilityKey": {
+      "description": "Geschlossene Aufzählung der Host-Capabilities. Ein neuer Wert ist eine MINOR-Änderung und darf erst geschrieben werden, wenn die Gegenseite ihn umsetzt.",
+      "enum": [
+        "viewportCapture",
+        "beautyRender",
+        "depthPass",
+        "normalPass",
+        "albedoPass",
+        "objectIdPass",
+        "materialIdPass",
+        "maskPass",
+        "cameraExport",
+        "geometryExport",
+        "bimMetadata",
+        "backgroundRender",
+        "resultReimport"
+      ]
+    },
+    "capabilityState": {
+      "description": "available: liefert ohne Zutun des Nutzers. requires-user-action: liefert erst, wenn der Nutzer eine Einstellung gesetzt hat (etwa einen Multipass aktiviert). unavailable: liefert in diesem Host nicht. unknown: nicht bekannt; gleichbedeutend mit einer fehlenden Angabe.",
+      "enum": ["available", "requires-user-action", "unavailable", "unknown"]
+    },
+    "constraintMediaType": {
+      "description": "Medientyp einer Ausgabe, aus einer festen Liste. Ein neuer Wert ist eine MINOR-Änderung.",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/tiff",
+        "image/x-exr",
+        "image/bmp",
+        "image/gif"
+      ]
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Optionale Grenzen einer Capability.",
+      "properties": {
+        "maxWidth": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "maxHeight": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "mediaTypes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/constraintMediaType" },
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilityEntry": {
+      "type": "object",
+      "properties": {
+        "state": { "$ref": "#/$defs/capabilityState" },
+        "constraints": { "$ref": "#/$defs/constraints" }
+      },
+      "required": ["state"],
+      "additionalProperties": false
+    },
+    "hostCapabilities": {
+      "type": "object",
+      "description": "Selbstauskunft des Plugins über seinen Host. Jede Capability ist optional; eine fehlende heißt unknown. So bleibt eine neue Capability eine MINOR-Änderung statt eines neuen Pflichtfelds.",
+      "properties": {
+        "viewportCapture": { "$ref": "#/$defs/capabilityEntry" },
+        "beautyRender": { "$ref": "#/$defs/capabilityEntry" },
+        "depthPass": { "$ref": "#/$defs/capabilityEntry" },
+        "normalPass": { "$ref": "#/$defs/capabilityEntry" },
+        "albedoPass": { "$ref": "#/$defs/capabilityEntry" },
+        "objectIdPass": { "$ref": "#/$defs/capabilityEntry" },
+        "materialIdPass": { "$ref": "#/$defs/capabilityEntry" },
+        "maskPass": { "$ref": "#/$defs/capabilityEntry" },
+        "cameraExport": { "$ref": "#/$defs/capabilityEntry" },
+        "geometryExport": { "$ref": "#/$defs/capabilityEntry" },
+        "bimMetadata": { "$ref": "#/$defs/capabilityEntry" },
+        "backgroundRender": { "$ref": "#/$defs/capabilityEntry" },
+        "resultReimport": { "$ref": "#/$defs/capabilityEntry" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

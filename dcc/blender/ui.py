@@ -28,12 +28,12 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import auth, capture, export
-from . import manifest as mf
-from . import settings
+from . import capture, export, settings
+from .rendertaxi_client import auth, frame
+from .rendertaxi_client import manifest as mf
+from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, handshake_problem,
+                                          normalize_server_url, prepare, supports_model)
 from .settings import CredentialStore, TransferStore, log, log_exception
-from .transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, normalize_server_url, prepare,
-                        supports_model)
 
 # --------------------------------------------------------------------------
 # Zustand (nur Hauptfaden)
@@ -210,16 +210,6 @@ def _api(token: str | None = None) -> ApiClient:
 # --------------------------------------------------------------------------
 
 
-def _check_handshake(handshake: dict) -> str | None:
-    negotiation = handshake.get("negotiation") or {}
-    if negotiation.get("result") not in (None, "supported"):
-        return f"Der Server nimmt das Capture-Manifest {mf.CONTRACT_VERSION} nicht an ({negotiation.get('result')})."
-    update = handshake.get("update") or {}
-    if update.get("status") == "update_required":
-        return update.get("message") or "Bitte das Add-on aktualisieren; diese Fassung nimmt der Server nicht mehr an."
-    return None
-
-
 def _load_targets(job: Job, api: ApiClient) -> None:
     projects = [(p["id"], p.get("name") or p["id"]) for p in api.projects() if p.get("id")]
 
@@ -247,7 +237,7 @@ def _restore_work(server: str, token: str):
     def work(job: Job) -> None:
         api = ApiClient(server, token)
         handshake = api.handshake(host_version(), mf.plugin_version())
-        problem = _check_handshake(handshake)
+        problem = handshake_problem(handshake)
         if problem:
             raise ApiError(problem)
         _connected(job, api, handshake, auth.identity(api))
@@ -474,7 +464,7 @@ class RTX_OT_connect(Operator):
         def work(job: Job) -> None:
             api = ApiClient(server)
             handshake = api.handshake(host_version(), version)
-            problem = _check_handshake(handshake)
+            problem = handshake_problem(handshake)
             if problem:
                 raise ApiError(problem)
             description = auth.device(credentials, api.server_url, host_version(), version, name)
@@ -582,24 +572,9 @@ class RTX_OT_refresh(Operator):
 
 
 def _target(props: RTX_Props) -> dict:
-    project_id = props.project
-    if not project_id or project_id == "NONE":
-        raise ValueError("Bitte ein Projekt wählen.")
-    if props.target_mode == "CREATE":
-        name = props.viewpoint_name.strip()
-        if not name:
-            raise ValueError("Bitte einen Namen für den neuen Blickpunkt eingeben.")
-        viewpoint = {"mode": "create", "name": name, "size": props.size_mode}
-    else:
-        if not props.viewpoint or props.viewpoint == "NONE":
-            raise ValueError("Bitte den Blickpunkt wählen, der aktualisiert wird.")
-        viewpoint = {
-            "mode": "update",
-            "viewpointId": props.viewpoint,
-            "frame": "fit-to-capture" if props.fit_to_capture else "keep",
-            "size": props.size_mode,
-        }
-    return {"projectId": project_id, "viewpoint": viewpoint}
+    mode = frame.CREATE if props.target_mode == "CREATE" else frame.UPDATE
+    return frame.target(props.project, mode, name=props.viewpoint_name, viewpoint_id=props.viewpoint,
+                        fit_to_capture=props.fit_to_capture, size=props.size_mode)
 
 
 def capture_size(context, props: RTX_Props) -> tuple[int, int] | None:
@@ -635,9 +610,7 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
     scene = context.scene
     size = capture_size(context, props)
     limits = (handshake or {}).get("limits") or {}
-    negotiation = (handshake or {}).get("negotiation") or {}
-    highest = str(negotiation.get("highestSupportedVersion") or mf.CONTRACT_VERSION)
-    contract_version = "1.0.0" if highest.startswith("1.0") else mf.CONTRACT_VERSION
+    contract_version = mf.image_contract_version(handshake)
     if props.send_model:
         problem = model_problem(context, props, handshake)
         if problem:
@@ -696,13 +669,15 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
 
 
 def _transfer_work(server: str, token: str, document_key: str, pending: dict):
+    directory = settings.user_dir()  # im Hauptfaden: der Nutzerordner kommt aus bpy
+
     def work(job: Job) -> None:
         api = ApiClient(server, token)
 
         def progress(text: str, percent: int) -> None:
             job.post(lambda: setattr(STATE, "progress", (text, percent)))
 
-        outcome = Transfer(api, TransferStore(settings.user_dir()), document_key, job.cancel, progress).run(pending)
+        outcome = Transfer(api, TransferStore(directory), document_key, job.cancel, progress).run(pending)
 
         def apply():
             STATE.result = {
@@ -864,24 +839,14 @@ def _aspect_hint(context, props: RTX_Props) -> str | None:
     """Weicht bei „Rahmen behalten" das Ausgabeziel ab, sagt das Panel es — es löst es nicht still auf."""
     if props.target_mode != "UPDATE" or props.fit_to_capture:
         return None
-    frame = capture.viewpoint_size(STATE.desired.get(props.viewpoint), capture.scene_size(context.scene))
+    viewpoint_frame = capture.viewpoint_size(STATE.desired.get(props.viewpoint), capture.scene_size(context.scene))
     size = capture_size(context, props) or capture.scene_size(context.scene)
-    if frame is None:
-        return None
-    if abs(frame[0] / frame[1] - size[0] / size[1]) <= 0.005:
-        return None
-    return (f"Der Rahmen des Blickpunkts ({frame[0]} × {frame[1]}) hat ein anderes Seitenverhältnis "
-            f"als die Aufnahme ({size[0]} × {size[1]}). „Rahmen an Aufnahme anpassen“ oder "
-            f"Größe „Blickpunkt-Rahmen“ wählen.")
+    return frame.aspect_hint(viewpoint_frame, size, frame_option="Rahmen an Aufnahme anpassen",
+                             size_option="Blickpunkt-Rahmen")
 
 
 def _size_text(props: RTX_Props) -> str:
-    follows = props.target_mode == "CREATE" or props.fit_to_capture
-    if props.size_mode == "capture" and follows:
-        return "Zielgröße: Aufnahmemaße (unter 1536 langer Kante bleibt die Canvas-Vorgabe)"
-    if props.size_mode == "capture":
-        return "Zielgröße: Aufnahmemaße — wirkt erst mit „Rahmen an Aufnahme anpassen“"
-    return "Zielgröße: Canvas-Vorgabe — nur das Seitenverhältnis der Aufnahme"
+    return frame.size_text(props.target_mode == "CREATE", props.fit_to_capture, props.size_mode)
 
 
 class RTX_PT_panel(Panel):

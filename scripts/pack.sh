@@ -8,12 +8,21 @@
 # Release-Nummer, damit Nutzer Stände unterscheiden können:
 #   rendertaxi-archicad28-1.0.0-2026.09.26.zip
 #   rendertaxi-blender5.2-0.1.0-2026.09.26.zip
+#   rendertaxi-cinema4d2026-0.1.0-2026.09.30.zip
 # RELEASE ist das Tag des Releases (der Release-Workflow übergibt es); ohne
 # Angabe das heutige Datum.
 #
 # Blender: die Zip **ist** die Extension (blender_manifest.toml an der Wurzel),
 # installierbar über „Install from Disk"; Version und Mindestversion kommen aus
 # dcc/blender/blender_manifest.toml.
+#
+# Cinema 4D: die Zip enthält einen Ordner rendertaxi/ (rendertaxi.pyp, das
+# Paket rendertaxi_c4d/ und ANLEITUNG.md), den Nutzer in den Plugin-Ordner von
+# Cinema 4D kopieren; Version und Hostfassung kommen aus
+# dcc/cinema4d/rendertaxi_c4d/host.py.
+#
+# Blender und Cinema 4D tragen den gemeinsamen Python-Client
+# (rendertaxi_client/) eingebettet; fehlt er, bricht das Skript ab.
 #
 # Archicad: dcc/archicad/dist/ muss macos/rendertaxi.bundle **und**
 # win/rendertaxi.apx enthalten; fehlt eines, bricht das Skript ab, statt ein
@@ -50,6 +59,23 @@ test -n "$BLENDER" -a -n "$BLENDER_HOST" || { echo "Blender: Version oder Mindes
 BLENDER_ZIP="rendertaxi-blender${BLENDER_HOST}-${BLENDER}-${RELEASE}.zip"
 (cd dcc/blender && zip -qr "../../dist/$BLENDER_ZIP" . -x '*__pycache__*' -x '*.DS_Store' -x '.gitignore')
 unzip -l "dist/$BLENDER_ZIP" | grep -q ' blender_manifest.toml$' || { echo "Blender-Zip ohne blender_manifest.toml an der Wurzel" >&2; exit 1; }
+unzip -l "dist/$BLENDER_ZIP" | grep -q ' rendertaxi_client/__init__.py$' || { echo "Blender-Zip ohne eingebetteten rendertaxi_client" >&2; exit 1; }
+
+# Cinema 4D: Version und Hostfassung aus rendertaxi_c4d/host.py (die eine Quelle).
+C4D_HOST_PY=dcc/cinema4d/rendertaxi_c4d/host.py
+test -f "$C4D_HOST_PY" || { echo "Fehlt: $C4D_HOST_PY" >&2; exit 1; }
+test -f dcc/cinema4d/rendertaxi_c4d/rendertaxi_client/__init__.py || { echo "Cinema 4D ohne eingebetteten rendertaxi_client" >&2; exit 1; }
+C4D=$(grep -E '^PLUGIN_VERSION = "[0-9]+\.[0-9]+\.[0-9]+"$' "$C4D_HOST_PY" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+C4D_HOST=$(grep -E '^HOST_MAJOR = [0-9]{4}$' "$C4D_HOST_PY" | grep -oE '[0-9]{4}' || true)
+test -n "$C4D" -a -n "$C4D_HOST" || { echo "Cinema 4D: Version oder Hostfassung nicht lesbar" >&2; exit 1; }
+C4D_ZIP="rendertaxi-cinema4d${C4D_HOST}-${C4D}-${RELEASE}.zip"
+C4D_STAGE="$(mktemp -d)"
+DIST="$PWD/dist"
+cp -R dcc/cinema4d "$C4D_STAGE/rendertaxi"
+cp docs/dcc/cinema4d.md "$C4D_STAGE/rendertaxi/ANLEITUNG.md"
+(cd "$C4D_STAGE" && zip -qr "$DIST/$C4D_ZIP" rendertaxi -x '*__pycache__*' -x '*.DS_Store' -x '*.pyc')
+rm -rf "$C4D_STAGE"
+unzip -l "dist/$C4D_ZIP" | grep -q ' rendertaxi/rendertaxi.pyp$' || { echo "Cinema-4D-Zip ohne rendertaxi/rendertaxi.pyp" >&2; exit 1; }
 
 cat > dist/RELEASE.md <<EOF
 Release $RELEASE
@@ -58,6 +84,7 @@ Release $RELEASE
 | --- | --- | --- | --- |
 | Archicad | Archicad $ARCHICAD_HOST (macOS, Windows) | $ARCHICAD | $ARCHICAD_ZIP (macOS-Bundle und Windows-.apx) |
 | Blender | Blender $BLENDER_HOST LTS (macOS, Windows, Linux) | $BLENDER | $BLENDER_ZIP (Extension, Vorschau) |
+| Cinema 4D | Cinema 4D $C4D_HOST (macOS, Windows) | $C4D | $C4D_ZIP (Python-Plugin, Vorschau) |
 
 **Archicad installieren:** Zip entpacken, Archicad beenden.
 
@@ -66,9 +93,12 @@ Release $RELEASE
 
 Danach Archicad starten, Menü **rendertaxi.ai › Palette**. Vollständige Anleitung: [docs/dcc/archicad.md](docs/dcc/archicad.md) (liegt auch als ANLEITUNG.md in der Zip).
 
+**Cinema 4D installieren:** Zip entpacken, Cinema 4D beenden, den Ordner \`rendertaxi\` in den Plugin-Ordner kopieren (**Edit › Preferences › Open Preferences Folder…** › \`plugins\`) und Cinema 4D starten. Danach **Extensions › rendertaxi.ai** (deutsch: **Erweiterungen**). Vollständige Anleitung: [docs/dcc/cinema4d.md](docs/dcc/cinema4d.md) (liegt auch als ANLEITUNG.md im Ordner).
+
 **Blender installieren:** Zip **nicht** entpacken. In Blender **Edit › Preferences › Get Extensions ›** Menü oben rechts **› Install from Disk…** und die Zip wählen; **Allow Online Access** unter **System › Network** einschalten. Danach in der 3D-Ansicht **N › rendertaxi**. Vollständige Anleitung: [docs/dcc/blender.md](docs/dcc/blender.md).
 EOF
 ls -l dist
 unzip -l "dist/$ARCHICAD_ZIP" | tail -n +1
 unzip -l "dist/$BLENDER_ZIP" | tail -n +1
+unzip -l "dist/$C4D_ZIP" | tail -n +1
 cat dist/RELEASE.md

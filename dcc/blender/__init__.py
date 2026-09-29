@@ -8,21 +8,22 @@ Serverseite (ADR 0009, ADR 0033).
 
 Module:
 
-* ``auth``      Gerätelogin, Abmelden, „Angemeldet als …"
+* ``host``      bindet den gemeinsamen Client an Blender (Schlüssel, Version)
 * ``capture``   Viewport, Beauty, Pässe, Laufzeitprobe (``bpy``)
-* ``exr``       einen Pass aus Blenders Mehrschicht-EXR herauslösen
-* ``export``    Modellweg — vorgesehene Stelle, heute ohne Inhalt
-* ``manifest``  Manifest, ``contentHash``, Schemaprüfung
-* ``settings``  Einstellungen, Anmeldungsablage (0600), angefangene Übernahmen
-* ``transport`` Plugin API v1 über HTTP, Zustandsautomat der Übernahme
+* ``export``    Modellweg: GLB, Kamera, Einheiten (RTX-B-003)
+* ``settings``  Einstellungen und Nutzerordner (``bpy``)
 * ``ui``        N-Panel und Operatoren (``bpy``)
+* ``rendertaxi_client`` der gemeinsame Python-Client aller Python-Hosts —
+  Gerätelogin, Transport, Manifest, Ablage, Protokoll, EXR (ADR 0035). Er
+  liegt im Repository unter ``integrations/_shared/python`` und wird beim
+  Bauen eingebettet.
 
 Nur Python-Standardbibliothek und ``bpy`` — keine Drittpakete.
 """
 
 import bpy
 
-from . import settings, ui
+from . import host, settings, ui  # noqa: F401 — host zuerst: setzt den Host des Clients
 
 
 def register():

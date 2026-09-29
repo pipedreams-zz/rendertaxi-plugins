@@ -1,8 +1,8 @@
 """Capture-Manifest 1.1.0 und 1.2.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
-Dieses Modul kennt ``bpy`` nicht. Es ist die Python-Fassung dessen, was der
-Referenzclient (``integrations/_shared/tools/capture-client.mjs``) und das
-Archicad-Add-on (``core/src/CaptureManifest.cpp``) tun:
+Kein Hostmodul. Die Python-Fassung dessen, was der Referenzclient
+(``integrations/_shared/tools/capture-client.mjs``) und das Archicad-Add-on
+(``core/src/CaptureManifest.cpp``) tun:
 
 * ``content_hash`` ist zeichengleich zu ``canonical-hash.mjs`` — Assetzeile
   ``asset ⇥ role ⇥ path ⇥ sha256`` mit längenpräfigierten Feldern, sortiert
@@ -10,8 +10,13 @@ Archicad-Add-on (``core/src/CaptureManifest.cpp``) tun:
 * ``SchemaRegistry`` ist eine Übertragung von ``json-schema.mjs``: dieselbe,
   bewusst begrenzte Teilmenge von JSON Schema 2020-12, ebenso streng — ein
   unbekanntes Schlüsselwort ist ein Fehler, kein stilles Ignorieren.
-* Die Schemas liegen als Kopie unter ``schema/``; ``tests/contract/
-  blender-addon.test.ts`` hält sie bytegleich zu ``integrations/_shared``.
+* Die Schemas liegen als Kopie unter ``schema/``;
+  ``tests/contract/python-client.test.ts`` hält sie bytegleich zu
+  ``integrations/_shared/contracts/v1``.
+
+Schlüssel und Kennung des Plugins (``source.host.key``,
+``source.plugin.identifier``) und die Rollen, die ein Host nie ``present``
+meldet, kommen aus dem konfigurierten ``Host`` (``rendertaxi_client.configure``).
 
 Ein Manifest, das hier nicht validiert, wird nicht hochgeladen
 (``docs/api/plugin-api-v1.md``, Abschnitt 7.1, Schritt 4).
@@ -28,6 +33,8 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 
+from . import CLIENT_DIR, current
+
 CONTRACT = "rendertaxi.plugin.capture-manifest"
 CONTRACT_VERSION = "1.1.0"
 # Mit Modell: 1.2.0 bringt ``camera``, ``geometry`` und die Rolle ``model`` (ADR 0032).
@@ -35,11 +42,8 @@ MODEL_CONTRACT_VERSION = "1.2.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 IMPLEMENTED_MINOR = 2
-CLIENT_ID = "ai.rendertaxi.plugin.blender"
-HOST_KEY = "blender"
 
-ADDON_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_DIR = os.path.join(ADDON_DIR, "schema")
+SCHEMA_DIR = os.path.join(CLIENT_DIR, "schema")
 SCHEMA_FILES = (
     "capture-manifest.schema.json",
     "common.schema.json",
@@ -48,11 +52,15 @@ SCHEMA_FILES = (
 
 
 def plugin_version() -> str:
-    """Die eine Quelle der Pluginversion: ``version`` in ``blender_manifest.toml``."""
-    import tomllib
+    """Die Version des Plugins, das den Client konfiguriert hat (die eine Quelle liegt beim Plugin)."""
+    return current().plugin_version
 
-    with open(os.path.join(ADDON_DIR, "blender_manifest.toml"), "rb") as handle:
-        return str(tomllib.load(handle)["version"])
+
+def image_contract_version(handshake: dict | None) -> str:
+    """Vertragsfassung des Bildwegs: 1.1.0, nur gegen einen Server mit höchstens 1.0 dann 1.0.0 (§3)."""
+    negotiation = (handshake or {}).get("negotiation") or {}
+    highest = str(negotiation.get("highestSupportedVersion") or CONTRACT_VERSION)
+    return "1.0.0" if highest.startswith("1.0") else CONTRACT_VERSION
 
 
 # --------------------------------------------------------------------------
@@ -325,8 +333,8 @@ def validate_manifest(document: dict) -> list[str]:
 
     Dieselben Zusatzregeln wie ``validate.mjs`` und der Prüfer des Servers:
     je Rolle und je Pfad höchstens ein Eintrag, mindestens ein vorhandenes
-    **Bild**, ``contentHash`` passt zum Inhalt, ``depth`` nie ``present``
-    (QB-01, ``integrations/blender/docs/open-questions.md``); seit 1.2.0
+    **Bild**, ``contentHash`` passt zum Inhalt, eine Rolle aus
+    ``Host.never_present`` nie ``present`` (Blender: ``depth``, QB-01); seit 1.2.0
     ``geometry`` genau dann, wenn eine Datei der Rolle ``model`` vorhanden ist,
     und die Kamera mit normierten, nicht parallelen Vektoren.
     """
@@ -365,8 +373,10 @@ def validate_manifest(document: dict) -> list[str]:
         present = [a for a in assets if isinstance(a, dict) and a.get("status") == "present"]
         if not any(a.get("role") != MODEL_ROLE for a in present):
             problems.append("/assets: kein Bild mit status present — das Modell allein ist kein Capture")
-        if any(a.get("role") == "depth" for a in present):
-            problems.append("/assets: depth ist für Blender nie present (QB-01)")
+        host = current()
+        for role, question in sorted(host.never_present.items()):
+            if any(a.get("role") == role for a in present):
+                problems.append(f"/assets: {role} ist für {host.label} nie present ({question})")
         try:
             if document.get("contentHash") != content_hash(assets):
                 problems.append("/contentHash: passt nicht zum Inhalt der Assets")
@@ -491,6 +501,15 @@ class ManifestInput:
     contract_version: str = CONTRACT_VERSION
 
 
+def capture_file(path: str, root: str, role: str, media_type: str, image: dict | None,
+                 note: str | None) -> CaptureFile:
+    """Eine geschriebene Datei als ``CaptureFile`` — Hash und Größe aus der Datei, Pfad relativ zur Wurzel."""
+    sha, size = sha256_file(path)
+    relative = os.path.relpath(path, root).replace(os.sep, "/")
+    return CaptureFile(role=role, path=relative, media_type=media_type, image=image,
+                       note=note, byte_size=size, sha256=sha)
+
+
 def asset_entries(data: ManifestInput) -> list[dict]:
     assets: list[dict] = []
     for f in data.files:
@@ -518,7 +537,8 @@ def asset_entries(data: ManifestInput) -> list[dict]:
 
 def build_manifest(data: ManifestInput) -> dict:
     assets = asset_entries(data)
-    host: dict = {"key": HOST_KEY, "version": data.host_version}
+    plugin = current()
+    host: dict = {"key": plugin.key, "version": data.host_version}
     if data.capabilities and data.contract_version != "1.0.0":
         host["capabilities"] = data.capabilities
     project: dict = {
@@ -537,13 +557,13 @@ def build_manifest(data: ManifestInput) -> dict:
         "createdAt": data.created_at,
         "source": {
             "host": host,
-            "plugin": {"identifier": CLIENT_ID, "version": data.plugin_version},
+            "plugin": {"identifier": plugin.client_id, "version": data.plugin_version},
             "machine": dict(data.machine),
         },
         "project": project,
         "view": view,
         "intent": {},
-        # Seit 1.2.0 aus export.py (RTX-B-003); ohne Modell null.
+        # Seit 1.2.0 aus dem Modellweg des Hosts (Blender: export.py, RTX-B-003); ohne Modell null.
         "camera": data.camera,
         "geometry": data.geometry,
         "contentHash": content_hash(assets),
