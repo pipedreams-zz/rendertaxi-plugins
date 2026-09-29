@@ -10,7 +10,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 
 Voraussetzung: Blender 5.2 LTS (macOS, Windows, Linux). Die Zip
 `rendertaxi-blender5.2-<Version>-<Release>.zip` (etwa
-`rendertaxi-blender5.2-0.2.0-2026.09.28.zip`) von der
+`rendertaxi-blender5.2-0.3.0-2026.09.29.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 **Nicht entpacken** — die Zip ist die Extension.
@@ -75,10 +75,24 @@ Normalen, Albedo, Objekt-ID, Material-ID. Die Extension schaltet keinen Pass
 selbst ein; ist einer nicht wählbar, steht darunter, was einzustellen ist
 (etwa „View Layer › Passes › Data › Object Index (Cycles) einschalten").
 
-Datenpässe entstehen als OpenEXR. **rendertaxi.ai nimmt EXR-Dateien derzeit
-nicht an**; gewählte Pässe werden deshalb nur im Manifest als „geplant"
-vermerkt und nicht übertragen. Tiefe und Normalen bleiben unabhängig davon
-„geplant", bis ihre Kodierung geklärt ist.
+Gewählte Pässe gehen als **PNG** mit — je Pass eine Datei, von Blender im
+selben Rendering geschrieben wie das Bild. **Bittiefe der Datenpässe**:
+**8 Bit (Standard)** oder **16 Bit**; die Wahl steht im Panel über den Pässen
+und wird gemerkt (auch unter **Edit › Preferences › Add-ons ›
+rendertaxi.ai**). 16 Bit ist genauer und doppelt so groß.
+
+- **Tiefe** wird zwischen **Clip Start** und **Clip End** der Kamera
+  gespeichert (Object Data Properties der Kamera): nah = dunkel, fern = hell,
+  ohne Treffer weiß. Ein enger Clipbereich um das Modell ergibt eine feinere
+  Tiefe. Tiefe geht nur mit **Unit System** „Metric" oder „Imperial" und
+  **Unit Scale 1** mit.
+- **Normalen** im Weltraum, **Albedo** linear, **Objekt-ID** und
+  **Material-ID** als Pass-Index. Mit 8 Bit passen Indizes bis 255; ist einer
+  größer, sagt das Panel es, und der Pass geht nicht mit — dann 16 Bit wählen.
+- Die Extension ändert dafür nichts dauerhaft an der Szene: Compositing und
+  Ausgabeeinstellungen sind nach der Aufnahme wie vorher. Blender meldet beim
+  Schreiben jeder Pass-Datei selbst eine Zeile „Saved: …" in der
+  Systemkonsole.
 
 ## Modell mitsenden
 

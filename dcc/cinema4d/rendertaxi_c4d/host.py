@@ -32,7 +32,7 @@ from . import rendertaxi_client as client
 # Entwicklungs-ID aus dem von Maxon freigegebenen Testbereich 1000001–1000010.
 # Vor der Veröffentlichung durch die registrierte Plugin-ID ersetzen.
 PLUGIN_ID = 1000001
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 HOST_MAJOR = 2026
 
 KEY = "cinema-4d"
@@ -47,8 +47,9 @@ HOST = client.configure(client.Host(
     label=LABEL,
     plugin_version=PLUGIN_VERSION,
     roots=(PLUGIN_DIR,),
-    # Tiefe: Standard/Physical normiert zur Fokusebene, nicht linear-metric (QC-03);
-    # Normalen: Raum und Vorzeichenbereich nicht belegt (QC-04).
+    # Tiefe: Standard/Physical kodieren den Abstand zur Fokusebene, die Umrechnung in
+    # normalized-linear (1.3.0) ist nicht belegt (QC-03); Normalen: Raum und
+    # Vorzeichenbereich nicht belegt, (n + 1) / 2 nicht zugesagt (QC-04).
     never_present={"depth": "QC-03", "normal": "QC-04"},
 ))
 

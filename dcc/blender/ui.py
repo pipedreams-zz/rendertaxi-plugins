@@ -603,9 +603,11 @@ def model_problem(context, props: RTX_Props, handshake: dict | None) -> str | No
 def build_capture(context, props: RTX_Props, directory: str, handshake: dict | None) -> bytes:
     """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
 
-    Ohne Modell bleibt es Capture-Manifest 1.1.0, ``camera`` und ``geometry``
-    sind ``null``; mit Modell 1.2.0 mit GLB und — wenn darstellbar — der
-    Kamera der Aufnahme.
+    Die Vertragsfassung kommt aus dem Handshake: 1.3.0, wenn der Server sie
+    umsetzt (PNG-Datenpässe, RTX-P-012), sonst ohne Modell 1.1.0 und mit Modell
+    1.2.0. Ohne Modell sind ``camera`` und ``geometry`` ``null``; mit Modell
+    geht die GLB mit und — wenn darstellbar — die Kamera der Aufnahme. Die
+    Datenpässe haben die Bittiefe aus den Einstellungen (``settings``).
     """
     scene = context.scene
     size = capture_size(context, props)
@@ -622,7 +624,8 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
         view_name = "3D-Ansicht"
     else:
         beauty, passes, planned = capture.capture_beauty(
-            context, directory, size, selected_roles(props), limits.get("allowedMediaTypes"))
+            context, directory, size, selected_roles(props), limits.get("allowedMediaTypes"),
+            settings.data_pass_bit_depth())
         files = [beauty, *passes]
         view_name = scene.camera.name if scene.camera else None
     camera = geometry = None
@@ -638,7 +641,7 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
             wm.progress_end()
         camera = export.camera_block(context, props.capture_kind, (image["width"], image["height"]))
         geometry = export.geometry_block(context, directory)
-        contract_version = mf.MODEL_CONTRACT_VERSION
+        contract_version = mf.model_contract_version(handshake)
     stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else None
     data = mf.ManifestInput(
         capture_id=mf.uuid_v7(),
@@ -962,8 +965,12 @@ class RTX_PT_panel(Panel):
     def _passes(self, layout, context, props):
         layout.label(text="Pässe (optional)")
         allowed = ((STATE.handshake or {}).get("limits") or {}).get("allowedMediaTypes")
-        if allowed is not None and capture.EXR not in allowed:
-            _wrapped(layout, "Der Server nimmt derzeit kein EXR an: gewählte Pässe werden nur als „geplant“ vermerkt.", "INFO")
+        if allowed is not None and capture.PNG not in allowed:
+            _wrapped(layout, "Der Server nimmt derzeit kein PNG an: gewählte Pässe werden nur als „geplant“ vermerkt.", "INFO")
+        prefs = settings.preferences()
+        if prefs is not None:
+            layout.prop(prefs, "data_pass_bit_depth")
+        bit_depth = settings.data_pass_bit_depth()
         scene, view_layer = context.scene, context.view_layer
         for spec in capture.PASSES:
             state, hint = capture.pass_status(spec, scene, view_layer)
@@ -974,8 +981,11 @@ class RTX_PT_panel(Panel):
             row.prop(props, _PASS_PROPS[spec.role], text=spec.label)
             if state != "available":
                 _wrapped(layout, hint or "", "INFO")
-            elif spec.blocked_by:
-                _wrapped(layout, f"wird als „geplant“ gemeldet ({spec.blocked_by})", "INFO")
+            elif getattr(props, _PASS_PROPS[spec.role]) and scene.camera is not None:
+                # Nur für gewählte Pässe: die Prüfung geht über alle Objekte der Szene.
+                problem = capture.pass_problem(spec, scene, bit_depth)
+                if problem:
+                    _wrapped(layout, f"wird als „geplant“ gemeldet: {problem}", "INFO")
 
     def _model(self, layout, context, props):
         """„Modell mitsenden": Größe und Grenzen vor dem Senden, und was nicht mitgeht."""

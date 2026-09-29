@@ -10,32 +10,42 @@ mit Blender 5.2.2 (Linux, Software-GL im virtuellen Display):
   deshalb blendet das Add-on sie auf Wunsch für die Aufnahme aus.
 * ``bpy.ops.render.render`` rendert aus der aktiven Kamera. Das Beauty-Bild
   wird mit ``Image.save_render`` als PNG (8 Bit, RGBA, „Save As Render":
-  View Transform angewendet) geschrieben; die Pässe als unkomprimiertes
-  Mehrschicht-EXR, aus dem ``exr.extract_pass`` je Rolle eine Datei macht.
+  View Transform angewendet) geschrieben.
+
+Datenpässe (RTX-P-012, gemessen am 29.09.2026): je Rolle ein PNG mit 8 oder
+16 Bit, geschrieben von Blender selbst während desselben Renderings — ein
+File-Output-Knoten je Rolle in einer **vorübergehenden Kopie** der
+Compositing-Gruppe (ohne Gruppe: eine Gruppe, die das Bild nur durchreicht).
+Die Knoten rechnen die Kodierung des Vertrags (Tiefe normalisiert, Normalen
+``(n + 1) / 2``, Indizes als Ganzzahl) und schreiben mit der Ansicht „Raw",
+also ohne Farbumrechnung. Kein EXR, auch nicht als Zwischenschritt.
 
 Das Add-on **schaltet keinen Pass ein** und stellt keine Engine um. Welche
 Pässe möglich sind, sagt die Laufzeitprobe; was fehlt, nennt der Hinweis. Jede
-vorübergehende Änderung an der Szene (Auflösung, Ausgabeformat, Overlays)
-wird im ``finally`` zurückgesetzt.
+vorübergehende Änderung an der Szene (Auflösung, Ausgabeformat, Overlays,
+Compositing-Gruppe) wird im ``finally`` zurückgesetzt; die Gruppe des Nutzers
+selbst wird nie verändert.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import bpy
 
+from . import export
 from . import host  # noqa: F401 — Host des Clients
-from .rendertaxi_client import exr
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.frame import viewpoint_size  # noqa: F401 — Teil der Schnittstelle dieses Moduls
 
 DOCUMENT_KEY_PROPERTY = "rendertaxi_document_key"
-EXR = "image/x-exr"
 PNG = "image/png"
+# Die Ansicht der Farbverwaltung, die nichts umrechnet (Blender-Konfiguration 5.2).
+RAW_VIEW = "Raw"
 
 ENGINE_LABELS = {
     "CYCLES": "Cycles",
@@ -51,11 +61,10 @@ class PassSpec:
     capability: str
     label: str
     engines: tuple[str, ...]
-    part: str  # Name des Passes im Mehrschicht-EXR, ohne View-Layer
+    socket: str  # Ausgang des Render-Layers-Knotens
+    channels: str  # Kanäle im PNG: gray oder rgb
     color_space: str
     ui_path: str  # wo der Nutzer den Pass einschaltet
-    blocked_by: str | None = None  # offene Frage, die ``present`` verbietet
-    blocked_note: str | None = None
     extra_hint: str | None = None
 
     def enabled(self, view_layer) -> bool:
@@ -71,23 +80,19 @@ class PassSpec:
         return bool(getattr(view_layer, attribute, False))
 
 
-# Zuordnung aus capabilities.md, Abschnitt 3 (Passes, Blender 5.2).
+# Zuordnung aus capabilities.md, Abschnitt 3 (Passes, Blender 5.2); Kodierung Abschnitt 11.
 PASSES: tuple[PassSpec, ...] = (
     PassSpec("depth", "depthPass", "Tiefe (Depth)", ("CYCLES", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH"),
-             "Depth", "non-color", "View Layer › Passes › Data › Z",
-             blocked_by="QB-01",
-             blocked_note="Depth-Pass vorhanden, Kodierung nicht belegt (integrations/blender/docs/open-questions.md, QB-01)."),
+             "Depth", "gray", "non-color", "View Layer › Passes › Data › Z"),
     PassSpec("normal", "normalPass", "Normalen", ("CYCLES", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"),
-             "Normal", "non-color", "View Layer › Passes › Data › Normal",
-             blocked_by="QB-02",
-             blocked_note="Weltraum belegt, Wertebereich nicht (integrations/blender/docs/open-questions.md, QB-02)."),
+             "Normal", "rgb", "non-color", "View Layer › Passes › Data › Normal"),
     PassSpec("albedo", "albedoPass", "Albedo", ("CYCLES",),
-             "Denoising Albedo", "linear", "View Layer › Passes › Data › Denoising Data (Cycles)"),
+             "Denoising Albedo", "rgb", "linear", "View Layer › Passes › Data › Denoising Data (Cycles)"),
     PassSpec("object-id", "objectIdPass", "Objekt-ID", ("CYCLES",),
-             "Object Index", "non-color", "View Layer › Passes › Data › Object Index (Cycles)",
+             "Object Index", "gray", "non-color", "View Layer › Passes › Data › Object Index (Cycles)",
              extra_hint="Objekte brauchen einen Pass-Index (Objekt › Relations)."),
     PassSpec("material-id", "materialIdPass", "Material-ID", ("CYCLES",),
-             "Material Index", "non-color", "View Layer › Passes › Data › Material Index (Cycles)",
+             "Material Index", "gray", "non-color", "View Layer › Passes › Data › Material Index (Cycles)",
              extra_hint="Materialien brauchen einen Pass-Index (Material › Settings)."),
 )
 PASS_BY_ROLE = {spec.role: spec for spec in PASSES}
@@ -138,8 +143,7 @@ def probe(context=None) -> dict:
     Gemeldet wird nur, was diese Probe tatsächlich prüft. ``maskPass``,
     ``bimMetadata`` (offen, QB-09/QB-10), ``backgroundRender`` und
     ``resultReimport`` (vom Add-on nicht benutzt) fehlen und heißen damit
-    ``unknown``. Ein Pass beschreibt den Pass, nicht seine Kodierung: auch ein
-    eingeschalteter Depth-Pass bleibt als Asset ``planned`` (QB-01).
+    ``unknown``. Datenpässe schreibt das Add-on nur als PNG (RTX-P-012).
     """
     context = context or bpy.context
     scene = context.scene
@@ -160,7 +164,7 @@ def probe(context=None) -> dict:
     }
     for spec in PASSES:
         state, _hint = pass_status(spec, scene, view_layer)
-        capabilities[spec.capability] = {"state": state, "constraints": {"mediaTypes": [EXR]}}
+        capabilities[spec.capability] = {"state": state, "constraints": {"mediaTypes": [PNG]}}
     capabilities["cameraExport"] = {"state": "available" if has_camera else "requires-user-action"}
     gltf = hasattr(bpy.ops, "export_scene") and hasattr(bpy.ops.export_scene, "gltf")
     capabilities["geometryExport"] = {"state": "available" if gltf else "unavailable"}
@@ -233,8 +237,7 @@ def _resolution(scene, size: tuple[int, int] | None):
 
 
 @contextmanager
-def _image_settings(scene, media_type: str, file_format: str, color_mode: str, color_depth: str,
-                    exr_codec: str | None = None):
+def _image_settings(scene, media_type: str, file_format: str, color_mode: str, color_depth: str):
     settings = scene.render.image_settings
     saved = {name: getattr(settings, name) for name in
              ("media_type", "file_format", "color_mode", "color_depth", "exr_codec", "compression")}
@@ -243,8 +246,6 @@ def _image_settings(scene, media_type: str, file_format: str, color_mode: str, c
         settings.file_format = file_format
         settings.color_mode = color_mode
         settings.color_depth = color_depth
-        if exr_codec is not None:
-            settings.exr_codec = exr_codec
         yield
     finally:
         for name in ("media_type", "file_format", "color_mode", "color_depth", "exr_codec", "compression"):
@@ -305,76 +306,248 @@ def capture_viewport(context, root: str, size: tuple[int, int] | None, hide_over
     return mf.capture_file(path, root, "viewport", PNG, mf.describe_png(path), note)
 
 
-def capture_beauty(context, root: str, size: tuple[int, int] | None, roles: list[str],
-                   allowed_media_types: list[str] | None):
-    """Beauty als PNG und die gewählten Pässe — ``(beauty, pass_files, planned)``.
+def depth_range(scene) -> tuple[float, float] | None:
+    """``near``/``far`` der Tiefe: Clipbereich der Kamera, Präzisionsklasse ``length`` (6 Stellen)."""
+    camera = scene.camera.data
+    near, far = round(camera.clip_start, 6), round(camera.clip_end, 6)
+    return (near, far) if far > near >= 0 else None
 
-    Ein gewählter Pass wird ``planned`` mit Begründung, wenn eine offene Frage
-    ``present`` verbietet (Depth QB-01, Normalen QB-02) oder wenn der Server
-    ``image/x-exr`` nicht annimmt (``limits.allowedMediaTypes`` des
-    Handshakes) — kein stiller Umweg über ein anderes Format.
+
+def _highest_index(spec: PassSpec, scene) -> int:
+    """Der höchste vergebene Pass-Index der Rolle — über alle Objekte der Szene, die rendern.
+
+    Bewusst die Szene, nicht der View Layer: dessen Objektliste folgt erst nach der
+    nächsten Auswertung, und ein Objekt zu viel macht die Prüfung nur strenger.
+    """
+    objects = [o for o in scene.objects if not o.hide_render]
+    if spec.role == "object-id":
+        return max((o.pass_index for o in objects), default=0)
+    return max((slot.material.pass_index for o in objects for slot in o.material_slots if slot.material),
+               default=0)
+
+
+def pass_problem(spec: PassSpec, scene, bit_depth: int) -> str | None:
+    """Warum ein eingeschalteter Pass **nicht** ``present`` werden darf — oder ``None``."""
+    if spec.role == "depth":
+        if scene.camera.data.type not in ("PERSP", "ORTHO"):
+            return (f"Die Kamera ist vom Typ {scene.camera.data.type}; Tiefe entlang der Blickachse gibt es "
+                    "nur für perspektivische und parallele Kameras.")
+        if export.unit_problem(scene) is not None:
+            return ("Tiefe nur mit Unit System „Metric“ oder „Imperial“ und Unit Scale 1: sonst sind near "
+                    "und far nicht belegt in Metern (QB-03).")
+        if depth_range(scene) is None:
+            return "Der Clipbereich der Kamera ist leer (Clip End nicht größer als Clip Start)."
+    if spec.role in ("object-id", "material-id"):
+        top = (1 << bit_depth) - 1
+        highest = _highest_index(spec, scene)
+        if highest > top:
+            return (f"Ein Pass-Index ist {highest}, mit {bit_depth} Bit passen höchstens {top}. "
+                    f"{mf.DATA_PASS_BIT_DEPTH_LABEL}: 16 Bit wählen.")
+    return None
+
+
+def _math(tree, operation: str, first, second=None, clamp: bool = False):
+    node = tree.nodes.new("ShaderNodeMath")
+    node.operation = operation
+    node.use_clamp = clamp
+    for index, value in enumerate((first, second)):
+        if isinstance(value, (int, float)):
+            node.inputs[index].default_value = value
+        elif value is not None:
+            tree.links.new(value, node.inputs[index])
+    return node.outputs[0]
+
+
+def _vector_math(tree, operation: str, first, *constants: float):
+    node = tree.nodes.new("ShaderNodeVectorMath")
+    node.operation = operation
+    tree.links.new(first, node.inputs[0])
+    for index, value in enumerate(constants, start=1):
+        node.inputs[index].default_value = (value, value, value)
+    return node.outputs[0]
+
+
+def _encoded(tree, spec: PassSpec, source, bit_depth: int, depth: tuple[float, float] | None):
+    """Der Pass in der Kodierung des Vertrags (capture-manifest.md, Abschnitt 12)."""
+    if spec.role == "depth":
+        near, far = depth
+        # Blender liefert die Tiefe entlang der Blickachse (gemessen, QB-01); kein Treffer ist 1e10 → 1.
+        return _math(tree, "DIVIDE", _math(tree, "SUBTRACT", source, near), far - near, clamp=True)
+    if spec.role == "normal":
+        # Weltraum (QB-02); normiert, weil Cycles an Kanten gemittelte, kürzere Vektoren liefert.
+        return _vector_math(tree, "MULTIPLY_ADD", _vector_math(tree, "NORMALIZE", source), 0.5, 0.5)
+    if spec.role in ("object-id", "material-id"):
+        return _math(tree, "DIVIDE", _math(tree, "ROUND", source), float((1 << bit_depth) - 1))
+    return source  # albedo: linear, wie Blender ihn rechnet
+
+
+def _file_output(tree, spec: PassSpec, directory: str, bit_depth: int):
+    """Ein File-Output-Knoten: PNG, Ansicht „Raw" — Blender quantisiert, ohne umzurechnen."""
+    node = tree.nodes.new("CompositorNodeOutputFile")
+    node.directory = directory
+    node.file_name = ""
+    image_format = node.format
+    image_format.media_type = "IMAGE"
+    image_format.file_format = "PNG"
+    image_format.color_mode = "BW" if spec.channels == "gray" else "RGB"
+    image_format.color_depth = str(bit_depth)
+    # Gemessen: ohne „Save As Render" rechnet Blender 8-Bit-RGB trotz „Non-Color" nach sRGB um;
+    # mit der Ansicht „Raw" steht jeder Wert unverändert im PNG (capabilities.md, Abschnitt 11).
+    node.save_as_render = True
+    image_format.color_management = "OVERRIDE"
+    view = image_format.view_settings
+    view.view_transform = RAW_VIEW  # TypeError, wenn die Farbverwaltung „Raw" nicht kennt
+    view.look = "None"
+    view.exposure = 0.0
+    view.gamma = 1.0
+    view.use_curve_mapping = False
+    kind = "FLOAT" if spec.channels == "gray" else ("VECTOR" if spec.role == "normal" else "RGBA")
+    item = node.file_output_items.new(kind, spec.role)
+    return node.inputs[item.name]
+
+
+def _pass_tree(scene, view_layer, specs: list[PassSpec], directory: str, bit_depth: int):
+    """Die vorübergehende Compositing-Gruppe: die des Nutzers als Kopie, dazu je Rolle ein File Output.
+
+    Gemessen am 29.09.2026: die Kopie liefert dasselbe Beauty-Bild wie die Gruppe
+    des Nutzers, die durchreichende Gruppe dasselbe wie „ohne Compositing".
+    """
+    base = scene.compositing_node_group if scene.render.use_compositing else None
+    if base is not None:
+        tree = base.copy()
+    else:
+        tree = bpy.data.node_groups.new("rendertaxi Datenpässe", "CompositorNodeTree")
+    try:
+        layers = tree.nodes.new("CompositorNodeRLayers")
+        layers.scene = scene
+        layers.layer = view_layer.name
+        if base is None:
+            tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+            output = tree.nodes.new("NodeGroupOutput")
+            tree.links.new(layers.outputs["Image"], output.inputs[0])
+        depth = depth_range(scene) if scene.camera else None
+        for spec in specs:
+            source = layers.outputs.get(spec.socket)
+            if source is None or not source.enabled:
+                continue  # fehlt nach dem Rendern und wird dann „geplant"
+            tree.links.new(_encoded(tree, spec, source, bit_depth, depth), _file_output(tree, spec, directory, bit_depth))
+    except Exception:
+        bpy.data.node_groups.remove(tree)
+        raise
+    return tree
+
+
+@contextmanager
+def _compositing(scene, tree):
+    """Die Gruppe nur für dieses Rendering einsetzen — danach die des Nutzers, wie sie war."""
+    if tree is None:
+        yield
+        return
+    saved = (scene.compositing_node_group, scene.render.use_compositing)
+    try:
+        scene.compositing_node_group = tree
+        scene.render.use_compositing = True
+        yield
+    finally:
+        scene.compositing_node_group, scene.render.use_compositing = saved
+        bpy.data.node_groups.remove(tree)
+
+
+def _note(spec: PassSpec, engine: str, bit_depth: int, depth: tuple[float, float] | None) -> str:
+    what = {
+        "depth": f"Tiefe entlang der Blickachse, normalized-linear zwischen near {depth[0] if depth else 0:g} m "
+                 f"und far {depth[1] if depth else 0:g} m (Clipbereich der Kamera), kein Treffer = 1",
+        "normal": "Weltraum, normiert, (n + 1) / 2 je Kanal, kein Treffer = 0,5",
+        "albedo": "linear, ohne View Transform",
+        "object-id": "Pass-Index des Objekts als Ganzzahl, ohne Kantenglättung",
+        "material-id": "Pass-Index des Materials als Ganzzahl, ohne Kantenglättung",
+    }[spec.role]
+    return f"{spec.socket} aus {engine}, PNG {bit_depth} Bit; {what}."
+
+
+def capture_beauty(context, root: str, size: tuple[int, int] | None, roles: list[str],
+                   allowed_media_types: list[str] | None, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH):
+    """Beauty als PNG und die gewählten Pässe als PNG — ``(beauty, pass_files, planned)``.
+
+    Ein gewählter Pass wird ``planned`` mit Begründung, wenn er nicht
+    eingeschaltet ist, wenn seine Kodierung in dieser Szene nicht belegt ist
+    (``pass_problem``) oder wenn der Server ``image/png`` nicht annimmt — kein
+    stiller Umweg über ein anderes Format. ``bit_depth`` ist die Wahl des
+    Nutzers (8 oder 16); ein ungültiger Wert wird zu 8 Bit.
     """
     scene = context.scene
     if scene.camera is None:
         raise CaptureError("Die Szene hat keine aktive Kamera — Beauty rendert aus der Kamera.")
+    bit_depth = mf.data_pass_bit_depth(bit_depth)
     view_layer = context.view_layer
     images = os.path.join(root, "images")
     os.makedirs(images, exist_ok=True)
 
     planned: list[mf.PlannedRole] = []
     wanted: list[PassSpec] = []
-    exr_allowed = allowed_media_types is None or EXR in allowed_media_types
+    png_allowed = allowed_media_types is None or PNG in allowed_media_types
     for role in roles:
         spec = PASS_BY_ROLE[role]
-        path = f"images/{role}.exr"
+        path = f"images/{role}.png"
         state, hint = pass_status(spec, scene, view_layer)
-        if spec.blocked_by:
-            planned.append(mf.PlannedRole(role, path, EXR, spec.blocked_note))
-        elif state != "available":
-            planned.append(mf.PlannedRole(role, path, EXR, f"Pass nicht eingeschaltet: {hint}"))
-        elif not exr_allowed:
-            planned.append(mf.PlannedRole(role, path, EXR,
-                                          "Der Server nimmt image/x-exr nicht an (limits.allowedMediaTypes); "
-                                          "Datenpässe gibt es nur als OpenEXR (QB-06)."))
+        problem = pass_problem(spec, scene, bit_depth) if state == "available" else None
+        if state != "available":
+            planned.append(mf.PlannedRole(role, path, PNG, f"Pass nicht eingeschaltet: {hint}"))
+        elif problem:
+            planned.append(mf.PlannedRole(role, path, PNG, problem))
+        elif not png_allowed:
+            planned.append(mf.PlannedRole(role, path, PNG,
+                                          "Der Server nimmt image/png nicht an (limits.allowedMediaTypes)."))
         else:
             wanted.append(spec)
 
     beauty_path = os.path.join(images, "beauty.png")
-    files: list[mf.CaptureFile] = []
-    with _resolution(scene, size):
+    staging = os.path.join(root, "passes-staging")
+    tree = None
+    if wanted:
         try:
-            result = bpy.ops.render.render(write_still=False)
-        except RuntimeError as error:
-            raise CaptureError(f"Blender hat das Rendering abgelehnt: {error}") from None
-        if "FINISHED" not in result:
-            raise CaptureError("Blender hat das Rendering nicht ausgeführt.")
-        _save_png(scene, beauty_path)
-        if wanted:
-            multilayer = os.path.join(root, "passes-multilayer.exr")
-            with _image_settings(scene, "MULTI_LAYER_IMAGE", "OPEN_EXR_MULTILAYER", "RGBA", "32", "NONE"):
-                bpy.data.images["Render Result"].save_render(multilayer, scene=scene)
-            with open(multilayer, "rb") as handle:
-                data = handle.read()
-            os.unlink(multilayer)
-            available = {p["name"] for p in exr.parts(data)}
+            tree = _pass_tree(scene, view_layer, wanted, staging, bit_depth)
+        except (TypeError, ValueError, RuntimeError):
+            # Etwa eine eigene OCIO-Konfiguration ohne die Ansicht „Raw": dann kein Pass, aber das Bild.
             for spec in wanted:
-                part = f"{view_layer.name}.{spec.part}"
-                if part not in available:
-                    planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.exr", EXR,
-                                                  f"Blender hat den Pass {spec.part} nicht geliefert."))
-                    continue
-                payload, description = exr.extract_pass(data, part)
-                path = os.path.join(images, f"{spec.role}.exr")
-                with open(path, "wb") as handle:
-                    handle.write(payload)
-                image = {"width": description["width"], "height": description["height"],
-                         "colorSpace": spec.color_space, "bitDepth": description["bitDepth"],
-                         "sampleFormat": description["sampleFormat"], "channels": description["channels"]}
-                engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
-                note = f"{spec.part} aus {engine}, OpenEXR {image['bitDepth']} Bit {image['sampleFormat']}, unkomprimiert."
-                files.append(mf.capture_file(path, root, spec.role, EXR, image, note))
-
+                planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.png", PNG,
+                                              "Blender kann den Pass hier nicht ohne Farbumrechnung schreiben "
+                                              f"(Farbverwaltung ohne Ansicht „{RAW_VIEW}“)."))
+            wanted = []
+    files: list[mf.CaptureFile] = []
     engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
+    try:
+        with _resolution(scene, size):
+            with _compositing(scene, tree):
+                try:
+                    result = bpy.ops.render.render(write_still=False)
+                except RuntimeError as error:
+                    raise CaptureError(f"Blender hat das Rendering abgelehnt: {error}") from None
+                if "FINISHED" not in result:
+                    raise CaptureError("Blender hat das Rendering nicht ausgeführt.")
+            _save_png(scene, beauty_path)
+        depth = depth_range(scene)
+        for spec in wanted:
+            written = os.path.join(staging, f"{spec.role}.png")
+            path = os.path.join(images, f"{spec.role}.png")
+            image = None
+            if os.path.isfile(written):
+                os.replace(written, path)
+                image = dict(mf.describe_png(path), colorSpace=spec.color_space)
+            if image is None or image["channels"] != spec.channels or image["bitDepth"] != bit_depth:
+                planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.png", PNG,
+                                              f"Blender hat den Pass {spec.socket} nicht geliefert."))
+                if os.path.exists(path):
+                    os.unlink(path)
+                continue
+            files.append(mf.capture_file(
+                path, root, spec.role, PNG, image, _note(spec, engine, bit_depth, depth),
+                depth={"encoding": "normalized-linear", "near": depth[0], "far": depth[1]}
+                if spec.role == "depth" else None,
+                normal={"space": "world"} if spec.role == "normal" else None))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
                    f"Beauty Render (bpy.ops.render.render), {engine}; {color_note(scene)}.")
     order = [spec.role for spec in PASSES]

@@ -18,10 +18,16 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
 * **Pässe**: nur Standard/Physical Multi-Pass, nur was der Nutzer
   eingeschaltet hat — das Plugin schaltet keinen Pass ein (QC-13). Die Ebene
   eines Kanals findet ``MPBTYPE_USERID`` („In the renderer this is
-  VPBUFFER_xxx"). Tiefe (QC-03) und Normalen (QC-04) bleiben ``planned``;
-  Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein ``VPBUFFER_ALBEDO`` gibt es in
-  2026 nicht) wird als OpenEXR 32 Bit (``SAVEBIT_USE32BITCHANNELS``)
-  geschrieben, wenn der Server ``image/x-exr`` annimmt.
+  VPBUFFER_xxx"). Jeder Pass ist ein PNG ``images/<role>.png`` mit 8 oder 16
+  Bit je Kanal nach Wahl des Nutzers (Capture-Manifest 1.3.0): die Ebene der
+  MultipassBitmap wird mit ``FILTER_PNG`` und — für 16 Bit —
+  ``SAVEBIT_USE16BITCHANNELS`` gespeichert, wie Maxons Beispiel
+  ``render_document_complex_2026_2.py`` die Bittiefe beim Speichern wählt.
+  Maße, Bittiefe und Kanäle liest das Manifest aus der geschriebenen Datei
+  (``describe_png``). Tiefe (QC-03) und Normalen (QC-04) bleiben ``planned``:
+  die 2026-Dokumentation belegt keine Umrechnung in ``normalized-linear``
+  bzw. ``(n + 1) / 2``. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
+  ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG.
 * **Farbe** (QC-12): Viewport und Beauty als PNG 8 Bit, gemeldet als
   ``srgb``. Ab 2026.2 fordert das Plugin das Einbacken der
   OCIO-Ansichtstransformation ausdrücklich an
@@ -45,11 +51,12 @@ from dataclasses import dataclass
 import c4d
 
 from . import host
-from .rendertaxi_client import exr
 from .rendertaxi_client import manifest as mf
 
-PNG = "image/png"
-EXR = "image/x-exr"
+PNG = mf.PNG_MEDIA_TYPE
+# 16 Bit je Kanal beim Speichern (Python SDK 2026: consts/SAVEBIT.html „Use 16-bit channels").
+# Fehlt die Konstante, gibt es nur 8 Bit — der Pass sagt es in ``note``, die Datei sagt die Wahrheit.
+SAVE_16BIT = getattr(c4d, "SAVEBIT_USE16BITCHANNELS", None)
 
 # Renderer-IDs (RDATA_RENDERENGINE). STANDARD und PREVIEWHARDWARE nennt die
 # Python-Referenz 2026, PHYSICAL und REDSHIFT drendersettings.h (C++ 2026) — ohne Zahl.
@@ -93,12 +100,14 @@ class PassSpec:
 PASSES: tuple[PassSpec, ...] = (
     PassSpec("depth", "depthPass", "Tiefe (Depth)", getattr(c4d, "VPBUFFER_DEPTH", None), "Depth", "non-color",
              blocked_by="QC-03",
-             blocked_note="Tiefe wird nicht übertragen: Kodierung nicht belegt, Standard/Physical normiert zur "
-                          "Fokusebene, nicht linear-metric (integrations/cinema-4d/docs/open-questions.md, QC-03)."),
+             blocked_note="Tiefe wird nicht übertragen: Standard/Physical kodieren den Abstand zur Fokusebene "
+                          "(Kontrast über Front/Rear Blur), nicht normalized-linear zwischen near und far entlang "
+                          "der Blickachse; die Umrechnung ist nicht belegt "
+                          "(integrations/cinema-4d/docs/open-questions.md, QC-03)."),
     PassSpec("normal", "normalPass", "Normalen", getattr(c4d, "VPBUFFER_MAT_NORMAL", None), "Material Normals",
              "non-color", blocked_by="QC-04",
-             blocked_note="Normalen werden nicht übertragen: Raum und Vorzeichenbereich nicht belegt "
-                          "(integrations/cinema-4d/docs/open-questions.md, QC-04)."),
+             blocked_note="Normalen werden nicht übertragen: Raum und Vorzeichenbereich nicht belegt, "
+                          "(n + 1) / 2 ist nicht zugesagt (integrations/cinema-4d/docs/open-questions.md, QC-04)."),
     # 2026 kennt kein VPBUFFER_ALBEDO; der Kanal „Albedo" ist VPBUFFER_REFLECTANCE_ALBEDO
     # („Reflectance Channel Diffuse Albedo", C++ 2026, group VPBUFFER).
     PassSpec("albedo", "albedoPass", "Albedo", getattr(c4d, "VPBUFFER_REFLECTANCE_ALBEDO", None), "Albedo",
@@ -238,7 +247,7 @@ def probe(doc) -> dict:
     heißt damit ``unknown`` — auch ein Pass, dessen Konstante das c4d-Modul
     nicht kennt. Ein Pass beschreibt den Pass, nicht seine Kodierung: ein
     eingeschalteter Depth-Kanal ist ``available``, das Asset bleibt ``planned``
-    (QC-03).
+    (QC-03). Jeder Pass geht als PNG (Capture-Manifest 1.3.0).
     """
     capabilities: dict = {}
     if render_view(doc) is None:
@@ -256,7 +265,7 @@ def probe(doc) -> dict:
         if spec.buffer is None:
             continue
         state, _hint = pass_status(spec, rd)
-        capabilities[spec.capability] = {"state": state, "constraints": {"mediaTypes": [EXR]}}
+        capabilities[spec.capability] = {"state": state, "constraints": {"mediaTypes": [PNG]}}
     return capabilities
 
 
@@ -381,18 +390,33 @@ def _find_layer(bitmap, buffer: int):
     return None
 
 
+def _save_pass(layer, path: str, bit_depth: int) -> bool:
+    """Eine Ebene der MultipassBitmap als PNG mit 8 oder 16 Bit je Kanal.
+
+    ``BaseBitmap.Save(name, FILTER_PNG, None, savebits)``; 16 Bit über
+    ``SAVEBIT_USE16BITCHANNELS`` (Python SDK 2026, consts/SAVEBIT.html), 8 Bit
+    ohne Flag (``SAVEBIT_NONE``). Was Cinema 4D wirklich schreibt, liest danach
+    ``describe_png`` aus dem IHDR — nicht aus der Wahl.
+    """
+    savebits = SAVE_16BIT if bit_depth == 16 and SAVE_16BIT is not None else getattr(c4d, "SAVEBIT_NONE", 0)
+    return layer.Save(path, c4d.FILTER_PNG, None, savebits) == c4d.IMAGERESULT_OK
+
+
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
-                  allowed_media_types: list[str] | None, progress):
-    """Beauty als PNG und die gewählten Pässe — ``(beauty, pass_files, planned)``.
+                  allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH):
+    """Beauty als PNG und die gewählten Pässe als PNG mit ``bit_depth`` — ``(beauty, pass_files, planned)``.
 
     Gerendert wird mit dem aktiven Renderer auf einer Kopie des Containers der
     aktiven Rendervoreinstellung; das Dokument bleibt unverändert. Ein
     gewählter Pass wird ``planned`` mit Begründung, wenn eine offene Frage
     ``present`` verbietet (QC-03, QC-04), der Kanal nicht eingeschaltet ist
-    oder der Server ``image/x-exr`` nicht annimmt — kein stiller Umweg über ein
+    oder der Server ``image/png`` nicht annimmt — kein stiller Umweg über ein
     anderes Format. Nur wenn ein Pass wirklich als Datei mitgeht, rendert das
-    Plugin ein zweites Mal in eine MultipassBitmap mit 32 Bit je Kanal.
+    Plugin ein zweites Mal in eine MultipassBitmap (``COLORMODE_RGBf``, roh im
+    Renderraum) und speichert die Ebene als PNG 8 oder 16 Bit. Eine ungültige
+    Bittiefe wird zum Standard 8 Bit (``mf.data_pass_bit_depth``).
     """
+    bit_depth = mf.data_pass_bit_depth(bit_depth)
     rd = doc.GetActiveRenderData()
     if rd is None:
         raise CaptureError("Das Dokument hat keine aktive Rendervoreinstellung.")
@@ -402,19 +426,18 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
 
     planned: list[mf.PlannedRole] = []
     wanted: list[PassSpec] = []
-    exr_allowed = allowed_media_types is None or EXR in allowed_media_types
+    png_allowed = allowed_media_types is None or PNG in allowed_media_types
     for role in roles:
         spec = PASS_BY_ROLE[role]
-        path = f"images/{role}.exr"
+        path = f"images/{role}.png"
         state, hint = pass_status(spec, rd) if spec.buffer is not None else ("unknown", "")
         if spec.blocked_by:
-            planned.append(mf.PlannedRole(role, path, EXR, spec.blocked_note))
+            planned.append(mf.PlannedRole(role, path, PNG, spec.blocked_note))
         elif state != "available":
-            planned.append(mf.PlannedRole(role, path, EXR, f"Pass nicht eingeschaltet: {hint}".strip()))
-        elif not exr_allowed:
-            planned.append(mf.PlannedRole(role, path, EXR,
-                                          "Der Server nimmt image/x-exr nicht an (limits.allowedMediaTypes); "
-                                          "Datenpässe gibt es nur als OpenEXR."))
+            planned.append(mf.PlannedRole(role, path, PNG, f"Pass nicht eingeschaltet: {hint}".strip()))
+        elif not png_allowed:
+            planned.append(mf.PlannedRole(role, path, PNG,
+                                          "Der Server nimmt image/png nicht an (limits.allowedMediaTypes)."))
         else:
             wanted.append(spec)
 
@@ -434,19 +457,21 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         _render(doc, data, layered, progress, "Pässe rendern", bake=False)
         for spec in wanted:
             layer = _find_layer(layered, spec.buffer)
-            path = os.path.join(images, f"{spec.role}.exr")
-            if layer is None or layer.Save(path, c4d.FILTER_EXR, None, c4d.SAVEBIT_USE32BITCHANNELS) != c4d.IMAGERESULT_OK:
-                planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.exr", EXR,
+            relative = f"images/{spec.role}.png"
+            path = os.path.join(images, f"{spec.role}.png")
+            if layer is None or not _save_pass(layer, path, bit_depth):
+                planned.append(mf.PlannedRole(spec.role, relative, PNG,
                                               f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert."))
                 continue
-            with open(path, "rb") as handle:
-                description = exr.describe(handle.read())
-            image = dict(description, colorSpace=spec.color_space)
+            image = dict(mf.describe_png(path), colorSpace=spec.color_space)
             space = ("im Renderraum (RENDERFLAGS_OCIO_RAW_RENDERING; bei OCIO ACEScg, QC-12)"
                      if OCIO_RAW is not None else "linear, Primärvalenzen nicht belegt (QC-12)")
-            note = (f"Multi-Pass „{spec.channel}“ aus {engine}, OpenEXR {image['bitDepth']} Bit "
-                    f"{image['sampleFormat']}, {space}, zweiter Renderdurchgang.")
-            files.append(mf.capture_file(path, root, spec.role, EXR, image, note))
+            written = f"PNG {image['bitDepth']} Bit {image['channels']}"
+            if image["bitDepth"] != bit_depth:
+                written += f" (gewählt: {bit_depth} Bit; die Datei entscheidet)"
+            note = (f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space}, "
+                    f"nicht am Host gemessen, zweiter Renderdurchgang.")
+            files.append(mf.capture_file(path, root, spec.role, PNG, image, note))
 
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
                              f"Beauty (RenderDocument), {engine}, {view_name(doc)}; {color_note()}.")

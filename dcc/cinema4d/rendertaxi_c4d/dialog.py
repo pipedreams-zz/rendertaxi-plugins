@@ -8,9 +8,11 @@
    (``frame: fit-to-capture``, sonst ``keep``); Rahmengröße Canvas-Vorgabe
    oder Render-Einstellung (``size``).
 3. **Bild übernehmen** — Viewport oder Beauty mit optionalen Pässen; Größe
-   aus dem Dokument oder dem Blickpunkt-Rahmen; „Modell mitsenden" (GLB und
-   Kamera, Capture-Manifest 1.2.0; Standard aus) mit Größe und Grenzen vor dem
-   Senden; Fortsetzen oder Verwerfen einer angefangenen Übernahme.
+   aus dem Dokument oder dem Blickpunkt-Rahmen; „Bittiefe der Datenpässe"
+   (8 Bit Standard oder 16 Bit, sofort gemerkt, Wortlaut aus dem gemeinsamen
+   Client wie in Blender); „Modell mitsenden" (GLB und Kamera, Capture-Manifest
+   1.2.0 bzw. 1.3.0; Standard aus) mit Größe und Grenzen vor dem Senden;
+   Fortsetzen oder Verwerfen einer angefangenen Übernahme.
 4. **Im Browser öffnen** — ``result.openUrl``.
 
 Der Dialog zeichnet nur; was geschieht, entscheidet ``controller.Controller``.
@@ -28,6 +30,7 @@ from c4d import gui
 from . import host
 from .controller import BEAUTY, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT, Controller, wrap
 from .rendertaxi_client import frame
+from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
 
 # -- Kennungen der Elemente ----------------------------------------------------
@@ -61,6 +64,7 @@ ID_RESOLUTION = 1052
 ID_CUT = 1053
 ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062}
 ID_PASS_HINT = {"depth": 1065, "normal": 1066, "albedo": 1067}
+ID_BIT_DEPTH = 1068
 ID_MODEL = 1100
 ID_MODEL_COUNT = 1101
 ID_MODEL_HINT = 1102  # bis 1105: vier Zeilen
@@ -81,6 +85,9 @@ KINDS = (VIEWPORT, BEAUTY)
 KIND_LABELS = ("Viewport (Viewport Renderer)", "Beauty (aktiver Renderer)")
 RESOLUTIONS = (RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT)
 RESOLUTION_LABELS = ("Rendervoreinstellung des Dokuments", "Blickpunkt-Rahmen")
+# Bittiefe der Datenpässe: Wortlaut und Reihenfolge aus dem gemeinsamen Client (wie Blender).
+BIT_DEPTHS = tuple(value for value, _label in mf.DATA_PASS_BIT_DEPTH_OPTIONS)
+BIT_DEPTH_LABELS = tuple(label for _value, label in mf.DATA_PASS_BIT_DEPTH_OPTIONS)
 LINES = 4
 WIDTH = 64
 
@@ -168,6 +175,8 @@ class RendertaxiDialog(gui.GeDialog):
         for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
             self._text(ID_PASS_HINT[spec_role])
+        self._text(0, mf.DATA_PASS_BIT_DEPTH_LABEL)
+        self._combo(ID_BIT_DEPTH, BIT_DEPTH_LABELS)
         self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 1, "")
         self._gadgets[ID_MODEL] = self.AddCheckbox(ID_MODEL, c4d.BFH_SCALEFIT, 0, 0,
                                                    "Modell mitsenden (GLB und Kamera)")
@@ -199,6 +208,8 @@ class RendertaxiDialog(gui.GeDialog):
         self.SetString(ID_DEVICE, settings["deviceName"])
         self.SetBool(ID_DEBUG, settings["debugLogging"])
         self.SetString(ID_VP_NAME, self.controller.form.viewpoint_name)
+        # Die gemerkte Bittiefe — ungültig heißt 8 Bit, nie ein Fehler (Regel 3).
+        self.SetInt32(ID_BIT_DEPTH, BIT_DEPTHS.index(self.controller.data_pass_bit_depth()))
         self.SetTimer(250)
         self._guarded(self.refresh)
         return True
@@ -303,7 +314,10 @@ class RendertaxiDialog(gui.GeDialog):
         except RuntimeError:
             rows = {}
         allowed = ((controller.state.handshake or {}).get("limits") or {}).get("allowedMediaTypes")
-        no_exr = allowed is not None and "image/x-exr" not in allowed
+        no_png = allowed is not None and mf.PNG_MEDIA_TYPE not in allowed
+        bit_depth = controller.data_pass_bit_depth()
+        self.SetInt32(ID_BIT_DEPTH, BIT_DEPTHS.index(bit_depth))
+        self._enable(ID_BIT_DEPTH, not busy)
         for role, element_id in ID_PASS.items():
             state, hint, spec = rows.get(role, ("unknown", "", None))
             usable = form.capture_kind == BEAUTY and state == "available"
@@ -315,10 +329,10 @@ class RendertaxiDialog(gui.GeDialog):
                 note = hint
             elif spec.blocked_by:
                 note = f"wird als „geplant“ gemeldet ({spec.blocked_by})"
-            elif no_exr:
-                note = "Der Server nimmt derzeit kein EXR an: wird als „geplant“ vermerkt."
+            elif no_png:
+                note = "Der Server nimmt derzeit kein PNG an: wird als „geplant“ vermerkt."
             else:
-                note = "OpenEXR 32 Bit, linear"
+                note = f"PNG {bit_depth} Bit, linear"
             self.SetString(ID_PASS_HINT[role], note[:120])
         self.SetBool(ID_MODEL, form.send_model)
         self._enable(ID_MODEL, not busy)
@@ -391,6 +405,9 @@ class RendertaxiDialog(gui.GeDialog):
             controller.set_send_model(self.GetBool(ID_MODEL))
         elif element_id == ID_KIND:
             form.capture_kind = KINDS[max(0, min(len(KINDS) - 1, self.GetInt32(ID_KIND)))]
+        elif element_id == ID_BIT_DEPTH:
+            index = self.GetInt32(ID_BIT_DEPTH)
+            controller.set_data_pass_bit_depth(BIT_DEPTHS[index] if 0 <= index < len(BIT_DEPTHS) else None)
         elif element_id == ID_RESOLUTION:
             form.resolution = RESOLUTIONS[max(0, min(len(RESOLUTIONS) - 1, self.GetInt32(ID_RESOLUTION)))]
         else:

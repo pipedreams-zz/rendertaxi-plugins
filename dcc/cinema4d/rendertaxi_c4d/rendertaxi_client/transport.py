@@ -401,17 +401,18 @@ class Transfer:
             "target": target_body(pending["target"]),
         }
 
-        if manifest["contractVersion"] == mf.MODEL_CONTRACT_VERSION:
+        version = manifest["contractVersion"]
+        if version not in ("1.0.0", mf.CONTRACT_VERSION):
             # Ein MINOR-Feld erst schreiben, wenn die Gegenseite die MINOR umsetzt
-            # (capture-manifest.md, §3, Regel 2) — vor der Anlage gefragt, auch beim Fortsetzen.
-            self.progress("Vertrag 1.2.0 prüfen", 2)
+            # (capture-manifest.md, §3, Regel 2) — vor der Anlage gefragt, auch beim Fortsetzen:
+            # 1.2.0 (Modell) und 1.3.0 (PNG-Datenpässe).
+            self.progress(f"Vertrag {version} prüfen", 2)
             source = manifest["source"]
-            answer = self.api.handshake(source["host"]["version"], source["plugin"]["version"],
-                                        mf.MODEL_CONTRACT_VERSION)
+            answer = self.api.handshake(source["host"]["version"], source["plugin"]["version"], version)
             result = (answer.get("negotiation") or {}).get("result")
             if result != "supported":
-                raise ApiError(f"Der Server nimmt das Capture-Manifest {mf.MODEL_CONTRACT_VERSION} "
-                               f"mit Modell nicht an ({result}).", code=str(result or "negotiation"))
+                raise ApiError(f"Der Server nimmt das Capture-Manifest {version} nicht an ({result}).",
+                               code=str(result or "negotiation"))
         self.progress("Übernahme anmelden", 5)
         log(f"Vorgang {'fortgesetzt' if pending.get('captureId') else 'begonnen'}, Schlüssel {pending['idempotencyKey']}")
         session = self.api.create_capture(pending["idempotencyKey"], body)

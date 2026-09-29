@@ -14,7 +14,8 @@ Statusleiste (QC-07).
 
 **Ein gemerkter Zustand darf das Laden nie verhindern.** ``restore_session``
 fängt jeden Fehler und endet in „nicht verbunden"; kaputte Einstellungen
-fallen auf die Vorgaben.
+fallen auf die Vorgaben — auch eine ungültige gemerkte Bittiefe der
+Datenpässe: sie wird zum Standard 8 Bit (``mf.data_pass_bit_depth``).
 """
 
 from __future__ import annotations
@@ -35,7 +36,9 @@ from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, Transf
                                           normalize_server_url, prepare, supports_model)
 
 DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
-DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False}
+# ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender (RTX-P-012).
+DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
+                    "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH}
 
 VIEWPORT = "viewport"
 BEAUTY = "beauty"
@@ -173,6 +176,19 @@ class Controller:
 
     def server_url(self) -> str:
         return normalize_server_url(self.settings()["serverUrl"])
+
+    def data_pass_bit_depth(self) -> int:
+        """Die gemerkte Bittiefe der Datenpässe — jeder ungültige Wert heißt 8 Bit (Regel 3)."""
+        return mf.data_pass_bit_depth(self.settings().get("dataPassBitDepth"))
+
+    def set_data_pass_bit_depth(self, value) -> int:
+        """Die Wahl im Dialog sofort merken; ein ungültiger Wert wird zum Standard 8 Bit."""
+        bit_depth = mf.data_pass_bit_depth(value)
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save({"dataPassBitDepth": bit_depth})
+        except (OSError, ValueError):  # nicht merkbar: es bleibt bei der gemerkten Bittiefe, der Dialog sagt es
+            self._set_error("Die Bittiefe ließ sich nicht merken (Einstellungsordner nicht beschreibbar).")
+        return bit_depth
 
     # -- Hintergrundarbeit --------------------------------------------------
 
@@ -532,9 +548,12 @@ class Controller:
     def build_capture(self, directory: str) -> bytes:
         """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
 
-        Ohne Modell bleibt es Capture-Manifest 1.1.0, ``camera`` und ``geometry``
-        sind ``null``; mit Modell 1.2.0 mit GLB und — wenn darstellbar — der
-        Kamera der Aufnahme.
+        Capture-Manifest 1.3.0 (PNG-Datenpässe, mit oder ohne Modell) gegen
+        einen Server, der es umsetzt (``mf.image_contract_version`` bzw.
+        ``mf.model_contract_version``); sonst ohne Modell 1.1.0 mit ``camera``
+        und ``geometry`` ``null``, mit Modell 1.2.0 mit GLB und — wenn
+        darstellbar — der Kamera der Aufnahme. Die Pässe tragen die gemerkte
+        Bittiefe (8 oder 16 Bit).
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
@@ -548,14 +567,14 @@ class Controller:
         capabilities = self.adapter.probe(model=send_model)
         files, planned, view_name = self.adapter.render(
             self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
-            self._progress_in_main)
+            self._progress_in_main, self.data_pass_bit_depth())
         camera = geometry = None
         if send_model:
             image = files[0].image
             model, geometry, camera = self.adapter.export_model(
                 self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main)
             files.append(model)
-            contract_version = mf.MODEL_CONTRACT_VERSION
+            contract_version = mf.model_contract_version(handshake)
         data = mf.ManifestInput(
             capture_id=mf.uuid_v7(),
             created_at=mf.timestamp_utc(),

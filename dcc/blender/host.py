@@ -3,8 +3,9 @@
 Setzt beim Laden der Extension den ``Host`` des eingebetteten
 ``rendertaxi_client``: Schlüssel ``blender``, ``client_id``
 ``ai.rendertaxi.plugin.blender``, die Version aus ``blender_manifest.toml``
-(die eine Quelle; ``scripts/pack.sh`` liest sie ebenso) und ``depth`` nie
-``present`` (QB-01).
+(die eine Quelle; ``scripts/pack.sh`` liest sie ebenso). Seit RTX-P-012 ist
+die Kodierung der Tiefe belegt (QB-01): keine Rolle ist mehr grundsätzlich
+von ``present`` ausgeschlossen.
 """
 
 from __future__ import annotations
@@ -30,5 +31,4 @@ HOST = client.configure(client.Host(
     label="Blender",
     plugin_version=_version(),
     roots=(ADDON_DIR,),
-    never_present={"depth": "QB-01"},
 ))

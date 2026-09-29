@@ -10,7 +10,7 @@ Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: Cinema 4D **2026** (macOS oder Windows); ältere Fassungen
 werden nicht unterstützt — das Plugin lädt dort, zeigt aber nur einen Hinweis.
 Die Zip `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (etwa
-`rendertaxi-cinema4d2026-0.1.0-2026.09.30.zip`) von der
+`rendertaxi-cinema4d2026-0.2.0-2026.09.30.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 Das Plugin ist Python — kein Installationsprogramm, kein Build.
@@ -82,10 +82,13 @@ Plugin schaltet keinen Pass selbst ein; ist einer nicht wählbar, steht darunter
 was einzustellen ist — mit dem Renderer **Standard** oder **Physical**: **Render
 Settings › Multi-Pass** einschalten und den Kanal hinzufügen (etwa „Albedo").
 
-Datenpässe entstehen als OpenEXR. **rendertaxi.ai nimmt EXR-Dateien derzeit
-nicht an**; gewählte Pässe werden deshalb nur im Manifest als „geplant"
-vermerkt und nicht übertragen. Tiefe und Normalen bleiben unabhängig davon
-„geplant", bis geklärt ist, wie Cinema 4D sie kodiert.
+Datenpässe gehen als **PNG** an rendertaxi.ai, je Pass eine Datei. Die
+Einstellung **Bittiefe der Datenpässe** darunter wählt **8 Bit (Standard)**
+oder **16 Bit**; das Plugin merkt sich die Wahl. 16 Bit lohnt sich für feine
+Verläufe, die Dateien sind etwa doppelt so groß. Albedo wird übertragen, sobald
+der Kanal eingeschaltet ist. Tiefe und Normalen bleiben „geplant" (im Manifest
+vermerkt, nicht übertragen), bis gemessen ist, wie Cinema 4D sie kodiert — das
+Fenster sagt es beim jeweiligen Pass.
 
 ## Modell mitsenden
 
@@ -151,7 +154,8 @@ Webanwendung.
   übernimmt diese Kennung; das Plugin schlägt dann für beide Dateien denselben
   Blickpunkt vor — gewählt wird immer von dir.
 - Farbe: Viewport und Beauty gehen als PNG mit 8 Bit und eingebackener
-  Ansichtstransformation (OCIO) an rendertaxi.ai.
+  Ansichtstransformation (OCIO) an rendertaxi.ai; Datenpässe als lineares PNG
+  mit 8 oder 16 Bit.
 - Meldungen erscheinen in der Konsole (**Extensions › Console**).
   „Ausführliches Protokoll" in den Einstellungen schreibt bei Fehlern
   zusätzlich die Codestellen im Plugin — nie Pfade, Projekt- oder Dateinamen.

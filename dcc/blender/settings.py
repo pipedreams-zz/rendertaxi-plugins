@@ -3,7 +3,8 @@
 Drei Dinge, drei Orte:
 
 * **Add-on-Einstellungen** (``AddonPreferences``, in ``userpref.blend``):
-  Serveradresse, Gerätename, Debug-Schalter. Kein Token.
+  Serveradresse, Gerätename, Debug-Schalter, Bittiefe der Datenpässe
+  (RTX-P-012). Kein Token.
 * **Anmeldung** (``credentials.json`` im Nutzerordner der Extension,
   ``bpy.utils.extension_path_user``, Modus 0600): Token und ``deviceId`` je
   Serveradresse. **Nie** in der ``.blend``-Datei, nie in den Einstellungen,
@@ -21,12 +22,14 @@ Blender braucht: ``user_dir`` und ``Preferences``.
 **Ein gemerkter Zustand darf das Laden nie verhindern.** Jede Datei der
 Ablage wird so gelesen, dass eine kaputte, fremde oder fehlende Datei zum
 leeren Zustand führt („nicht verbunden") statt zu einer Ausnahme beim Laden des
-Add-ons.
+Add-ons. Ebenso die Bittiefe: ein ungültiger gemerkter Wert ist 8 Bit
+(``data_pass_bit_depth``).
 """
 
 from __future__ import annotations
 
 from . import host  # noqa: F401 — setzt den Host des Clients, bevor ihn jemand benutzt
+from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log, log_exception, set_debug  # noqa: F401
 from .rendertaxi_client.store import CredentialStore, TransferStore, has_local_material  # noqa: F401
 
@@ -45,9 +48,18 @@ def user_dir() -> str:
     return bpy.utils.extension_path_user(__package__, create=True)
 
 
+def data_pass_bit_depth() -> int:
+    """Die gewählte Bittiefe der Datenpässe — 8 oder 16; alles andere, auch ein Fehler, ist 8 Bit."""
+    try:
+        prefs = preferences()
+        return mf.data_pass_bit_depth(prefs.data_pass_bit_depth if prefs is not None else None)
+    except Exception:  # noqa: BLE001 — ein gemerkter Zustand darf nie stören (Regel 3)
+        return mf.DEFAULT_DATA_PASS_BIT_DEPTH
+
+
 try:
     import bpy
-    from bpy.props import BoolProperty, StringProperty
+    from bpy.props import BoolProperty, EnumProperty, StringProperty
     from bpy.types import AddonPreferences
 
     def _debug_changed(self, _context):
@@ -73,12 +85,21 @@ try:
             default=False,
             update=_debug_changed,
         )
+        # Statische Liste: der gemerkte Wert ist die Zahl selbst (8 oder 16), nicht ein Index in
+        # einer Liste, die sich ändern kann. Gelesen wird er nur über ``data_pass_bit_depth``.
+        data_pass_bit_depth: EnumProperty(
+            name=mf.DATA_PASS_BIT_DEPTH_LABEL,
+            description="Bittiefe der PNG-Dateien für Tiefe, Normalen, Albedo und IDs",
+            items=[(str(bits), label, "", bits) for bits, label in mf.DATA_PASS_BIT_DEPTH_OPTIONS],
+            default=str(mf.DEFAULT_DATA_PASS_BIT_DEPTH),
+        )
 
         def draw(self, _context):
             layout = self.layout
             layout.prop(self, "server_url")
             layout.prop(self, "device_name")
             layout.prop(self, "debug_logging")
+            layout.prop(self, "data_pass_bit_depth")
             layout.label(text="Die Anmeldung liegt nicht hier, sondern im Nutzerordner der Extension (nur für dich lesbar).")
 
     def preferences():

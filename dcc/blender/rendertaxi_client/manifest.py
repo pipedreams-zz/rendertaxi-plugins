@@ -1,4 +1,4 @@
-"""Capture-Manifest 1.1.0 und 1.2.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
+"""Capture-Manifest 1.1.0 bis 1.3.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
 Kein Hostmodul. Die Python-Fassung dessen, was der Referenzclient
 (``integrations/_shared/tools/capture-client.mjs``) und das Archicad-Add-on
@@ -39,9 +39,21 @@ CONTRACT = "rendertaxi.plugin.capture-manifest"
 CONTRACT_VERSION = "1.1.0"
 # Mit Modell: 1.2.0 bringt ``camera``, ``geometry`` und die Rolle ``model`` (ADR 0032).
 MODEL_CONTRACT_VERSION = "1.2.0"
+# 1.3.0: PNG ist das einzige Bildformat des Bildwegs, Datenpässe 8 oder 16 Bit ``uint``,
+# Tiefe normalisiert (RTX-P-012, capture-manifest.md Abschnitt 12).
+PNG_CONTRACT_VERSION = "1.3.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
-IMPLEMENTED_MINOR = 2
+PNG_MEDIA_TYPE = "image/png"
+IMPLEMENTED_MINOR = 3
+PNG_SINCE_MINOR = 3
+
+# Bittiefe der Datenpässe — der Nutzer wählt im Plugin, Standard 8 Bit (Nutzerentscheidung
+# vom 29.09.2026). Beide Plugins zeigen genau diesen Wortlaut.
+DATA_PASS_BIT_DEPTHS = (8, 16)
+DEFAULT_DATA_PASS_BIT_DEPTH = 8
+DATA_PASS_BIT_DEPTH_LABEL = "Bittiefe der Datenpässe"
+DATA_PASS_BIT_DEPTH_OPTIONS = ((8, "8 Bit (Standard)"), (16, "16 Bit"))
 
 SCHEMA_DIR = os.path.join(CLIENT_DIR, "schema")
 SCHEMA_FILES = (
@@ -56,11 +68,40 @@ def plugin_version() -> str:
     return current().plugin_version
 
 
-def image_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung des Bildwegs: 1.1.0, nur gegen einen Server mit höchstens 1.0 dann 1.0.0 (§3)."""
+def _highest_minor(handshake: dict | None) -> int | None:
     negotiation = (handshake or {}).get("negotiation") or {}
-    highest = str(negotiation.get("highestSupportedVersion") or CONTRACT_VERSION)
-    return "1.0.0" if highest.startswith("1.0") else CONTRACT_VERSION
+    match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(negotiation.get("highestSupportedVersion") or ""))
+    return int(match.group(1)) if match else None
+
+
+def image_contract_version(handshake: dict | None) -> str:
+    """Vertragsfassung des Bildwegs (§3, Regel 2): 1.3.0, wenn der Server sie umsetzt, sonst 1.1.0;
+    gegen einen Server mit höchstens 1.0 dann 1.0.0. Ohne Angabe 1.1.0."""
+    minor = _highest_minor(handshake)
+    if minor is None:
+        return CONTRACT_VERSION
+    if minor >= PNG_SINCE_MINOR:
+        return PNG_CONTRACT_VERSION
+    return "1.0.0" if minor == 0 else CONTRACT_VERSION
+
+
+def model_contract_version(handshake: dict | None) -> str:
+    """Vertragsfassung mit Modell: 1.3.0, wenn der Server sie umsetzt, sonst 1.2.0 (ADR 0032)."""
+    minor = _highest_minor(handshake)
+    return PNG_CONTRACT_VERSION if minor is not None and minor >= PNG_SINCE_MINOR else MODEL_CONTRACT_VERSION
+
+
+def data_pass_bit_depth(value) -> int:
+    """Die gemerkte Bittiefe der Datenpässe — jeder ungültige Wert wird zum Standard 8 Bit.
+
+    Ein gemerkter Zustand darf das Laden nie verhindern (Regel 3 aus #190): kein Fehler,
+    kein Abbruch, nur der Standard.
+    """
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_DATA_PASS_BIT_DEPTH
+    return number if number in DATA_PASS_BIT_DEPTHS else DEFAULT_DATA_PASS_BIT_DEPTH
 
 
 # --------------------------------------------------------------------------
@@ -336,7 +377,8 @@ def validate_manifest(document: dict) -> list[str]:
     **Bild**, ``contentHash`` passt zum Inhalt, eine Rolle aus
     ``Host.never_present`` nie ``present`` (Blender: ``depth``, QB-01); seit 1.2.0
     ``geometry`` genau dann, wenn eine Datei der Rolle ``model`` vorhanden ist,
-    und die Kamera mit normierten, nicht parallelen Vektoren.
+    und die Kamera mit normierten, nicht parallelen Vektoren. Das PNG-Profil ab
+    1.3.0 steht im Schema selbst (``pngProfileAsset``).
     """
     reg = registry()
     schema = reg.documents["capture-manifest.schema.json"]
@@ -373,6 +415,11 @@ def validate_manifest(document: dict) -> list[str]:
         present = [a for a in assets if isinstance(a, dict) and a.get("status") == "present"]
         if not any(a.get("role") != MODEL_ROLE for a in present):
             problems.append("/assets: kein Bild mit status present — das Modell allein ist kein Capture")
+        for index, asset in enumerate(assets):
+            depth = asset.get("depth") if isinstance(asset, dict) else None
+            near, far = (depth.get("near"), depth.get("far")) if isinstance(depth, dict) else (None, None)
+            if isinstance(near, (int, float)) and isinstance(far, (int, float)) and far <= near:
+                problems.append(f"/assets/{index}/depth/far: ist nicht größer als near")
         host = current()
         for role, question in sorted(host.never_present.items()):
             if any(a.get("role") == role for a in present):
@@ -469,6 +516,9 @@ class CaptureFile:
     note: str | None = None
     byte_size: int = 0
     sha256: str = ""
+    # Pflicht bei ``present`` für die Rollen ``depth`` bzw. ``normal`` (§5.2, §5.3).
+    depth: dict | None = None
+    normal: dict | None = None
 
 
 @dataclass
@@ -502,12 +552,12 @@ class ManifestInput:
 
 
 def capture_file(path: str, root: str, role: str, media_type: str, image: dict | None,
-                 note: str | None) -> CaptureFile:
+                 note: str | None, depth: dict | None = None, normal: dict | None = None) -> CaptureFile:
     """Eine geschriebene Datei als ``CaptureFile`` — Hash und Größe aus der Datei, Pfad relativ zur Wurzel."""
     sha, size = sha256_file(path)
     relative = os.path.relpath(path, root).replace(os.sep, "/")
     return CaptureFile(role=role, path=relative, media_type=media_type, image=image,
-                       note=note, byte_size=size, sha256=sha)
+                       note=note, byte_size=size, sha256=sha, depth=depth, normal=normal)
 
 
 def asset_entries(data: ManifestInput) -> list[dict]:
@@ -523,6 +573,10 @@ def asset_entries(data: ManifestInput) -> list[dict]:
         }
         if f.image is not None:
             entry["image"] = dict(f.image)
+        if f.depth is not None:
+            entry["depth"] = dict(f.depth)
+        if f.normal is not None:
+            entry["normal"] = dict(f.normal)
         if f.note:
             entry["note"] = f.note[:512]
         assets.append(entry)

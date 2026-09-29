@@ -53,11 +53,13 @@ class Cinema4DAdapter:
     def pass_rows(self):
         return capture.pass_rows(capture.active_document())
 
-    def render(self, kind: str, directory: str, size, roles: list[str], allowed_media_types, progress):
-        """``(files, planned, view_name)`` — Viewport oder Beauty mit Pässen."""
+    def render(self, kind: str, directory: str, size, roles: list[str], allowed_media_types, progress,
+               bit_depth: int):
+        """``(files, planned, view_name)`` — Viewport oder Beauty mit Pässen (PNG, ``bit_depth`` 8 oder 16)."""
         doc = capture.active_document()
         if kind == BEAUTY:
-            beauty, passes, planned = capture.render_beauty(doc, directory, size, roles, allowed_media_types, progress)
+            beauty, passes, planned = capture.render_beauty(doc, directory, size, roles, allowed_media_types, progress,
+                                                            bit_depth)
             return [beauty, *passes], planned, capture.view_name(doc)
         return [capture.render_viewport(doc, directory, size, progress)], [], capture.view_name(doc)
 

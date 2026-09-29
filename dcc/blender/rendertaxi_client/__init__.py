@@ -13,7 +13,6 @@ Module:
 * ``frame``     Ziel der Übernahme, Rahmengröße und Seitenverhältnis (ADR 0024)
 * ``store``     Anmeldung (0600), angefangene Übernahmen, Einstellungen
 * ``log``       Protokoll ohne Token, Pfade und Namen
-* ``exr``       OpenEXR-Kopf lesen, einen Pass aus einer Mehrschichtdatei lösen
 * ``glb``       exportierte GLB lesen: Dreiecke wie der Server, Hülle, Maßstab auf Meter setzen
 * ``schema/``   Kopie der drei Schemas aus ``integrations/_shared/contracts/v1``
 

@@ -77,6 +77,28 @@
     "assets"
   ],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "description": "Seit 1.3.0 (RTX-P-012): PNG ist das einzige Bildformat des Bildwegs. In einem Dokument ab 1.3.0 gilt für jedes Asset zusätzlich pngProfileAsset; ältere Dokumente bleiben unberührt.",
+      "if": {
+        "properties": {
+          "contractVersion": {
+            "pattern": "^1\\.([3-9]|[1-9][0-9]+)\\.[0-9]+$"
+          }
+        },
+        "required": ["contractVersion"]
+      },
+      "then": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/$defs/pngProfileAsset"
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "source": {
       "type": "object",
@@ -914,6 +936,85 @@
           }
         }
       ]
+    },
+    "pngProfileAsset": {
+      "description": "Regeln des Bildwegs ab 1.3.0 für jedes Asset außer model: Medientyp image/png (auch bei planned, wenn genannt), 8 oder 16 Bit uint; Tiefe normalisiert (normalized-linear oder normalized-inverse, nie linear-metric) als Graustufenbild; Normalen rgb, (n + 1) / 2 je Komponente; object-id, material-id und mask als Graustufenbild, IDs als ganzzahliger Index ohne Antialiasing (capture-manifest.md, Abschnitt 12).",
+      "if": {
+        "properties": {
+          "role": {
+            "const": "model"
+          }
+        },
+        "required": ["role"]
+      },
+      "else": {
+        "properties": {
+          "mediaType": {
+            "const": "image/png"
+          },
+          "image": {
+            "properties": {
+              "bitDepth": {
+                "enum": [8, 16]
+              },
+              "sampleFormat": {
+                "const": "uint"
+              }
+            }
+          },
+          "depth": {
+            "properties": {
+              "encoding": {
+                "enum": ["normalized-linear", "normalized-inverse"]
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "role": {
+                  "enum": ["depth", "object-id", "material-id", "mask"]
+                }
+              },
+              "required": ["role"]
+            },
+            "then": {
+              "properties": {
+                "image": {
+                  "properties": {
+                    "channels": {
+                      "const": "gray"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "role": {
+                  "const": "normal"
+                }
+              },
+              "required": ["role"]
+            },
+            "then": {
+              "properties": {
+                "image": {
+                  "properties": {
+                    "channels": {
+                      "const": "rgb"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
     }
   }
 }

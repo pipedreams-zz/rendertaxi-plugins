@@ -1,7 +1,8 @@
 """rendertaxi.ai für Cinema 4D 2026 — Python-Plugin (RTX-C4D-002, #186).
 
 Übergibt die aktuelle Ansicht (Viewport Renderer) oder das gerenderte Bild
-(Beauty, optional mit Datenpässen) als Capture-Manifest 1.1.0 an rendertaxi.ai
+(Beauty, optional mit Datenpässen als PNG 8 oder 16 Bit) als Capture-Manifest
+1.3.0 (gegen einen älteren Server 1.1.0) an rendertaxi.ai
 und ordnet sie einem Projekt und einem Blickpunkt zu — neu oder als
 ausdrückliches Update. Derselbe Weg wie Archicad und Blender, derselbe Vertrag,
 dieselbe Serverseite (ADR 0009, ADR 0035).
