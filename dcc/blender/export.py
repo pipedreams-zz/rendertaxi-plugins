@@ -24,8 +24,17 @@ Kamera steht im selben **Exportraum**. Was hier gilt, ist gemessen
   ``2·atan(sensor / (2·lens))``. Die 3D-Ansicht ohne Kamera rechnet mit 72 mm
   (36 mm Sensor, Zoomfaktor 2) auf der längeren Seite, parallel mit der halben
   Ausdehnung ``view_distance · 36 / lens``. ``shift_x``/``shift_y``
-  verschieben das Bild um diesen Bruchteil der längeren Seite; der Vertrag
-  kennt keine Verschiebung — eine Kamera mit Shift wird nicht gesendet.
+  verschieben das Bild um diesen Bruchteil der Seite, die der Sensor Fit
+  nennt (bei AUTO der längeren).
+* **Objektiv und Shift (Manifest 1.4.0, RTX-M2-026).** Setzt der Server 1.4.0
+  um, trägt der Kamerablock einer Kamera der Szene zusätzlich ``lens``
+  (Brennweite, Sensorgröße auf der Seite des Sensor Fit, Sensor Fit) und
+  ``shift`` als Anteil der **längeren** Bildseite — umgerechnet
+  ``shift · Seite des Sensor Fit / längere Seite``. Gegen einen älteren Server
+  gilt weiter: eine Kamera mit Shift wird nicht gesendet.
+* **Kameras in der Datei (RTX-M2-026).** Die GLB-Datei trägt die sichtbaren
+  Kameras der Szene (glTF ``cameras[]``, Knotennamen = Objektnamen), keine
+  Lichter. Die Plattform liest sie nur im Browser, als Liste zum Übernehmen.
 
 Das Modul erfindet nichts: was der Vertrag nicht darstellen kann, führt zu
 ``None`` mit einem Grund, den das Panel **vor** dem Senden zeigt.
@@ -120,8 +129,13 @@ def orthographic_extent(sensor_fit: str, full_fitted: float, width: int, height:
 
 def camera_dict(*, projection: str, position, direction, up, near: float, far: float | None,
                 fov: tuple[str, float] | None = None, extent: tuple[float, float] | None = None,
-                meters_per_unit: float = 1.0) -> dict:
-    """Der Kamerablock des Vertrags (Abschnitt 11.3) aus Werten in Blenders Weltraum."""
+                meters_per_unit: float = 1.0, lens: dict | None = None,
+                shift: tuple[float, float] | None = None) -> dict:
+    """Der Kamerablock des Vertrags (Abschnitt 11.3) aus Werten in Blenders Weltraum.
+
+    ``lens`` und ``shift`` (seit 1.4.0) stehen nur, wenn sie genannt sind; ein
+    Shift ``(0, 0)`` entfällt.
+    """
     near_m = max(length(near * meters_per_unit), 0.000001)
     block: dict = {
         "space": "export",
@@ -139,7 +153,35 @@ def camera_dict(*, projection: str, position, direction, up, near: float, far: f
     if far_m is not None and far_m <= near_m:
         far_m = None
     block["clip"] = {"near": near_m, "far": far_m}
+    if lens is not None and projection == "perspective":
+        block["lens"] = lens
+    if shift is not None and (_num(shift[0], 6) != 0 or _num(shift[1], 6) != 0):
+        block["shift"] = {"x": _num(shift[0], 6), "y": _num(shift[1], 6)}
     return block
+
+
+# Die Grenzen des Objektivs im Vertrag (capture-manifest.md, Abschnitt 11.3).
+FOCAL_LENGTH_MM = (1.0, 1200.0)
+SENSOR_MM = (1.0, 300.0)
+SHIFT_LIMIT = 2.0
+
+
+def lens_dict(sensor_fit: str, sensor_width: float, sensor_height: float, lens: float) -> dict | None:
+    """``camera.lens`` (1.4.0): Brennweite, Sensorgröße auf der Seite des Sensor Fit, Sensor Fit.
+
+    ``None``, wenn ein Wert außerhalb des Vertrags liegt — dann bleibt es beim Winkel.
+    """
+    sensor = sensor_height if sensor_fit == "VERTICAL" else sensor_width
+    if not (FOCAL_LENGTH_MM[0] <= lens <= FOCAL_LENGTH_MM[1] and SENSOR_MM[0] <= sensor <= SENSOR_MM[1]):
+        return None
+    return {"focalLengthMm": length(lens), "sensorWidthMm": length(sensor), "sensorFit": sensor_fit.lower()}
+
+
+def contract_shift(sensor_fit: str, shift_x: float, shift_y: float, width: int, height: int) -> tuple[float, float]:
+    """Blenders Shift (Anteil der Seite des Sensor Fit) als Anteil der **längeren** Bildseite (1.4.0)."""
+    longer = max(width, height)
+    fitted = {"HORIZONTAL": width, "VERTICAL": height}.get(sensor_fit, longer)
+    return shift_x * fitted / longer, shift_y * fitted / longer
 
 
 def geometry_dict(meters_per_unit: float = 1.0) -> dict:
@@ -193,25 +235,31 @@ def meters_per_unit(scene) -> float:
     return 1.0
 
 
-def _camera_problem(camera, scene) -> str | None:
+def _camera_problem(camera, scene, lens_and_shift: bool = False) -> str | None:
     data = camera.data
     if data.type not in ("PERSP", "ORTHO"):
         return f"Die Kamera ist vom Typ {data.type}; der Vertrag kennt nur perspektivisch und parallel."
-    if abs(data.shift_x) > UNIT_TOLERANCE or abs(data.shift_y) > UNIT_TOLERANCE:
-        return "Die Kamera hat Shift; der Vertrag kennt keine Bildverschiebung (QB-04)."
+    shifted = abs(data.shift_x) > UNIT_TOLERANCE or abs(data.shift_y) > UNIT_TOLERANCE
+    if shifted and not lens_and_shift:
+        return "Die Kamera hat Shift; der Server kennt die Bildverschiebung erst ab Manifest 1.4.0 (QB-04)."
+    if max(abs(data.shift_x), abs(data.shift_y)) > SHIFT_LIMIT:
+        return "Der Shift der Kamera liegt außerhalb von ±2; der Vertrag trägt ihn nicht."
     render = scene.render
     if abs(render.pixel_aspect_x - render.pixel_aspect_y) > UNIT_TOLERANCE:
         return "Pixel Aspect ist nicht 1:1; das Sichtfeld wäre auf der zweiten Achse falsch."
     return None
 
 
-def camera_problem(context, kind: str) -> str | None:
-    """Warum **keine** Kamera mitgeht — für das Panel, bevor gesendet wird."""
+def camera_problem(context, kind: str, lens_and_shift: bool = False) -> str | None:
+    """Warum **keine** Kamera mitgeht — für das Panel, bevor gesendet wird.
+
+    ``lens_and_shift``: der Server setzt Manifest 1.4.0 um (``mf.camera_lens_allowed``).
+    """
     scene = context.scene
     if kind == "BEAUTY" or _view_uses_camera(context):
         if scene.camera is None:
             return "Die Szene hat keine aktive Kamera."
-        return _camera_problem(scene.camera, scene)
+        return _camera_problem(scene.camera, scene, lens_and_shift)
     if _region(context) is None:
         return "Keine 3D-Ansicht offen."
     if abs(scene.render.pixel_aspect_x - scene.render.pixel_aspect_y) > UNIT_TOLERANCE:
@@ -234,7 +282,7 @@ def _view_uses_camera(context) -> bool:
     return found is not None and found[1].view_perspective == "CAMERA"
 
 
-def camera_from_object(camera, scene, size: tuple[int, int], meters: float) -> dict:
+def camera_from_object(camera, scene, size: tuple[int, int], meters: float, lens_and_shift: bool = False) -> dict:
     from mathutils import Vector
 
     data = camera.data
@@ -245,6 +293,10 @@ def camera_from_object(camera, scene, size: tuple[int, int], meters: float) -> d
     width, height = size
     common = {"position": camera.matrix_world.translation, "direction": direction, "up": up,
               "near": data.clip_start, "far": data.clip_end, "meters_per_unit": meters}
+    if lens_and_shift:
+        common["shift"] = contract_shift(data.sensor_fit, data.shift_x, data.shift_y, width, height)
+        if data.type == "PERSP":
+            common["lens"] = lens_dict(data.sensor_fit, data.sensor_width, data.sensor_height, data.lens)
     if data.type == "ORTHO":
         extent = orthographic_extent(data.sensor_fit, data.ortho_scale, width, height)
         return camera_dict(projection="orthographic", extent=extent, **common)
@@ -276,18 +328,19 @@ def camera_from_view(space, region_3d, size: tuple[int, int], meters: float) -> 
                        near=space.clip_start, far=space.clip_end, fov=fov, meters_per_unit=meters)
 
 
-def camera_block(context, kind: str, size: tuple[int, int]) -> dict | None:
+def camera_block(context, kind: str, size: tuple[int, int], lens_and_shift: bool = False) -> dict | None:
     """Die Kamera der Aufnahme — ``None``, wenn ``camera_problem`` einen Grund nennt.
 
     ``kind`` ist ``VIEWPORT`` oder ``BEAUTY``; ``size`` die Maße des
     aufgenommenen Bildes (nicht der Szene: „Blickpunkt-Rahmen" ändert sie).
+    ``lens_and_shift``: Objektiv und Shift mitsenden (Manifest 1.4.0).
     """
     scene = context.scene
     meters = meters_per_unit(scene)
-    if camera_problem(context, kind):
+    if camera_problem(context, kind, lens_and_shift):
         return None
     if kind == "BEAUTY" or _view_uses_camera(context):
-        return camera_from_object(scene.camera, scene, size, meters)
+        return camera_from_object(scene.camera, scene, size, meters, lens_and_shift)
     space, region_3d = _region(context)
     return camera_from_view(space, region_3d, size, meters)
 
@@ -341,9 +394,10 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
     """Die sichtbaren Objekte als GLB nach ``directory/model/scene.glb``.
 
     Eingebauter glTF-Exporter (``bpy.ops.export_scene.gltf``), „+Y Up",
-    Modifier angewendet, ohne Animation, Kameras, Lichter und Custom
-    Properties; Materialien und Texturen nur auf Wunsch (dann in die Datei
-    eingebettet, nie daneben). Die Datei bleibt im Capture-Verzeichnis.
+    Modifier angewendet, ohne Animation, Lichter und Custom Properties;
+    **mit** den sichtbaren Kameras der Szene (Namen der Objekte, RTX-M2-026);
+    Materialien und Texturen nur auf Wunsch (dann in die Datei eingebettet,
+    nie daneben). Die Datei bleibt im Capture-Verzeichnis.
     """
     import bpy
 
@@ -365,7 +419,7 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
             export_animations=False,
             export_skins=False,
             export_morph=False,
-            export_cameras=False,
+            export_cameras=True,
             export_lights=False,
             export_extras=False,
             export_copyright="",

@@ -102,7 +102,9 @@ dazu. In der Webanwendung erscheint das Modell als Asset am Blickpunkt; auf
 einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
 
 - **Was exportiert wird:** alle in der 3D-Ansicht sichtbaren Objekte der
-  aktuellen Szene, Modifier angewendet, ohne Animation, Kameras und Lichter.
+  aktuellen Szene, Modifier angewendet, ohne Animation und Lichter. Die
+  sichtbaren **Kameras** der Szene gehen mit ihren Namen mit (seit 0.4.0) —
+  im Blickpunkt lassen sie sich unter „Kameras im Modell" übernehmen.
   **Materialien und Texturen** nur, wenn angehakt — die Datei wird dann
   größer.
 - **Vor dem Senden** nennt das Panel die Zahl der Dreiecke und sichtbaren
@@ -111,9 +113,11 @@ einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
   gesendet.
 - **Kamera:** bei **Beauty** die aktive Kamera, bei **Viewport** die
   3D-Ansicht (perspektivisch oder parallel; in der Kameraansicht die Kamera).
-  Eine Kamera mit **Shift**, eine Panoramakamera oder ein Pixel Aspect
-  ungleich 1:1 lässt sich im Vertrag nicht beschreiben: das Modell geht dann
-  ohne Kamera mit, und das Panel sagt es vorher.
+  Brennweite, Sensor und **Shift** gehen mit, wenn der Server
+  Capture-Manifest 1.4 kennt; gegen einen älteren Server geht eine Kamera mit
+  Shift nicht mit. Eine Panoramakamera oder ein Pixel Aspect ungleich 1:1
+  lässt sich im Vertrag nicht beschreiben: das Modell geht dann ohne Kamera
+  mit, und das Panel sagt es vorher.
 - **Einheiten:** das Modell geht nur mit **Scene › Units › Unit System**
   „Metric" oder „Imperial" und **Unit Scale 1**. Blenders Exporter schreiben
   eine Einheit als einen Meter, unabhängig von Unit Scale; mit einem anderen

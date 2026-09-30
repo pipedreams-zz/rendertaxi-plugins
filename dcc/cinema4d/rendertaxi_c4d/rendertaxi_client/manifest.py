@@ -1,4 +1,4 @@
-"""Capture-Manifest 1.1.0 bis 1.3.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
+"""Capture-Manifest 1.1.0 bis 1.4.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
 Kein Hostmodul. Die Python-Fassung dessen, was der Referenzclient
 (``integrations/_shared/tools/capture-client.mjs``) und das Archicad-Add-on
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -42,11 +43,15 @@ MODEL_CONTRACT_VERSION = "1.2.0"
 # 1.3.0: PNG ist das einzige Bildformat des Bildwegs, Datenpässe 8 oder 16 Bit ``uint``,
 # Tiefe normalisiert (RTX-P-012, capture-manifest.md Abschnitt 12).
 PNG_CONTRACT_VERSION = "1.3.0"
+# 1.4.0: die Kamera trägt optional Objektiv (``lens``) und Shift (RTX-M2-026,
+# capture-manifest.md Abschnitt 11.3).
+CAMERA_CONTRACT_VERSION = "1.4.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 PNG_MEDIA_TYPE = "image/png"
-IMPLEMENTED_MINOR = 3
+IMPLEMENTED_MINOR = 4
 PNG_SINCE_MINOR = 3
+CAMERA_LENS_SINCE_MINOR = 4
 
 # Bittiefe der Datenpässe — der Nutzer wählt im Plugin, Standard 8 Bit (Nutzerentscheidung
 # vom 29.09.2026). Beide Plugins zeigen genau diesen Wortlaut.
@@ -86,9 +91,18 @@ def image_contract_version(handshake: dict | None) -> str:
 
 
 def model_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung mit Modell: 1.3.0, wenn der Server sie umsetzt, sonst 1.2.0 (ADR 0032)."""
+    """Vertragsfassung mit Modell: die höchste, die der Server umsetzt — 1.4.0 (Objektiv und
+    Shift der Kamera), 1.3.0 (PNG) oder 1.2.0 (ADR 0032)."""
     minor = _highest_minor(handshake)
+    if minor is not None and minor >= CAMERA_LENS_SINCE_MINOR:
+        return CAMERA_CONTRACT_VERSION
     return PNG_CONTRACT_VERSION if minor is not None and minor >= PNG_SINCE_MINOR else MODEL_CONTRACT_VERSION
+
+
+def camera_lens_allowed(contract_version: str) -> bool:
+    """Ob ein Dokument dieser Fassung ``camera.lens`` und ``camera.shift`` tragen darf (ab 1.4.0)."""
+    match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
+    return match is not None and int(match.group(1)) >= CAMERA_LENS_SINCE_MINOR
 
 
 def data_pass_bit_depth(value) -> int:
@@ -377,8 +391,9 @@ def validate_manifest(document: dict) -> list[str]:
     **Bild**, ``contentHash`` passt zum Inhalt, eine Rolle aus
     ``Host.never_present`` nie ``present`` (Blender: ``depth``, QB-01); seit 1.2.0
     ``geometry`` genau dann, wenn eine Datei der Rolle ``model`` vorhanden ist,
-    und die Kamera mit normierten, nicht parallelen Vektoren. Das PNG-Profil ab
-    1.3.0 steht im Schema selbst (``pngProfileAsset``).
+    und die Kamera mit normierten, nicht parallelen Vektoren; seit 1.4.0 ein
+    Objektiv, das denselben Winkel beschreibt wie ``fieldOfView``. Das
+    PNG-Profil ab 1.3.0 steht im Schema selbst (``pngProfileAsset``).
     """
     reg = registry()
     schema = reg.documents["capture-manifest.schema.json"]
@@ -405,6 +420,11 @@ def validate_manifest(document: dict) -> list[str]:
         for index, asset in enumerate(assets if isinstance(assets, list) else []):
             if isinstance(asset, dict) and asset.get("role") == "model":
                 problems.append(f"/assets/{index}/role: model ist erst ab contractVersion 1.2.0 zulässig")
+    camera = document.get("camera") if isinstance(document, dict) else None
+    if isinstance(camera, dict) and re.fullmatch(r"1\.[0-3]\.[0-9]+", version):
+        for key in ("lens", "shift"):
+            if key in camera:
+                problems.append(f"/camera/{key}: erst ab contractVersion 1.4.0 zulässig")
     if isinstance(assets, list):
         roles = [a.get("role") for a in assets if isinstance(a, dict)]
         paths = [a.get("path") for a in assets if isinstance(a, dict)]
@@ -471,6 +491,8 @@ def _geometry_problems(document: dict, assets: list) -> list[str]:
 
 
 _UNIT_TOLERANCE = 1e-6
+# Wie ``LENS_ANGLE_TOLERANCE`` in ``validate.mjs``: Rundung von Brennweite und Sensor.
+_LENS_ANGLE_TOLERANCE = 2e-6
 
 
 def _camera_problems(camera) -> list[str]:
@@ -494,6 +516,14 @@ def _camera_problems(camera) -> list[str]:
     near, far = clip.get("near"), clip.get("far")
     if _type_of(near) == "number" and _type_of(far) == "number" and far <= near:
         problems.append("/camera/clip/far: ist nicht größer als near")
+    lens = camera.get("lens") if isinstance(camera.get("lens"), dict) else {}
+    fov = camera.get("fieldOfView") if isinstance(camera.get("fieldOfView"), dict) else {}
+    focal, sensor, angle = lens.get("focalLengthMm"), lens.get("sensorWidthMm"), fov.get("angle")
+    if all(_type_of(v) == "number" for v in (focal, sensor, angle)) and focal > 0:
+        if abs(2 * math.atan(sensor / (2 * focal)) - angle) > _LENS_ANGLE_TOLERANCE:
+            problems.append("/camera/lens: beschreibt einen anderen Winkel als fieldOfView")
+        if lens.get("sensorFit") not in ("auto", fov.get("axis")):
+            problems.append("/camera/lens/sensorFit: nennt eine andere Achse als fieldOfView")
     return problems
 
 

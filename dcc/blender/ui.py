@@ -639,9 +639,10 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
             wm.progress_update(90)
         finally:
             wm.progress_end()
-        camera = export.camera_block(context, props.capture_kind, (image["width"], image["height"]))
-        geometry = export.geometry_block(context, directory)
         contract_version = mf.model_contract_version(handshake)
+        camera = export.camera_block(context, props.capture_kind, (image["width"], image["height"]),
+                                     mf.camera_lens_allowed(contract_version))
+        geometry = export.geometry_block(context, directory)
     stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else None
     data = mf.ManifestInput(
         capture_id=mf.uuid_v7(),
@@ -1008,7 +1009,8 @@ class RTX_PT_panel(Panel):
         cap = ((STATE.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
         if cap:
             _wrapped(layout, f"Modelldatei höchstens {cap / 1048576:.0f} MB", "INFO")
-        why = export.camera_problem(context, props.capture_kind)
+        why = export.camera_problem(context, props.capture_kind,
+                                    mf.camera_lens_allowed(mf.model_contract_version(STATE.handshake)))
         if why:
             _wrapped(layout, f"Ohne Kamera: {why}", "INFO")
 

@@ -31,7 +31,7 @@
       "$ref": "#/$defs/intent"
     },
     "camera": {
-      "description": "Kamerablock. Seit 1.2.0 null oder die Kamera der Ansicht im Exportraum (Meter, rechtshändig, +Y oben — der Raum von glTF 2.0). In einem Dokument unter 1.2.0 immer null; erzwingt tools/validate.mjs.",
+      "description": "Kamerablock. Seit 1.2.0 null oder die Kamera der Ansicht im Exportraum (Meter, rechtshändig, +Y oben — der Raum von glTF 2.0); seit 1.4.0 optional mit Objektiv (lens) und Shift. In einem Dokument unter 1.2.0 immer null; erzwingt tools/validate.mjs.",
       "if": {
         "type": "null"
       },
@@ -908,6 +908,47 @@
           },
           "required": ["near", "far"],
           "additionalProperties": false
+        },
+        "lens": {
+          "type": "object",
+          "description": "Seit 1.4.0, optional, nur bei projection perspective: das Objektiv der Host-Kamera. sensorWidthMm ist die Sensorgröße auf der Bildseite, die sensorFit nennt (auto: die längere Seite des Bildes). Es beschreibt denselben Winkel wie fieldOfView: angle = 2·atan(sensorWidthMm / (2·focalLengthMm)), bei horizontal oder vertical auf dieser Achse. Beides erzwingt tools/validate.mjs; in einem Dokument unter 1.4.0 ist das Feld unzulässig.",
+          "properties": {
+            "focalLengthMm": {
+              "type": "number",
+              "description": "Brennweite in Millimetern, Präzisionsklasse \"length\".",
+              "minimum": 1,
+              "maximum": 1200
+            },
+            "sensorWidthMm": {
+              "type": "number",
+              "description": "Sensorgröße in Millimetern auf der Seite, die sensorFit nennt, Präzisionsklasse \"length\".",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "sensorFit": {
+              "enum": ["auto", "horizontal", "vertical"]
+            }
+          },
+          "required": ["focalLengthMm", "sensorWidthMm", "sensorFit"],
+          "additionalProperties": false
+        },
+        "shift": {
+          "type": "object",
+          "description": "Seit 1.4.0, optional: die Verschiebung des Bildausschnitts gegen die optische Achse (Shift-Kamera) als Anteil der längeren Bildseite, x nach rechts, y nach oben, Präzisionsklasse \"ratio\". In einem Dokument unter 1.4.0 unzulässig; erzwingt tools/validate.mjs.",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": -2,
+              "maximum": 2
+            },
+            "y": {
+              "type": "number",
+              "minimum": -2,
+              "maximum": 2
+            }
+          },
+          "required": ["x", "y"],
+          "additionalProperties": false
         }
       },
       "required": ["space", "projection", "position", "direction", "up", "clip"],
@@ -931,7 +972,8 @@
           "else": {
             "required": ["extent"],
             "properties": {
-              "fieldOfView": false
+              "fieldOfView": false,
+              "lens": false
             }
           }
         }
