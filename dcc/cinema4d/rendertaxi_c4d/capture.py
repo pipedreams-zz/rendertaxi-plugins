@@ -28,6 +28,18 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
   die 2026-Dokumentation belegt keine Umrechnung in ``normalized-linear``
   bzw. ``(n + 1) / 2``. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
   ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG.
+* **Corona** (RTX-C4D-004): die Engine ist der Videopost 1030480 (``CORONA``;
+  das c4d-Modul hat kein Symbol dafür — die ID stammt aus der Corona-Installation
+  und ist am Host gemessen, ``docs/measurements/*-corona.md``). **Beauty** geht
+  über denselben Weg wie jede andere Engine: ``RenderDocument`` auf der Kopie
+  der Rendervoreinstellung. **Datenpässe** gibt es mit Corona (noch) nicht: die
+  Corona-Pässe liegen im Scene-Hook 1037467, kommen als Ebenen mit ``USERID``
+  111 in die MultipassBitmap (nur über den Namen unterscheidbar), sind als
+  sRGB-kodierte Floats gespeichert, ihre Tiefenspanne ist in Python nicht
+  lesbar und ihre IDs sind Farbcodes — jede dieser Hürden ist ein eigener
+  Bildweg. Die Probe meldet sie deshalb als ``requires-user-action`` mit
+  Anleitung; sie ändert nichts am Dokument und ohne Corona fällt nur diese
+  Aussage weg.
 * **Farbe** (QC-12): Viewport und Beauty als PNG 8 Bit, gemeldet als
   ``srgb``. Ab 2026.2 fordert das Plugin das Einbacken der
   OCIO-Ansichtstransformation ausdrücklich an
@@ -64,9 +76,12 @@ STANDARD = getattr(c4d, "RDATA_RENDERENGINE_STANDARD", None)
 PHYSICAL = getattr(c4d, "RDATA_RENDERENGINE_PHYSICAL", None)
 VIEWPORT_RENDERER = getattr(c4d, "RDATA_RENDERENGINE_PREVIEWHARDWARE", None)
 REDSHIFT = getattr(c4d, "RDATA_RENDERENGINE_REDSHIFT", None)
+# Corona (Chaos): Videopost-ID der Engine, kein Symbol im c4d-Modul — am Host gemessen (RTX-C4D-004).
+CORONA = 1030480
 RENDERER_LABELS = {engine: label for engine, label in ((STANDARD, "Standard"), (PHYSICAL, "Physical"),
                                                        (VIEWPORT_RENDERER, "Viewport Renderer"),
-                                                       (REDSHIFT, "Redshift")) if engine is not None}
+                                                       (REDSHIFT, "Redshift"), (CORONA, "Corona"))
+                   if engine is not None}
 MULTIPASS_RENDERERS = tuple(engine for engine in (STANDARD, PHYSICAL) if engine is not None)
 
 # Renderflags (Referenz 2026.2): EXTERNAL lässt die gewählte Engine gelten; die
@@ -222,6 +237,11 @@ def pass_status(spec: PassSpec, rd) -> tuple[str, str]:
     """Zustand eines Passes in **diesem** Dokument und was der Nutzer einstellen muss."""
     engine = rd[c4d.RDATA_RENDERENGINE]
     where = f"Rendervoreinstellungen › Multi-Pass › Kanal „{spec.channel}“"
+    if engine == CORONA:
+        return ("requires-user-action",
+                "Mit Corona derzeit nicht übertragbar: seine Pässe haben keinen vertragskonformen Weg "
+                "(Datenpässe über den Standard-Renderer folgen mit QC-03 bis QC-06). "
+                f"Für Datenpässe Renderer Standard oder Physical wählen, dann {where} hinzufügen.")
     if not MULTIPASS_RENDERERS or engine not in MULTIPASS_RENDERERS:
         return ("requires-user-action",
                 f"Renderer Standard oder Physical wählen (jetzt {renderer_label(engine)}), dann {where} hinzufügen.")
@@ -345,6 +365,14 @@ def _bitmap(size: tuple[int, int]):
 def _save_png(bitmap, path: str) -> None:
     if bitmap.Save(path, c4d.FILTER_PNG) != c4d.IMAGERESULT_OK:
         raise CaptureError("Cinema 4D konnte das Bild nicht als PNG schreiben.")
+
+
+def beauty_engine_note(engine) -> str:
+    """Vorbehalt je Engine für die Beauty: bei Corona gilt das Tone-Mapping der Rendervoreinstellung."""
+    if engine == CORONA:
+        return ("Corona: Tone-Mapping und Farbe laut Corona-Einstellungen der Rendervoreinstellung "
+                "(VFB-Nachbearbeitung wird nicht übernommen), nicht am Host gemessen (QC-12)")
+    return ""
 
 
 def color_note() -> str:
@@ -473,8 +501,10 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
                     f"nicht am Host gemessen, zweiter Renderdurchgang.")
             files.append(mf.capture_file(path, root, spec.role, PNG, image, note))
 
+    extra = beauty_engine_note(rd[c4d.RDATA_RENDERENGINE])
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
-                             f"Beauty (RenderDocument), {engine}, {view_name(doc)}; {color_note()}.")
+                             f"Beauty (RenderDocument), {engine}, {view_name(doc)}; {color_note()}"
+                             f"{'; ' + extra if extra else ''}.")
     order = [spec.role for spec in PASSES]
     files.sort(key=lambda f: order.index(f.role))
     planned.sort(key=lambda p: order.index(p.role))

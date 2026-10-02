@@ -2,15 +2,10 @@
 
 Hier — und nur hier — stehen die Kennungen des Plugins:
 
-* ``PLUGIN_ID`` — die Plugin-ID bei Maxon. **Noch nicht registriert:** bis
-  dahin eine ID aus dem Bereich, den Maxon für Entwicklung und Tests
-  freigibt (1000001–1000010). Sie darf so nicht veröffentlicht werden, weil
-  sie mit jedem anderen Entwicklungs-Plugin kollidieren kann. Vor der
-  Veröffentlichung unter https://developers.maxon.net (Plugin-ID
-  registrieren) eine eigene ID holen und **nur diese Zeile** ändern. Sie
-  kennzeichnet auch den Untercontainer mit der Dokumentkennung (QC-10): eine
-  neue ID heißt, dass vorhandene Dokumente ihre Kennung nicht mehr finden und
-  bei der nächsten Übernahme eine neue bekommen.
+* ``PLUGIN_ID`` — die bei Maxon registrierte Plugin-ID (developers.maxon.net).
+  Sie kennzeichnet auch den Untercontainer mit der Dokumentkennung (QC-10):
+  eine neue ID heißt, dass vorhandene Dokumente ihre Kennung nicht mehr
+  finden und bei der nächsten Übernahme eine neue bekommen.
 * ``PLUGIN_VERSION`` — die eine Quelle der Pluginversion;
   ``scripts/pack.sh`` im öffentlichen Spiegel liest sie hier.
 * ``HOST_MAJOR`` — die Cinema-4D-Fassung, für die das Plugin gebaut und
@@ -29,9 +24,8 @@ import os
 
 from . import rendertaxi_client as client
 
-# Entwicklungs-ID aus dem von Maxon freigegebenen Testbereich 1000001–1000010.
-# Vor der Veröffentlichung durch die registrierte Plugin-ID ersetzen.
-PLUGIN_ID = 1000001
+# Registrierte Plugin-ID (vom Nutzer am 01.10.2026 genannt; die Entwicklungs-ID 1000001 entfällt).
+PLUGIN_ID = 1070762
 PLUGIN_VERSION = "0.2.0"
 HOST_MAJOR = 2026
 
