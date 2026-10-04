@@ -42,9 +42,8 @@ HOST = client.configure(client.Host(
     plugin_version=PLUGIN_VERSION,
     roots=(PLUGIN_DIR,),
     # Tiefe: Standard/Physical kodieren den Abstand zur Fokusebene, die Umrechnung in
-    # normalized-linear (1.3.0) ist nicht belegt (QC-03); Normalen: Raum und
-    # Vorzeichenbereich nicht belegt, (n + 1) / 2 nicht zugesagt (QC-04).
-    never_present={"depth": "QC-03", "normal": "QC-04"},
+    # normalized-linear (1.3.0) ist nicht belegt (QC-03). Normalen sind seit RTX-C4D-005 belegt (QC-04, gemessen).
+    never_present={"depth": "QC-03"},
 ))
 
 

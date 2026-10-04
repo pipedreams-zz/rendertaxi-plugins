@@ -19,15 +19,19 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
   eingeschaltet hat — das Plugin schaltet keinen Pass ein (QC-13). Die Ebene
   eines Kanals findet ``MPBTYPE_USERID`` („In the renderer this is
   VPBUFFER_xxx"). Jeder Pass ist ein PNG ``images/<role>.png`` mit 8 oder 16
-  Bit je Kanal nach Wahl des Nutzers (Capture-Manifest 1.3.0): die Ebene der
-  MultipassBitmap wird mit ``FILTER_PNG`` und — für 16 Bit —
-  ``SAVEBIT_USE16BITCHANNELS`` gespeichert, wie Maxons Beispiel
-  ``render_document_complex_2026_2.py`` die Bittiefe beim Speichern wählt.
-  Maße, Bittiefe und Kanäle liest das Manifest aus der geschriebenen Datei
-  (``describe_png``). Tiefe (QC-03) und Normalen (QC-04) bleiben ``planned``:
-  die 2026-Dokumentation belegt keine Umrechnung in ``normalized-linear``
-  bzw. ``(n + 1) / 2``. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
-  ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG.
+  Bit je Kanal nach Wahl des Nutzers (Capture-Manifest 1.3.0): die rohen Floats
+  der Ebene der MultipassBitmap (``GetPixelCnt``, ``COLORMODE_RGBf``) gehen
+  durch den eigenen PNG-Schreiber (``pngwrite.py``). **Nicht** über
+  ``BaseBitmap.Save``: das wendet auf Float-Ebenen eine kanalabhängige
+  Anzeigetransformation an, auch mit ``RENDERFLAGS_OCIO_RAW_RENDERING``
+  (``docs/measurements/2026-10-01-standard-paesse.md``) — für Datenpässe
+  unbrauchbar, für die Beauty gewollt. Maße, Bittiefe und Kanäle liest das
+  Manifest aus der geschriebenen Datei (``describe_png``). **Normalen** (QC-04, am Host gemessen):
+  die Float-Ebene ist ``(n + 1) / 2`` im Weltraum in Cinema-4D-Achsen, ein Pixel (0, 0, 0) ist „kein
+  Treffer“ und wird in der Datei 0,5 (Vertrag 1.3.0); Manifest ``normal.space: world`` — der Exportraum
+  des Manifests wie bei Kamera und Modell, also ist die Z-Komponente gespiegelt (``1 − b``). **Tiefe**
+  (QC-03) bleibt ``planned``: nicht gemessen. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
+  ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG aus den Floats.
 * **Corona** (RTX-C4D-004): die Engine ist der Videopost 1030480 (``CORONA``;
   das c4d-Modul hat kein Symbol dafür — die ID stammt aus der Corona-Installation
   und ist am Host gemessen, ``docs/measurements/*-corona.md``). **Beauty** geht
@@ -57,18 +61,16 @@ from __future__ import annotations
 
 import os
 import re
+import struct
 import uuid
 from dataclasses import dataclass
 
 import c4d
 
-from . import host
+from . import host, pngwrite
 from .rendertaxi_client import manifest as mf
 
 PNG = mf.PNG_MEDIA_TYPE
-# 16 Bit je Kanal beim Speichern (Python SDK 2026: consts/SAVEBIT.html „Use 16-bit channels").
-# Fehlt die Konstante, gibt es nur 8 Bit — der Pass sagt es in ``note``, die Datei sagt die Wahrheit.
-SAVE_16BIT = getattr(c4d, "SAVEBIT_USE16BITCHANNELS", None)
 
 # Renderer-IDs (RDATA_RENDERENGINE). STANDARD und PREVIEWHARDWARE nennt die
 # Python-Referenz 2026, PHYSICAL und REDSHIFT drendersettings.h (C++ 2026) — ohne Zahl.
@@ -108,6 +110,10 @@ class PassSpec:
     buffer: int | None  # VPBUFFER_* des Multi-Pass-Kanals; None: im c4d-Modul nicht vorhanden
     channel: str  # wie der Kanal im Multi-Pass-Menü heißt
     color_space: str
+    channels: int = pngwrite.RGB  # Kanäle der PNG-Datei: RGB (Albedo, Normalen) oder Graustufen (Tiefe, IDs)
+    miss: float | None = None  # ein Pixel exakt (0, 0, 0) ist „kein Treffer“ und wird in der Datei dieser Wert
+    normal_space: str | None = None  # Bezugsraum eines Normalenbildes (Manifest ``normal.space``)
+    mirror_z: bool = False  # Z-Komponente spiegeln: Cinema 4D (linkshändig) → Exportraum des Manifests (x, y, −z)
     blocked_by: str | None = None
     blocked_note: str | None = None
 
@@ -119,10 +125,12 @@ PASSES: tuple[PassSpec, ...] = (
                           "(Kontrast über Front/Rear Blur), nicht normalized-linear zwischen near und far entlang "
                           "der Blickachse; die Umrechnung ist nicht belegt "
                           "(integrations/cinema-4d/docs/open-questions.md, QC-03)."),
+    # QC-04 am Host gemessen (01.10.2026, docs/measurements/2026-10-01-standard-paesse.md): die Float-Ebene ist exakt
+    # (n + 1) / 2, linear, im Weltraum in Cinema-4D-Achsen; ohne Treffer steht (0, 0, 0) — der Vertrag verlangt dort 0,5.
+    # ``normal.space: world`` ist der Raum des Manifests, in dem auch Kamera und Modell geliefert werden (Exportraum,
+    # glTF-Konvention): die Z-Komponente wird gespiegelt, im Float 1 − b (Entscheidung RTX-C4D-005).
     PassSpec("normal", "normalPass", "Normalen", getattr(c4d, "VPBUFFER_MAT_NORMAL", None), "Material Normals",
-             "non-color", blocked_by="QC-04",
-             blocked_note="Normalen werden nicht übertragen: Raum und Vorzeichenbereich nicht belegt, "
-                          "(n + 1) / 2 ist nicht zugesagt (integrations/cinema-4d/docs/open-questions.md, QC-04)."),
+             "non-color", miss=0.5, normal_space="world", mirror_z=True),
     # 2026 kennt kein VPBUFFER_ALBEDO; der Kanal „Albedo" ist VPBUFFER_REFLECTANCE_ALBEDO
     # („Reflectance Channel Diffuse Albedo", C++ 2026, group VPBUFFER).
     PassSpec("albedo", "albedoPass", "Albedo", getattr(c4d, "VPBUFFER_REFLECTANCE_ALBEDO", None), "Albedo",
@@ -418,16 +426,54 @@ def _find_layer(bitmap, buffer: int):
     return None
 
 
-def _save_pass(layer, path: str, bit_depth: int) -> bool:
-    """Eine Ebene der MultipassBitmap als PNG mit 8 oder 16 Bit je Kanal.
+def _layer_rows(layer, size: tuple[int, int], spec: PassSpec):
+    """Die Float-Werte der Ebene Zeile für Zeile (RGB je Pixel; bei Graustufen der erste Kanal).
 
-    ``BaseBitmap.Save(name, FILTER_PNG, None, savebits)``; 16 Bit über
-    ``SAVEBIT_USE16BITCHANNELS`` (Python SDK 2026, consts/SAVEBIT.html), 8 Bit
-    ohne Flag (``SAVEBIT_NONE``). Was Cinema 4D wirklich schreibt, liest danach
-    ``describe_png`` aus dem IHDR — nicht aus der Wahl.
+    ``GetPixelCnt`` mit ``COLORMODE_RGBf`` und 12 Byte je Pixel liefert die rohen Werte der
+    ``MultipassBitmap`` ohne Anzeigetransformation (am Host gemessen, 01.10.2026). ``spec.miss``: ein Pixel
+    exakt (0, 0, 0) ist „kein Treffer“ (nie ein Einheitsvektor als (n + 1) / 2) und wird in der Datei dieser
+    Wert; ``spec.mirror_z``: ``(n_z + 1) / 2`` wird ``1 − (n_z + 1) / 2`` — die Spiegelung nach dem Ersetzen,
+    ein Fehltreffer 0,5 bleibt 0,5.
     """
-    savebits = SAVE_16BIT if bit_depth == 16 and SAVE_16BIT is not None else getattr(c4d, "SAVEBIT_NONE", 0)
-    return layer.Save(path, c4d.FILTER_PNG, None, savebits) == c4d.IMAGERESULT_OK
+    width, height = size
+    buffer = bytearray(12 * width)
+    unpack = struct.Struct(f"<{3 * width}f").unpack
+    for y in range(height):
+        # Nur ein ausdrückliches ``False`` ist ein Fehlschlag: Cinema 4D 2026.3.1 gibt bei Erfolg ``None`` zurück,
+        # nicht ``True`` (am Host beobachtet, Mac-Sitzung 01.–04.10.2026). Bei ``False`` bliebe der Puffer der
+        # vorigen Zeile (oder Nullen, bei Normalen dann 0,5) — der ganze Pass wird verworfen.
+        if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
+            raise CaptureError(f"GetPixelCnt meldet für Zeile {y} einen Lesefehler.")
+        values = unpack(bytes(buffer))
+        if spec.miss is not None or spec.mirror_z:
+            red, green, blue = values[0::3], values[1::3], values[2::3]
+            if spec.miss is not None and 0.0 in red:
+                red, green, blue = zip(*[(spec.miss,) * 3 if (r == 0.0 and g == 0.0 and b == 0.0) else (r, g, b)
+                                         for r, g, b in zip(red, green, blue)])
+            if spec.mirror_z:
+                blue = tuple(1.0 - b for b in blue)
+            values = tuple(v for pixel in zip(red, green, blue) for v in pixel)
+        yield values if spec.channels == pngwrite.RGB else values[0::3]
+
+
+def _save_pass(layer, path: str, size: tuple[int, int], spec: PassSpec, bit_depth: int) -> bool:
+    """Eine Ebene der MultipassBitmap als PNG mit 8 oder 16 Bit je Kanal — aus den Floats, ohne ``layer.Save``.
+
+    Was geschrieben wird, liest danach ``describe_png`` aus dem IHDR — nicht aus der Wahl. ``False``, wenn die
+    Werte nicht zu lesen waren (auch ``GetPixelCnt`` → ``False`` in einer Zeile); die Rolle wird dann ``planned`` mit
+    Grund, und eine vorhandene Datei unter ``path`` wird entfernt.
+    """
+    try:
+        pngwrite.write_png(path, size[0], size[1], spec.channels, bit_depth,
+                           _layer_rows(layer, size, spec))
+    except Exception:  # noqa: BLE001 — ein nicht lesbarer Pass wird planned, die Aufnahme läuft weiter (Regel 3)
+        for stale in (path, path + ".part"):  # keine alte oder halbe Datei als Ergebnis
+            try:
+                os.remove(stale)
+            except FileNotFoundError:
+                pass
+        return False
+    return True
 
 
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
@@ -487,19 +533,24 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
             layer = _find_layer(layered, spec.buffer)
             relative = f"images/{spec.role}.png"
             path = os.path.join(images, f"{spec.role}.png")
-            if layer is None or not _save_pass(layer, path, bit_depth):
+            if layer is None or not _save_pass(layer, path, size, spec, bit_depth):
                 planned.append(mf.PlannedRole(spec.role, relative, PNG,
                                               f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert."))
                 continue
             image = dict(mf.describe_png(path), colorSpace=spec.color_space)
-            space = ("im Renderraum (RENDERFLAGS_OCIO_RAW_RENDERING; bei OCIO ACEScg, QC-12)"
-                     if OCIO_RAW is not None else "linear, Primärvalenzen nicht belegt (QC-12)")
+            space = ("Float der Ebene im Renderraum ohne Anzeigetransformation (RENDERFLAGS_OCIO_RAW_RENDERING; "
+                     "bei OCIO ACEScg, QC-12)" if OCIO_RAW is not None
+                     else "Float der Ebene, linear, Primärvalenzen nicht belegt (QC-12)")
             written = f"PNG {image['bitDepth']} Bit {image['channels']}"
             if image["bitDepth"] != bit_depth:
                 written += f" (gewählt: {bit_depth} Bit; die Datei entscheidet)"
             note = (f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space}, "
-                    f"nicht am Host gemessen, zweiter Renderdurchgang.")
-            files.append(mf.capture_file(path, root, spec.role, PNG, image, note))
+                    f"eigener PNG-Schreiber aus den Floats (GetPixelCnt), zweiter Renderdurchgang.")
+            if spec.normal_space:
+                note += (" Normalen im Exportraum des Manifests (wie Kamera und Modell), aus den rohen Cinema-4D-Weltnormalen "
+                         "gespiegelt (z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5 (am Host gemessen, QC-04).")
+            normal = {"space": spec.normal_space} if spec.normal_space else None
+            files.append(mf.capture_file(path, root, spec.role, PNG, image, note, normal=normal))
 
     extra = beauty_engine_note(rd[c4d.RDATA_RENDERENGINE])
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
