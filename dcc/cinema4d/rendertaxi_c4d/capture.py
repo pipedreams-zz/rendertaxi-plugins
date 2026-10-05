@@ -67,7 +67,7 @@ from dataclasses import dataclass
 
 import c4d
 
-from . import host, pngwrite
+from . import host, pngwrite, transient
 from .rendertaxi_client import manifest as mf
 
 PNG = mf.PNG_MEDIA_TYPE
@@ -91,6 +91,19 @@ MULTIPASS_RENDERERS = tuple(engine for engine in (STANDARD, PHYSICAL) if engine 
 EXTERNAL = getattr(c4d, "RENDERFLAGS_EXTERNAL", 0)
 OCIO_BAKE = getattr(c4d, "RENDERFLAGS_OCIO_BAKE_RENDERING", None)
 OCIO_RAW = getattr(c4d, "RENDERFLAGS_OCIO_RAW_RENDERING", None)
+
+# Viewport-Renderer-Videopost und seine Anzeigefilter (am Host belegt, c4dpy/GUI 2026.3.1,
+# ``docs/measurements/2026-10-01-overlays.md``). Der Videopost gehört zum RenderData-Objekt, nicht zu dessen
+# Container: die Filter wirken nur über die Voreinstellung des Dokuments selbst — transient, nur für die Dauer des
+# Renders (``transient.TransientRenderSettings``; ein Dokumentklon stürzt beim nächsten Render ab).
+# DISPLAYFILTER_SPLINE (1020, ``docs/measurements/2026-10-05-nur-geometrie.md``): Nutzerentscheidung 05.10.2026 —
+# Splines werden ausgeblendet, nicht deaktiviert; die Spline-Objekte und was aus ihnen erzeugt wird, bleiben unberührt.
+# Wirkung am Host noch nicht gemessen (Hostprobe: ``tools/measure_viewport_capture.py``).
+HARDWARE_VIDEOPOST = 300001061
+OVERLAY_FILTERS = ("DISPLAYFILTER_GRID", "DISPLAYFILTER_BASEGRID", "DISPLAYFILTER_WORLDAXIS", "DISPLAYFILTER_HORIZON",
+                   "DISPLAYFILTER_HUD", "DISPLAYFILTER_GUIDELINES", "DISPLAYFILTER_OBJECTHANDLES",
+                   "DISPLAYFILTER_CAMERA", "DISPLAYFILTER_LIGHT", "DISPLAYFILTER_NULL", "DISPLAYFILTER_OTHER",
+                   "DISPLAYFILTER_SPLINE")
 
 # Dokumentkennung: Untercontainer unter der Plugin-ID im Container des Dokuments (QC-10).
 DOCUMENT_KEY_ID = 1
@@ -278,6 +291,7 @@ def probe(doc) -> dict:
     (QC-03). Jeder Pass geht als PNG (Capture-Manifest 1.3.0).
     """
     capabilities: dict = {}
+    transient.sweep(doc)  # verwaiste Einträge einer abgestürzten Aufnahme (RTX-C4D-006)
     if render_view(doc) is None:
         capabilities["viewportCapture"] = {"state": "requires-user-action", "constraints": {"mediaTypes": [PNG]}}
     elif not viewport_renderer_available():
@@ -392,11 +406,15 @@ def color_note() -> str:
 
 
 def render_viewport(doc, root: str, size: tuple[int, int] | None, progress) -> mf.CaptureFile:
-    """Die Renderansicht über den Viewport Renderer als PNG — so, wie sie im Editor zu sehen ist.
+    """Die Renderansicht über den Viewport Renderer als PNG — **ohne Editor-Overlays** (RTX-C4D-006, #209).
 
-    Eine Kopie des Containers der aktiven Rendervoreinstellung mit
-    ``RDATA_RENDERENGINE_PREVIEWHARDWARE`` und ``RENDERFLAGS_EXTERNAL``
-    (``render_document_hardware_2026_2.py``). Das Dokument bleibt unberührt.
+    ``RenderDocument`` auf der Kopie des Containers der aktiven Rendervoreinstellung mit
+    ``RDATA_RENDERENGINE_PREVIEWHARDWARE`` und ``RENDERFLAGS_EXTERNAL`` (``render_document_hardware_2026_2.py``). Die
+    Anzeigefilter des Videoposts „Viewport Renderer“ (``VP_PREVIEWHARDWARE_DISPLAYFILTER_*``) gehören zum RenderData-
+    **Objekt**: sie werden mit ``transient.TransientRenderSettings`` nur für die Dauer des synchronen Renders im Dokument
+    auf Aus gesetzt und im ``finally`` exakt zurückgesetzt (kein Dokumentklon: das Verwerfen eines Klons stürzt den
+    nächsten Viewport-Render ab, ``docs/measurements/2026-10-04-klon-absturz.md``). Fehlen die Filter oder schlägt das
+    Setzen fehl, bleibt es beim bisherigen Weg; ``note`` sagt dann „Overlays möglich“ mit Grund.
     """
     if render_view(doc) is None:
         raise CaptureError("Keine Ansicht — die Viewport-Aufnahme braucht eine.")
@@ -406,14 +424,31 @@ def render_viewport(doc, root: str, size: tuple[int, int] | None, progress) -> m
     images = os.path.join(root, "images")
     os.makedirs(images, exist_ok=True)
     path = os.path.join(images, "viewport.png")
+    values = {symbol: False for symbol in (getattr(c4d, "VP_PREVIEWHARDWARE_" + name, None) for name in OVERLAY_FILTERS)
+              if symbol is not None}
     data = doc.GetActiveRenderData().GetDataInstance().GetClone(c4d.COPYFLAGS_NONE)
     data[c4d.RDATA_RENDERENGINE] = VIEWPORT_RENDERER
     _prepare_data(data, size)
     bitmap = _bitmap(size)
-    _render(doc, data, bitmap, progress, "Viewport rendern")
+    swept, problem, restore_problems = 0, None, []
+    with transient.TransientRenderSettings(doc) as settings:
+        swept = settings.swept
+        if not values:
+            problem = "Anzeigefilter des Viewport Renderers fehlen in diesem Cinema 4D"
+        else:
+            try:
+                settings.videopost(HARDWARE_VIDEOPOST, values)
+            except Exception as error:  # noqa: BLE001 — Regel 3: die Aufnahme läuft dann wie bisher
+                problem = f"Anzeigefilter nicht setzbar ({type(error).__name__})"
+        _render(doc, data, bitmap, progress, "Viewport rendern")
+    restore_problems = settings.problems
     _save_png(bitmap, path)
+    overlays = ("Overlays aus (Anzeigefilter des Viewport Renderers nur für den Render abgeschaltet und zurückgesetzt)"
+                if problem is None else f"Overlays möglich ({problem})")
+    extra = f"; {swept} verwaiste rendertaxi-Einträge aus der Rendervoreinstellung entfernt" if swept else ""
+    extra += f"; Zurücksetzen meldete: {', '.join(restore_problems)}" if restore_problems else ""
     note = (f"Viewport Renderer (RenderDocument, RDATA_RENDERENGINE_PREVIEWHARDWARE, RENDERFLAGS_EXTERNAL, "
-            f"Kopie der Rendervoreinstellung), {view_name(doc)}; {color_note()}.")
+            f"Kopie der Rendervoreinstellung), {view_name(doc)}; {overlays}{extra}; {color_note()}.")
     return mf.capture_file(path, root, "viewport", PNG, mf.describe_png(path), note)
 
 
