@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "rtx/SavedViews.hpp"
+
 namespace rtxaddon {
 
 struct HostVersion {
@@ -67,6 +69,38 @@ SourceView ReadCurrentView ();
  * Der Aufruf gehört in `Initialize`; er meldet das Add-on beim Navigator an.
  */
 long InstallViewTracking ();
+
+/**
+ * Die gespeicherten 3D-Ansichten beider Ausschnittsmappen (öffentlich, eigene),
+ * in der Reihenfolge der Mappe, mit Ordnerpfad und GUID (RTX-A-009, Q-13).
+ * Erkannt wird ein Eintrag am Fenster, das er öffnet: `db.typeID ==
+ * APIWind_3DModelID`. ``diagnostic`` sammelt auf Wunsch jeden Eintrag mit Typ
+ * und Datenbank — für das Messprotokoll.
+ */
+std::vector<rtx::SavedView> ListSaved3DViews (std::vector<std::string>* diagnostic = nullptr);
+
+/** Der Quellschlüssel einer gespeicherten Ansicht: `archicad:view:<guid>` (wie beim Öffnen aus der Mappe). */
+std::string ViewKeyForGuid (const std::string& guidText);
+
+/**
+ * „Aktuelle Modellansicht" gewählt: der zuletzt geöffnete Ausschnitt gilt nicht
+ * mehr — kein Ansichtsschlüssel, Namensvorschlag aus Projekt und Fensterart.
+ */
+void ForgetOpenedView ();
+
+/** GUID des zuletzt aus der Mappe geöffneten Ausschnitts, leer ohne. */
+std::string OpenedViewGuid ();
+
+/** Wahr einmal nach jeder Änderung der Mappe (neu, geändert, gelöscht) — dann neu lesen. */
+bool ConsumeViewMapChanged ();
+
+/**
+ * Bringt die Ansicht ins 3D-Fenster wie ein Doppelklick in der Mappe
+ * (`ACAPI_View_GoToView`) und merkt sie als offenen Ausschnitt: Name und
+ * Schlüssel `archicad:view:<guid>` gelten ab jetzt für das Fenster. Leer bei
+ * Erfolg, sonst ein Satz für die Palette.
+ */
+std::string OpenSavedView (const rtx::SavedView& view);
 
 /**
  * Die **Rendering-Szene**, und damit der Bildausschnitt, den Archicad im

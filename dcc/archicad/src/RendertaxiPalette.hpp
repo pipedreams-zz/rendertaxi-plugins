@@ -128,7 +128,10 @@ private:
 		ResultText3Id = 37,
 		ProgressText3Id = 38,
 		InfoLine7Id = 39,
-		InfoLine8Id = 40
+		InfoLine8Id = 40,
+		ViewLabelId = 41,
+		ViewPopUpId = 42,
+		ViewRefreshButtonId = 43
 	};
 
 	RendertaxiPalette ();
@@ -148,6 +151,25 @@ private:
 	void StartLoadViewpoints (const std::string& projectId);
 	/** Merkt im Leerlauf, dass die Liste nicht mehr zum gewählten Projekt passt. */
 	void RefreshViewpointList ();
+	/**
+	 * Liest die gespeicherten 3D-Ansichten der Ausschnittsmappe neu und baut
+	 * die Auswahl „Ansicht" auf (RTX-A-009). Die gewählte Ansicht wird über
+	 * ihre GUID wiedergefunden; fehlt sie, gilt wieder die aktuelle
+	 * Modellansicht, und die Palette sagt das. Mit `listEntries` steht jeder
+	 * Eintrag der Mappe im Protokoll (Q-13) — nur auf „Aktualisieren", sonst
+	 * wüchse das Protokoll mit jeder Änderung der Mappe um Hunderte Zeilen.
+	 */
+	void RefreshSavedViews (bool listEntries = false);
+	/** Reagiert auf eine Wahl in „Ansicht" — vom Nutzer oder vom Wiederfinden. */
+	void OnViewChosen (std::size_t index);
+	/** Die gewählte gespeicherte Ansicht, oder `nullptr` für die aktuelle Modellansicht. */
+	const rtx::SavedView* SelectedSavedView () const;
+	/**
+	 * Steht zur gewählten Ansicht eine bestätigte Zuordnung, wechselt die
+	 * Palette sichtbar auf „Bestehenden aktualisieren" — einmal je Ansicht und
+	 * Blickpunkt, damit eine eigene Wahl des Nutzers stehen bleibt.
+	 */
+	void ProposeUpdateForSelectedView ();
 	/** Woher das Bild kommt: aus dem aktiven Fenster oder aus dem Rendering. */
 	enum class CaptureSource { CurrentWindow, Rendering };
 	void StartCapture (CaptureSource source = CaptureSource::CurrentWindow);
@@ -250,6 +272,11 @@ private:
 	DG::LeftText resultText3;
 	DG::Button openButton;
 
+	/** „Ansicht": aktuelle Modellansicht oder eine gespeicherte 3D-Ansicht. */
+	DG::LeftText viewLabel;
+	DG::PopUp viewPopUp;
+	DG::Button viewRefreshButton;
+
 	std::unique_ptr<rtx::HttpClient> http;
 	std::unique_ptr<rtx::TokenStore> tokens;
 	std::unique_ptr<rtx::PluginApiClient> api;
@@ -298,9 +325,22 @@ private:
 	std::string proposedViewpointId;
 	bool proposedViewpointPending = false;
 
+	/** Die zuletzt gelesenen gespeicherten 3D-Ansichten und ihre Zeilen in „Ansicht". */
+	std::vector<rtx::SavedView> savedViews;
+	std::vector<rtx::ViewChoice> viewChoices;
+	/** Gewählte gespeicherte Ansicht; leer heißt „Aktuelle Modellansicht". */
+	std::string selectedViewGuid;
+	std::string selectedViewName;
+	/** Zuletzt in „Ansicht" gesehene Zeile (1-basiert, wie DG zählt). */
+	short shownViewIndex = 1;
+	/** Ansicht und Blickpunkt, für die der Wechsel auf „aktualisieren" schon geschah. */
+	std::string proposedUpdateFor;
+
 	static GS::Ref<RendertaxiPalette> instance;
 	/** Setzt die Projektbenachrichtigung; der Leerlauf liest und löscht sie. */
 	static std::atomic<bool> projectChanged;
+	/** Ein Projektwechsel macht die Liste der gespeicherten Ansichten ungültig. */
+	static std::atomic<bool> savedViewsStale;
 };
 
 } // namespace rtxaddon

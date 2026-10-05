@@ -98,10 +98,12 @@ void SharedState::SetResult (const std::string& result, const std::string& url)
 
 GS::Ref<RendertaxiPalette> RendertaxiPalette::instance;
 std::atomic<bool> RendertaxiPalette::projectChanged {true};
+std::atomic<bool> RendertaxiPalette::savedViewsStale {true};
 
 void RendertaxiPalette::NoteProjectChanged ()
 {
 	projectChanged.store (true);
+	savedViewsStale.store (true);
 }
 
 RendertaxiPalette::RendertaxiPalette () :
@@ -145,7 +147,10 @@ RendertaxiPalette::RendertaxiPalette () :
 	progressText (GetReference (), ProgressTextId),
 	resultGroup (GetReference (), ResultGroupId),
 	resultText (GetReference (), ResultTextId),
-	openButton (GetReference (), OpenButtonId)
+	openButton (GetReference (), OpenButtonId),
+	viewLabel (GetReference (), ViewLabelId),
+	viewPopUp (GetReference (), ViewPopUpId),
+	viewRefreshButton (GetReference (), ViewRefreshButtonId)
 {
 	rtx::SetLogFile (LogPath ());
 
@@ -188,6 +193,7 @@ RendertaxiPalette::RendertaxiPalette () :
 	// Ansichtswechsel.
 	nameEdit.Attach (*this);
 	openButton.Attach (*this);
+	viewRefreshButton.Attach (*this);
 	BeginEventProcessing ();
 	EnableIdleEvent ();
 
@@ -215,6 +221,10 @@ RendertaxiPalette::RendertaxiPalette () :
 	} else {
 		shared.Set ("Keine Keychain verfügbar — Anmeldung nicht möglich.", {});
 	}
+	RefreshSavedViews ();
+	// Gerade gelesen: die beiden Merker vom Start nicht noch einmal einlösen.
+	ConsumeViewMapChanged ();
+	savedViewsStale.store (false);
 	RefreshSourceView ();
 	RefreshFromState ();
 }
@@ -822,9 +832,33 @@ void RendertaxiPalette::PanelIdle (const DG::PanelIdleEvent&)
 	// Zustand zu schreiben ist billig — ein ACAPI-Aufruf je Mausbewegung wäre
 	// es nicht. Die Quellansicht wird deshalb höchstens zweimal je Sekunde
 	// erfragt.
+	// Die Mappe hat sich geändert (neu, umbenannt, gelöscht) oder das Projekt
+	// ist ein anderes: die Liste neu lesen. Das Öffnen allein zählt nicht.
+	if (ConsumeViewMapChanged () || savedViewsStale.exchange (false)) RefreshSavedViews ();
+	const short chosen = viewPopUp.GetSelectedItem ();
+	if (chosen >= 1 && chosen != shownViewIndex) {
+		shownViewIndex = chosen;
+		OnViewChosen (static_cast<std::size_t> (chosen - 1));
+	}
+	// **Ein Doppelklick in der Mappe ist auch eine Wahl.** Öffnet jemand eine
+	// gespeicherte 3D-Ansicht dort, folgt die Auswahl — sonst stünde in der
+	// Palette eine andere Ansicht als im Fenster.
+	const std::string opened = OpenedViewGuid ();
+	if (!opened.empty () && opened != selectedViewGuid) {
+		for (std::size_t i = 1; i < viewChoices.size (); ++i) {
+			if (viewChoices[i].guid != opened) continue;
+			selectedViewGuid = viewChoices[i].guid;
+			selectedViewName = viewChoices[i].name;
+			shownViewIndex = static_cast<short> (i + 1);
+			viewPopUp.SelectItem (shownViewIndex);
+			break;
+		}
+	}
+
 	const auto now = std::chrono::steady_clock::now ();
 	if (now - lastSourceViewCheck > std::chrono::milliseconds (500)) {
 		lastSourceViewCheck = now;
+		ProposeUpdateForSelectedView ();
 		RefreshSourceView ();
 	}
 	RefreshProjectList ();
@@ -850,6 +884,134 @@ void RendertaxiPalette::ButtonClicked (const DG::ButtonClickEvent& ev)
 	else if (ev.GetSource () == &captureButton) StartCapture ();
 	else if (ev.GetSource () == &cancelButton) CancelRunningJob ();
 	else if (ev.GetSource () == &openButton) OpenResultInBrowser ();
+	else if (ev.GetSource () == &viewRefreshButton) RefreshSavedViews (true);
+}
+
+// --- Gespeicherte Ansichten (RTX-A-009) --------------------------------------
+
+void RendertaxiPalette::RefreshSavedViews (bool listEntries)
+{
+	std::vector<std::string> diagnostic;
+	savedViews = ListSaved3DViews (&diagnostic);
+	// Q-13: was die Mappe liefert, steht im Protokoll — Name, Art, Fenstertyp.
+	rtx::LogLine ("Ausschnittsmappe: " + std::to_string (savedViews.size ()) +
+				  " gespeicherte 3D-Ansicht(en), " + std::to_string (diagnostic.size ()) +
+				  " Einträge gesehen.");
+	if (listEntries)
+		for (const std::string& line : diagnostic) rtx::LogLine ("  " + line);
+
+	viewChoices = rtx::BuildViewChoices (savedViews);
+	const rtx::Reselection again =
+		rtx::Reselect (viewChoices, selectedViewGuid, selectedViewName);
+
+	while (viewPopUp.GetItemCount () > 0) viewPopUp.DeleteItem (1);
+	for (std::size_t i = 0; i < viewChoices.size (); ++i) {
+		viewPopUp.AppendItem ();
+		viewPopUp.SetItemText (static_cast<short> (i + 1), U (Shorten (viewChoices[i].label, 44)));
+	}
+	shownViewIndex = static_cast<short> (again.index + 1);
+	viewPopUp.SelectItem (shownViewIndex);
+
+	if (again.index == 0) {
+		// Die gemerkte Ansicht ist weg: zurück zur aktuellen Modellansicht.
+		if (!selectedViewGuid.empty ()) ForgetOpenedView ();
+		selectedViewGuid.clear ();
+		selectedViewName.clear ();
+	} else {
+		// Umbenannt bleibt gewählt — mit dem neuen Namen.
+		selectedViewName = viewChoices[again.index].name;
+	}
+	if (!again.hint.empty ()) shared.SetProgress (again.hint);
+}
+
+const rtx::SavedView* RendertaxiPalette::SelectedSavedView () const
+{
+	if (selectedViewGuid.empty ()) return nullptr;
+	for (const rtx::SavedView& view : savedViews)
+		if (view.guid == selectedViewGuid) return &view;
+	return nullptr;
+}
+
+void RendertaxiPalette::OnViewChosen (std::size_t index)
+{
+	if (index >= viewChoices.size ()) return;
+	if (index == 0) {
+		// „Aktuelle Modellansicht": das Fenster, wie es ist — ohne Ansichtsschlüssel.
+		selectedViewGuid.clear ();
+		selectedViewName.clear ();
+		ForgetOpenedView ();
+		nameEditedByUser = false;
+		shownSuggestion.clear ();
+		lastSourceViewKey.clear ();
+		return;
+	}
+	selectedViewGuid = viewChoices[index].guid;
+	selectedViewName = viewChoices[index].name;
+	const rtx::SavedView* view = SelectedSavedView ();
+	if (view == nullptr) return;
+
+	// Gleich öffnen, wie ein Doppelklick in der Mappe: der Nutzer sieht vor
+	// der Übernahme, was aufgenommen wird.
+	const std::string error = OpenSavedView (*view);
+	if (!error.empty ()) {
+		shared.SetProgress (error);
+		return;
+	}
+	// Der Name ist der Name der Ansicht — bis jemand selbst tippt.
+	nameEditedByUser = false;
+	shownSuggestion.clear ();
+	lastSourceViewKey.clear ();
+
+	proposedUpdateFor.clear ();
+	createRadio.Select ();
+	ProposeUpdateForSelectedView ();
+}
+
+void RendertaxiPalette::ProposeUpdateForSelectedView ()
+{
+	// **Die zweite Übernahme aktualisiert denselben Blickpunkt.** Gibt es zu
+	// der gewählten Ansicht eine bestätigte Zuordnung, steht die Palette
+	// sichtbar auf „Bestehenden aktualisieren" mit diesem Blickpunkt — auch
+	// gleich nach der ersten Übernahme. Am Host (05.10.2026) geschah das nur
+	// beim Wechsel der Auswahl; dieselbe Ansicht erneut zu wählen meldet DG
+	// nicht. Das ist eine Folge der ausdrücklichen Wahl der Ansicht, kein
+	// stilles Anwenden (Festlegung 5): der Wechsel steht in der Palette.
+	if (selectedViewGuid.empty () || workerRunning.load ()) return;
+	RefreshProjectCache ();
+	const rtx::LastAssignment remembered =
+		store->FindAssignment (cachedLocalProjectKey, ViewKeyForGuid (selectedViewGuid));
+	if (remembered.viewpointId.empty ()) return;
+
+	// **Erst auflösen, dann umschalten** (F-01 an PR #259). Der Update-Modus
+	// gilt dem Blickpunkt, der in der Auswahl steht. Gehört die Zuordnung zu
+	// einem anderen Projekt oder fehlt ihr Blickpunkt in dessen Liste, bliebe
+	// dort ein fremder Blickpunkt gewählt — und würde still aktualisiert.
+	std::string selectedProjectId;
+	std::string listProjectId;
+	std::vector<std::string> listIds;
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		const short index = projectPopUp.GetSelectedItem ();
+		if (index >= 1 && static_cast<std::size_t> (index) <= shared.projects.size ())
+			selectedProjectId = shared.projects[static_cast<std::size_t> (index - 1)].id;
+		listProjectId = shared.viewpointsProjectId;
+		for (const rtx::ViewpointSummary& viewpoint : shared.viewpoints)
+			listIds.push_back (viewpoint.id);
+	}
+	const std::string marker =
+		selectedViewGuid + "|" + selectedProjectId + "|" + remembered.viewpointId;
+	if (marker == proposedUpdateFor) return;
+	const rtx::UpdateProposal proposal = rtx::ProposeUpdate (
+		remembered.projectId, remembered.viewpointId, selectedProjectId, listProjectId, listIds);
+	// `Wait` und `None` lassen den Modus, wie er ist; der Leerlauf fragt erneut.
+	if (proposal.action != rtx::UpdateProposal::Action::Select) return;
+	const short item = static_cast<short> (proposal.index + 1);
+	if (viewpointPopUp.GetItemCount () < item) return;
+	viewpointPopUp.SelectItem (item);
+	proposedUpdateFor = marker;
+	updateRadio.Select ();
+	proposedViewpointId = remembered.viewpointId;
+	proposedViewpointPending = false;
 }
 
 void RendertaxiPalette::CancelRunningJob ()
@@ -1274,6 +1436,16 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	if (workerRunning.load ()) return;
 
 	// --- 1. Alles, was Archicad braucht, im Hauptfaden erledigen -------------
+	// Eine gewählte gespeicherte Ansicht wird **vor** der Aufnahme noch einmal
+	// geöffnet: aufgenommen wird die Ansicht, nicht das, was seither im
+	// Fenster gedreht wurde.
+	if (const rtx::SavedView* saved = SelectedSavedView ()) {
+		const std::string error = OpenSavedView (*saved);
+		if (!error.empty ()) {
+			shared.SetProgress (error);
+			return;
+		}
+	}
 	const bool fromRendering = source == CaptureSource::Rendering;
 	const SourceView view = SourceViewFor (source);
 	if (!view.capturable) {

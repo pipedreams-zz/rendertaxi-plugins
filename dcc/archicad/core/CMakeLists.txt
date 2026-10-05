@@ -20,6 +20,7 @@ add_library (rtxcore STATIC
 	src/Log.cpp
 	src/PaletteText.cpp
 	src/Platform.cpp
+	src/SavedViews.cpp
 	src/PluginApi.cpp
 	src/Sha256.cpp
 	src/TokenStore.cpp

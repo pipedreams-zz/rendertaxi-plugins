@@ -6,6 +6,7 @@ add_executable (rtxcore-tests
 	TransferTest.cpp
 	PaletteTextTest.cpp
 	PlatformTest.cpp
+	SavedViewsTest.cpp
 )
 
 target_link_libraries (rtxcore-tests PRIVATE rtxcore)

@@ -48,7 +48,7 @@
 
 /* --- Palette ------------------------------------------------------------- */
 
-'GDLG'  32500    Palette | topCaption | close   0   0  424  818  "rendertaxi.ai"  {
+'GDLG'  32500    Palette | topCaption | close   0   0  424  846  "rendertaxi.ai"  {
 /* [  1] */ GroupBox             8    6  408  118  LargePlain  Primary  "Verbindung"
 /* [  2] */ LeftText            20   28   76   20  SmallPlain  vCenter  "Server"
 /* [  3] */ TextEdit           100   26  308   22  SmallPlain  200
@@ -67,28 +67,28 @@
 /* [ 15] */ PopupControl       100  254  308   22  80  64
 /* [ 16] */ CheckBox            38  280  370   18  SmallPlain  "Rahmen an Aufnahme anpassen"
 
-/* [ 17] */ GroupBox             8  358  408  332  LargePlain  Primary  "Bild übernehmen"
-/* [ 18] */ LeftText            20  380  388   18  SmallPlain  vCenter  ""
-/* [ 19] */ Button              20  550  250   24  LargePlain  "Aktuelle Ansicht übernehmen"
-/* [ 20] */ Button             280  550  128   24  LargePlain  "Abbrechen"
-/* [ 21] */ LeftText            20  634  388   18  SmallPlain  vCenter  ""
+/* [ 17] */ GroupBox             8  358  408  360  LargePlain  Primary  "Bild übernehmen"
+/* [ 18] */ LeftText            20  408  388   18  SmallPlain  vCenter  ""
+/* [ 19] */ Button              20  578  250   24  LargePlain  "Aktuelle Ansicht übernehmen"
+/* [ 20] */ Button             280  578  128   24  LargePlain  "Abbrechen"
+/* [ 21] */ LeftText            20  662  388   18  SmallPlain  vCenter  ""
 
-/* [ 22] */ GroupBox             8  696  408  114  LargePlain  Primary  "Im Browser öffnen"
-/* [ 23] */ LeftText            20  718  388   18  SmallPlain  vCenter  ""
-/* [ 24] */ Button              20  776  250   24  LargePlain  "Blickpunkt im Browser öffnen"
+/* [ 22] */ GroupBox             8  724  408  114  LargePlain  Primary  "Im Browser öffnen"
+/* [ 23] */ LeftText            20  746  388   18  SmallPlain  vCenter  ""
+/* [ 24] */ Button              20  804  250   24  LargePlain  "Blickpunkt im Browser öffnen"
 
 /* Die Reihenfolge **im Text** vergibt die Kennungen der Dialogelemente, nicht
    der Kommentar davor. Ein neues Element kommt deshalb ans Ende, auch wenn es
    in der Anzeige weiter oben steht — sonst rutschten 21 bis 24 um eins. */
-/* [ 25] */ Button              20  606  388   24  LargePlain  "Angefangene Übernahme verwerfen"
+/* [ 25] */ Button              20  634  388   24  LargePlain  "Angefangene Übernahme verwerfen"
 
 /* Die Angaben zum Ausschnitt stehen **im Dialog**, nicht im Tooltip: eine
    Zeile, die nur beim Überfahren lesbar ist, ist für einen Abgleich vor der
    Übernahme wertlos (Befund vom 24.09.2026). */
-/* [ 26] */ LeftText            20  398  388   18  SmallPlain  vCenter  ""
-/* [ 27] */ LeftText            20  416  388   18  SmallPlain  vCenter  ""
-/* [ 28] */ LeftText            20  434  388   18  SmallPlain  vCenter  ""
-/* [ 29] */ LeftText            20  452  388   18  SmallPlain  vCenter  ""
+/* [ 26] */ LeftText            20  426  388   18  SmallPlain  vCenter  ""
+/* [ 27] */ LeftText            20  444  388   18  SmallPlain  vCenter  ""
+/* [ 28] */ LeftText            20  462  388   18  SmallPlain  vCenter  ""
+/* [ 29] */ LeftText            20  480  388   18  SmallPlain  vCenter  ""
 
 
 /* Das fertige Rendering als zweite Quelle. Es hat einen **eigenen** Knopf,
@@ -96,18 +96,18 @@
    sobald das Bildfenster vorn steht, und dann ist dort nichts mehr zu
    bedienen. Der Knopf holt das Bild, ohne dass der Nutzer das Fenster
    wechseln muss (Befund vom 24.09.2026). */
-/* [ 30] */ Button              20  578  388   24  LargePlain  "Rendern und übernehmen"
+/* [ 30] */ Button              20  606  388   24  LargePlain  "Rendern und übernehmen"
 
 /* Zwei Zeilen Reserve: die Angaben werden **umgebrochen**, nicht gekürzt.
    Sie stehen in der Anzeige über den Knöpfen, im Text aber hinter ihnen —
    die Reihenfolge im Text vergibt die Kennungen. */
-/* [ 31] */ LeftText            20  470  388   18  SmallPlain  vCenter  ""
-/* [ 32] */ LeftText            20  488  388   18  SmallPlain  vCenter  ""
+/* [ 31] */ LeftText            20  498  388   18  SmallPlain  vCenter  ""
+/* [ 32] */ LeftText            20  516  388   18  SmallPlain  vCenter  ""
 
 /* Zweite Zeile für Fortschritt und Ergebnis. Auch hier gilt: umbrechen, nicht
    abschneiden — ein Satz, der nur im Tooltip steht, ist keine Meldung. */
-/* [ 33] */ LeftText            20  670  388   18  SmallPlain  vCenter  ""
-/* [ 34] */ LeftText            20  736  388   18  SmallPlain  vCenter  ""
+/* [ 33] */ LeftText            20  698  388   18  SmallPlain  vCenter  ""
+/* [ 34] */ LeftText            20  764  388   18  SmallPlain  vCenter  ""
 
 /* Die Einstellung „Rahmengröße" (§7.2, `target.viewpoint.size`). Sie steht bei
    Projekt und Blickpunkt, weil sie zum **Ziel** gehört und nicht zur Aufnahme —
@@ -117,17 +117,24 @@
 
 /* Dritte Zeile für das Ergebnis: „Neuer Blickpunkt …, Aufnahme … Pixel, Rahmen
    wird angepasst" braucht sie, und abgeschnitten ist keine Meldung. */
-/* [ 37] */ LeftText            20  754  388   18  SmallPlain  vCenter  ""
+/* [ 37] */ LeftText            20  782  388   18  SmallPlain  vCenter  ""
 
 /* Dritte Fortschrittszeile — aus demselben Grund wie die dritte Ergebniszeile. */
-/* [ 38] */ LeftText            20  652  388   18  SmallPlain  vCenter  ""
+/* [ 38] */ LeftText            20  680  388   18  SmallPlain  vCenter  ""
 
 /* Siebte und achte Infozeile (Issue #88, Punkt 17). Sechs reichten nicht: die
    Zeile „Zielgröße: …" stand an fünfter oder sechster Stelle, und ihr Umbruch
    fiel hinter die letzte Zeile — sie wirkte rechts abgeschnitten. Die Knöpfe
    darunter rücken dafür um zwei Zeilen nach unten. */
-/* [ 39] */ LeftText            20  506  388   18  SmallPlain  vCenter  ""
-/* [ 40] */ LeftText            20  524  388   18  SmallPlain  vCenter  ""
+/* [ 39] */ LeftText            20  534  388   18  SmallPlain  vCenter  ""
+/* [ 40] */ LeftText            20  552  388   18  SmallPlain  vCenter  ""
+/* Die gespeicherten 3D-Ansichten der Ausschnittsmappe als Auswahl (RTX-A-009, #255):
+   zuoberst „Aktuelle Modellansicht", dann die Ansichten mit Ordnerpfad. Sie
+   stehen **oben** im Bereich „Bild übernehmen", im Text aber am Ende — die
+   Reihenfolge im Text vergibt die Kennungen. */
+/* [ 41] */ LeftText            20  380   60   20  SmallPlain  vCenter  "Ansicht"
+/* [ 42] */ PopupControl        84  378  228   22  80  64
+/* [ 43] */ Button             318  377   90   24  SmallPlain  "Aktualisieren"
 }
 
 'DLGH'  32500  DLG_32500_rendertaxi_Palette {
@@ -171,4 +178,7 @@
 38	""	LeftText_16
 39	""	LeftText_17
 40	""	LeftText_18
+41	""	LeftText_view
+42	""	PopUp_view
+43	""	Button_view
 }

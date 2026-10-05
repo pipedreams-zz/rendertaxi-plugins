@@ -8,7 +8,10 @@
 #endif
 
 #include "rtx/Ids.hpp"
+#include "rtx/Log.hpp"
 #include "rtx/Sha256.hpp"
+
+#include <atomic>
 
 namespace rtxaddon {
 namespace {
@@ -93,24 +96,54 @@ OpenedView& LastOpenedView ()
 }
 
 /**
+ * Der Eintrag, den der Nutzer mit „Aktuelle Modellansicht" ausdrücklich
+ * verlassen hat. Archicad meldet ihn erneut als „geöffnet", sobald das
+ * 3D-Fenster wieder angefasst wird (Host, 05.10.2026) — die Palette sprang
+ * dann zurück auf die gespeicherte Ansicht. Diese Meldung wird überhört, bis
+ * ein **anderer** Eintrag geöffnet wird oder die Palette selbst öffnet.
+ */
+std::string& LeftViewGuid ()
+{
+	static std::string value;
+	return value;
+}
+
+/**
  * Archicad meldet hier jeden Ausschnitt, den jemand öffnet. Gespeichert wird
  * **Name und Datenbank**; die Datenbank entscheidet später, ob der Eintrag
  * überhaupt zum aktuellen Fenster gehört.
  */
+/** Gesetzt, wenn ein Eintrag der Ausschnittsmappe neu, geändert oder gelöscht wurde. */
+std::atomic<bool>& ViewMapChanged ()
+{
+	static std::atomic<bool> value {true};
+	return value;
+}
+
 GSErrCode ViewEventHandler (const API_NotifyViewEventType* viewEvent)
 {
 	if (viewEvent == nullptr) return NoError;
-	if (viewEvent->notifID != APINotifyView_Opened) return NoError;
+	if (viewEvent->notifID != APINotifyView_Opened) {
+		// Neu, geändert, gelöscht: die Auswahl der gespeicherten Ansichten ist veraltet (RTX-A-009).
+		ViewMapChanged ().store (true);
+		return NoError;
+	}
 
 	API_NavigatorItem item = {};
 	item.guid = viewEvent->itemGuid;
 	item.mapId = viewEvent->mapId;
 	if (ACAPI_Navigator_GetNavigatorItem (&viewEvent->itemGuid, &item) != NoError) return NoError;
 
+	const std::string guidText = Utf8 (APIGuid2GSGuid (item.guid).ToUniString ());
+	rtx::LogLine ("Ausschnitt gemeldet als geöffnet: " + Utf8 (item.uName) +
+				  (guidText == LeftViewGuid () ? " (verlassen, überhört)" : ""));
+	if (guidText == LeftViewGuid ()) return NoError;
+	LeftViewGuid ().clear ();
+
 	OpenedView& last = LastOpenedView ();
 	last.name = Utf8 (item.uName);
 	if (last.name.empty ()) last.name = Utf8 (item.uAutoTextedName);
-	last.guidText = Utf8 (APIGuid2GSGuid (item.guid).ToUniString ());
+	last.guidText = guidText;
 	last.database = item.db.databaseUnId.elemSetId;
 	last.known = !last.name.empty ();
 	return NoError;
@@ -120,6 +153,8 @@ GSErrCode ViewEventHandler (const API_NotifyViewEventType* viewEvent)
 
 long InstallViewTracking ()
 {
+	// RTX-A-009: dazu neu, geändert und gelöscht — die Auswahl der gespeicherten
+	// 3D-Ansichten folgt der Mappe. Der Handler unterscheidet die Fälle selbst.
 	// Nur „geöffnet": eingefügte, geänderte oder gelöschte Einträge sagen
 	// nichts darüber, was gerade zu sehen ist.
 	//
@@ -127,10 +162,14 @@ long InstallViewTracking ()
 	// (`API_PublicViewMap`) und die persönliche (`API_MyViewMap`); ein
 	// Ausschnitt kann aus jeder von beiden geöffnet werden.
 	const GSErrCode publicMap =
-		ACAPI_Notification_CatchViewEvent (APINotifyView_Opened, API_PublicViewMap,
+		ACAPI_Notification_CatchViewEvent (APINotifyView_Opened | APINotifyView_Inserted | APINotifyView_Modified |
+											   APINotifyView_Deleted,
+										   API_PublicViewMap,
 										   ViewEventHandler);
 	const GSErrCode myMap =
-		ACAPI_Notification_CatchViewEvent (APINotifyView_Opened, API_MyViewMap, ViewEventHandler);
+		ACAPI_Notification_CatchViewEvent (APINotifyView_Opened | APINotifyView_Inserted | APINotifyView_Modified |
+											   APINotifyView_Deleted,
+										   API_MyViewMap, ViewEventHandler);
 	return publicMap != NoError ? publicMap : myMap;
 }
 
@@ -362,6 +401,116 @@ std::string ReadOrCreateProjectKey ()
 
 	if (outer != NoError || created != NoError) return {};
 	return key;
+}
+
+
+// --- Gespeicherte 3D-Ansichten der Ausschnittsmappe (RTX-A-009, #255) -------
+
+namespace {
+
+void CollectViews (API_NavigatorItem& parent, API_NavigatorMapID map, std::vector<std::string>& folders,
+				   std::vector<rtx::SavedView>& views, std::vector<std::string>* diagnostic, int depth)
+{
+	GS::Array<API_NavigatorItem> children;
+	parent.mapId = map;
+	if (depth > 32 || ACAPI_Navigator_GetNavigatorChildrenItems (&parent, &children) != NoError) return;
+	for (API_NavigatorItem& child : children) {
+		std::string name = Utf8 (child.uName);
+		if (name.empty ()) name = Utf8 (child.uAutoTextedName);
+		const bool is3D = child.db.typeID == APIWind_3DModelID;
+		if (diagnostic != nullptr)
+			diagnostic->push_back (std::string (depth * 2, ' ') + name + " | itemType " +
+								   std::to_string (static_cast<int> (child.itemType)) + " | db.typeID " +
+								   std::to_string (static_cast<int> (child.db.typeID)) +
+								   (is3D ? " | 3D" : ""));
+		if (is3D) {
+			rtx::SavedView view;
+			view.guid = Utf8 (APIGuid2GSGuid (child.guid).ToUniString ());
+			view.name = name;
+			view.folders = folders;
+			view.personal = map == API_MyViewMap;
+			views.push_back (view);
+		}
+		// Ordner (und jeder Eintrag mit Kindern) gehen in die Tiefe; ihr Name wird Teil des Pfads.
+		folders.push_back (name);
+		CollectViews (child, map, folders, views, diagnostic, depth + 1);
+		folders.pop_back ();
+	}
+}
+
+} // namespace
+
+std::vector<rtx::SavedView> ListSaved3DViews (std::vector<std::string>* diagnostic)
+{
+	std::vector<rtx::SavedView> views;
+	for (const API_NavigatorMapID map : {API_PublicViewMap, API_MyViewMap}) {
+		API_NavigatorSet set = {};
+		set.mapId = map;
+		if (ACAPI_Navigator_GetNavigatorSet (&set) != NoError) {
+			if (diagnostic != nullptr)
+				diagnostic->push_back (std::string ("Mappe ") + std::to_string (static_cast<int> (map)) +
+									   ": nicht lesbar");
+			continue;
+		}
+		if (diagnostic != nullptr)
+			diagnostic->push_back (std::string ("Mappe ") + std::to_string (static_cast<int> (map)) + " „" +
+								   Utf8 (set.name) + "“");
+		API_NavigatorItem root = {};
+		root.guid = set.rootGuid;
+		std::vector<std::string> folders;
+		CollectViews (root, map, folders, views, diagnostic, 0);
+	}
+	// Umbenannt in der Mappe: der Name des offenen Ausschnitts folgt — sonst
+	// trüge der nächste Blickpunkt noch den alten (Host, 05.10.2026: „Süd"
+	// statt „Süd 2").
+	OpenedView& last = LastOpenedView ();
+	for (const rtx::SavedView& view : views)
+		if (last.known && view.guid == last.guidText && !view.name.empty ()) last.name = view.name;
+	return views;
+}
+
+std::string ViewKeyForGuid (const std::string& guidText)
+{
+	return "archicad:view:" + SanitizeKey (guidText);
+}
+
+void ForgetOpenedView ()
+{
+	if (LastOpenedView ().known) LeftViewGuid () = LastOpenedView ().guidText;
+	LastOpenedView () = OpenedView {};
+}
+
+std::string OpenedViewGuid ()
+{
+	const OpenedView& last = LastOpenedView ();
+	return last.known ? last.guidText : std::string ();
+}
+
+bool ConsumeViewMapChanged ()
+{
+	return ViewMapChanged ().exchange (false);
+}
+
+std::string OpenSavedView (const rtx::SavedView& view)
+{
+	LeftViewGuid ().clear ();
+	const GSErrCode err = ACAPI_View_GoToView (view.guid.c_str ());
+	if (err == APIERR_BADID) return "Die Ansicht „" + view.name + "“ gibt es nicht mehr.";
+	if (err != NoError) return "Archicad konnte die Ansicht „" + view.name + "“ nicht öffnen (" + std::to_string (err) + ").";
+	// Wie ein Doppelklick in der Mappe: Name und Schlüssel gehören ab jetzt zu diesem Fenster —
+	// unabhängig davon, ob die Benachrichtigung „geöffnet" schon da war.
+	API_NavigatorItem item = {};
+	API_Guid guid = APIGuidFromString (view.guid.c_str ());
+	item.guid = guid;
+	item.mapId = view.personal ? API_MyViewMap : API_PublicViewMap;
+	if (ACAPI_Navigator_GetNavigatorItem (&guid, &item) == NoError) {
+		OpenedView& last = LastOpenedView ();
+		last.name = view.name;
+		last.guidText = view.guid;
+		last.database = item.db.databaseUnId.elemSetId;
+		last.known = !last.name.empty ();
+	}
+	return std::string ();
 }
 
 } // namespace rtxaddon

@@ -317,6 +317,7 @@ std::string FakePlatform::SessionJson (const Session& session) const
 
 	JsonPtr limits = Json::MakeObject ();
 	limits->Set ("maxAssetBytes", Json::MakeInt (52428800));
+	limits->Set ("maxGeometryBytes", Json::MakeInt (67108864));
 	limits->Set ("maxTotalBytes", Json::MakeInt (209715200));
 	limits->Set ("maxAssetCount", Json::MakeInt (16));
 	limits->Set ("maxManifestBytes", Json::MakeInt (1048576));
@@ -698,6 +699,7 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 
 		JsonPtr limits = rtx::Json::MakeObject ();
 		limits->Set ("maxAssetBytes", rtx::Json::MakeInt (52428800));
+		limits->Set ("maxGeometryBytes", rtx::Json::MakeInt (67108864));
 		limits->Set ("maxTotalBytes", rtx::Json::MakeInt (209715200));
 		limits->Set ("maxAssetCount", rtx::Json::MakeInt (16));
 		limits->Set ("maxManifestBytes", rtx::Json::MakeInt (1048576));
