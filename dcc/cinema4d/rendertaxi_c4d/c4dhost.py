@@ -69,16 +69,19 @@ class Cinema4DAdapter:
     def model_estimate(self, kind: str) -> export.Estimate:
         return export.estimate(capture.active_document(), kind)
 
-    def camera_problem(self, size: tuple[int, int]) -> str | None:
-        return export.camera_problem(capture.active_document(), size)
+    def camera_problem(self, size: tuple[int, int], lens_and_shift: bool = False) -> str | None:
+        return export.camera_problem(capture.active_document(), size, lens_and_shift)
 
-    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress):
-        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte und die Kamera für ein Bild ``size``."""
+    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress, lens_and_shift: bool = False):
+        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte und Kameras und die Kamera für ein Bild ``size``.
+
+        ``lens_and_shift``: der Server setzt Manifest 1.4.0 um — die Kamera trägt Objektiv und Shift.
+        """
         doc = capture.active_document()
         progress("Modell exportieren", 10)
-        model = export.export_model(doc, kind, directory)
+        model = export.export_model(doc, kind, directory, size)
         progress("Modell exportieren", 100)
-        return model.file, model.geometry, export.camera_block(doc, size, model.meters)
+        return model.file, model.geometry, export.camera_block(doc, size, model.meters, lens_and_shift)
 
     def status(self, text: str, percent: int) -> None:
         """Fortschritt in der Statusleiste; ``percent < 0`` räumt sie."""

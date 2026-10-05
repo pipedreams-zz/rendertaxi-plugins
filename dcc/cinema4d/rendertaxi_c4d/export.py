@@ -41,10 +41,14 @@ und wird mit ``tools/measure_model_way.py`` am Mac gemessen.
 * **Kamera.** Die Kamera der Renderansicht (``GetSceneCamera``), auch die
   Editor-Kamera. Nur perspektivisch; ``fieldOfView`` horizontal aus
   ``2 · atan(Sensorbreite / (2 · Brennweite))`` — die Sensorgröße ist laut
-  Hilfe die horizontale Breite. Was der Vertrag nicht darstellen kann (Film
-  Offset, Parallelprojektion, Stereo, sphärisch, Linsenverzerrung,
-  Pixelseitenverhältnis ≠ 1, Filmformat ≠ Bildformat), führt zu ``None`` mit
-  einem Grund, den der Dialog **vor** dem Senden zeigt.
+  Hilfe die horizontale Breite. Gegen einen 1.4-Server dazu ``lens`` und Film
+  Offset als ``shift`` (RTX-C4D-007, am Host gemessen). Was der Vertrag nicht
+  darstellen kann (Parallelprojektion, echtes Stereo, sphärisch,
+  Linsenverzerrung, Pixelseitenverhältnis ≠ 1, Filmformat ≠ Bildformat, Film
+  Offset vor 1.4.0), führt zu ``None`` mit einem Satz, der sagt, was zu tun
+  ist — der Dialog zeigt ihn **vor** dem Senden.
+* **Kameras in der Datei (QC-16).** Die sichtbaren Kameras der Szene gehen
+  mit in die GLB; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum.
 
 Das Modul erfindet nichts: was nicht belegt oder nicht geprüft ist, geht nicht
 mit.
@@ -89,6 +93,10 @@ SCALE_TOLERANCE = 1e-6
 TOLERANCE = 1e-6
 # Die kleinste Nahgrenze, wenn die Kamera nicht abschneidet: der Vertrag verlangt near > 0.
 NO_NEAR_CLIP = 0.000001
+# Die Grenzen des Objektivs und des Shifts im Vertrag (capture-manifest.md, Abschnitt 11.3).
+FOCAL_LENGTH_MM = (1.0, 1200.0)
+SENSOR_MM = (1.0, 300.0)
+SHIFT_LIMIT = 2.0
 
 
 class ExportError(RuntimeError):
@@ -136,14 +144,41 @@ def perspective_fov(aperture: float, focus: float) -> tuple[str, float]:
     return "horizontal", 2.0 * math.atan(float(aperture) / (2.0 * float(focus)))
 
 
+def lens_dict(focus: float, aperture: float) -> dict | None:
+    """``camera.lens`` (1.4.0): Brennweite und Sensorbreite in mm, Sensorbezug horizontal.
+
+    Cinema 4D speichert beide in mm, unabhängig von der Einheit des Dokuments, und die Sensorgröße ist
+    die horizontale Breite (am Host belegt, ``docs/measurements/2026-10-05-kamera.md``). ``None``, wenn
+    ein Wert außerhalb des Vertrags liegt — dann bleibt es beim Winkel.
+    """
+    focus, aperture = float(focus), float(aperture)
+    if not (FOCAL_LENGTH_MM[0] <= focus <= FOCAL_LENGTH_MM[1] and SENSOR_MM[0] <= aperture <= SENSOR_MM[1]):
+        return None
+    return {"focalLengthMm": length(focus), "sensorWidthMm": length(aperture), "sensorFit": "horizontal"}
+
+
+def contract_shift(offset_x: float, offset_y: float, width: int, height: int) -> tuple[float, float]:
+    """Film Offset als ``shift`` des Vertrags: Anteil der **längeren** Bildseite, ``x`` rechts, ``y`` oben.
+
+    Am Host gemessen (``docs/measurements/2026-10-05-kamera.md``): Film Offset X ist ein Anteil der
+    Bildbreite und schiebt den Ausschnitt nach rechts, Film Offset Y ein Anteil der Bildhöhe und schiebt
+    ihn nach **unten** — quer wie hoch. Die Spiegelung des Exports betrifft das Bild nicht.
+    """
+    longer = max(width, height)
+    return float(offset_x) * width / longer, -float(offset_y) * height / longer
+
+
 def camera_dict(*, position, direction, up, fov: tuple[str, float], near: float | None, far: float | None,
-                meters: float) -> dict:
-    """Der Kamerablock des Vertrags (Abschnitt 11.3) aus Werten im Weltraum von Cinema 4D."""
+                meters: float, lens: dict | None = None, shift: tuple[float, float] | None = None) -> dict:
+    """Der Kamerablock des Vertrags (Abschnitt 11.3) aus Werten im Weltraum von Cinema 4D.
+
+    ``lens`` und ``shift`` (seit 1.4.0) stehen nur, wenn sie genannt sind; ein Shift ``(0, 0)`` entfällt.
+    """
     near_m = NO_NEAR_CLIP if near is None else max(length(near * meters), NO_NEAR_CLIP)
     far_m = None if far is None else length(far * meters)
     if far_m is not None and far_m <= near_m:
         far_m = None
-    return {
+    block = {
         "space": "export",
         "projection": "perspective",
         "position": to_export_point(position, meters),
@@ -152,6 +187,11 @@ def camera_dict(*, position, direction, up, fov: tuple[str, float], near: float 
         "fieldOfView": {"axis": fov[0], "angle": angle(fov[1])},
         "clip": {"near": near_m, "far": far_m},
     }
+    if lens is not None:
+        block["lens"] = lens
+    if shift is not None and (_num(shift[0], 6) != 0 or _num(shift[1], 6) != 0):
+        block["shift"] = {"x": _num(shift[0], 6), "y": _num(shift[1], 6)}
+    return block
 
 
 def geometry_dict(meters: float) -> dict:
@@ -287,6 +327,7 @@ class Prepared:
     triangles: int
     low: list | None
     high: list | None
+    cameras: int = 0
 
 
 def _baked(obj, mesh_index: int):
@@ -311,18 +352,47 @@ def _baked(obj, mesh_index: int):
     return mesh, triangles
 
 
-def prepare(doc, kind: str) -> Prepared:
-    """Die sichtbaren Polygone des Dokuments in einem eigenen Exportdokument — das Dokument bleibt unberührt."""
+def _camera(obj):
+    """Eine Kopie der Kamera ohne Kinder und Tags (ein Ziel-Tag fände sein Ziel nicht), mit ihrer Weltmatrix."""
+    camera = obj.GetClone(c4d.COPYFLAGS_NO_HIERARCHY)
+    for tag in list(camera.GetTags()):
+        tag.Remove()
+    camera.SetMg(obj.GetMg())
+    return camera
+
+
+def _image_size(target, size: tuple[int, int] | None) -> None:
+    """Die Bildmaße der Aufnahme im Exportdokument: der Exporter rechnet ``yfov`` und ``aspectRatio`` daraus."""
+    if size is None:
+        return
+    rd = target.GetActiveRenderData()
+    rd[c4d.RDATA_XRES], rd[c4d.RDATA_YRES] = float(size[0]), float(size[1])
+    rd[c4d.RDATA_FILMASPECT] = float(size[0]) / float(size[1])
+    rd[c4d.RDATA_PIXELASPECT] = 1.0
+
+
+def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
+    """Die sichtbaren Polygone und Kameras des Dokuments in einem eigenen Exportdokument — das Dokument bleibt unberührt.
+
+    Kameras (QC-16) gehen mit ihrer Weltmatrix mit; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum
+    (Blick −Z und Oben +Y des Knotens gleich der gespiegelten Kamera, am Host gemessen,
+    ``docs/measurements/2026-10-05-kamera.md``). Sie zählen nicht zu den Objekten der Größenschätzung.
+    """
     source = doc.Polygonize(False)
     if source is None:
         raise ExportError("Cinema 4D konnte die Szene nicht in Polygone wandeln.")
     target = c4d.documents.BaseDocument()
     try:
         target[c4d.DOCUMENT_DOCUNIT] = doc[c4d.DOCUMENT_DOCUNIT]
-        objects = triangles = 0
+        _image_size(target, size)
+        objects = triangles = cameras = 0
         low = [math.inf] * 3
         high = [-math.inf] * 3
         for obj in _walk(source.GetFirstObject()):
+            if isinstance(obj, c4d.CameraObject) and visible(obj, source, kind):
+                target.InsertObject(_camera(obj))
+                cameras += 1
+                continue
             if not isinstance(obj, c4d.PolygonObject) or not visible(obj, source, kind):
                 continue
             mesh, count = _baked(obj, objects)
@@ -341,8 +411,8 @@ def prepare(doc, kind: str) -> Prepared:
     finally:
         c4d.documents.KillDocument(source)
     if objects == 0:
-        return Prepared(target, 0, 0, None, None)
-    return Prepared(target, objects, triangles, low, high)
+        return Prepared(target, 0, 0, None, None, cameras)
+    return Prepared(target, objects, triangles, low, high, cameras)
 
 
 @dataclass
@@ -374,7 +444,7 @@ _SETTINGS = (
     ("GLTFEXPORTER_SKINANIMATIONS", False),
     ("GLTFEXPORTER_BAKEANIMATIONS", False),
     ("GLTFEXPORTER_TEXTURES", False),
-    ("GLTFEXPORTER_CAMERAS", False),
+    ("GLTFEXPORTER_CAMERAS", True),
     ("GLTFEXPORTER_INSTANCES", False),
     ("GLTFEXPORTER_NORMALS", True),
     ("GLTFEXPORTER_UVS", False),
@@ -440,13 +510,14 @@ class Model:
     exporter_scale: float  # gemessen: GLB-Einheiten je Einheit des Dokuments, vor der Korrektur
 
 
-def export_model(doc, kind: str, directory: str) -> Model:
-    """Die sichtbaren Objekte als GLB nach ``directory/model/scene.glb`` — geprüft, in Metern.
+def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None) -> Model:
+    """Die sichtbaren Objekte und Kameras als GLB nach ``directory/model/scene.glb`` — geprüft, in Metern.
 
-    Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen tragen keinen Pfad.
+    ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). Die Datei bleibt im
+    Capture-Verzeichnis (0700); Meldungen tragen keinen Pfad.
     """
     meters = meters_per_unit(doc)
-    prepared = prepare(doc, kind)
+    prepared = prepare(doc, kind, size)
     try:
         if prepared.objects == 0 or prepared.triangles == 0:
             raise ExportError("Keine sichtbare Geometrie: das Modell wäre leer.")
@@ -478,8 +549,9 @@ def export_model(doc, kind: str, directory: str) -> Model:
     sha, size = mf.sha256_file(target)
     scaled = (f"Maßstab des Exporters {factor:g} je Einheit gemessen, auf Meter gesetzt ({correction:g})"
               if abs(correction - 1.0) > SCALE_TOLERANCE else "Maßstab des Exporters in Metern gemessen")
+    cameras = {0: "ohne Kameras", 1: "1 Kamera"}.get(prepared.cameras, f"{prepared.cameras} Kameras")
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Cinema 4D (Flip Z): sichtbare Objekte polygonisiert, "
-            f"Weltkoordinaten, ohne Animation, Materialien und UVs; {triangles} Dreiecke; {scaled}.")
+            f"Weltkoordinaten, ohne Animation, Materialien und UVs; {triangles} Dreiecke; {cameras}; {scaled}.")
     file = mf.CaptureFile(role="model", path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
     return Model(file, geometry_dict(meters), meters, triangles, factor)
@@ -515,51 +587,76 @@ def render_camera(doc):
     return view.GetSceneCamera(doc) if view is not None else None
 
 
-def camera_problem(doc, size: tuple[int, int]) -> str | None:
-    """Warum **keine** Kamera mitgeht — für den Dialog, bevor gesendet wird."""
+def stereo(doc, camera) -> bool:
+    """Ob das Bild stereoskopisch wird: Stereomodus der Kamera nicht Mono **und** Stereoskopie in der Voreinstellung.
+
+    Am Host gemessen (``docs/measurements/2026-10-05-kamera.md``): die Editor-Kamera steht auf „Symmetrisch“, eine
+    neue Kamera auf „Mono“; das Bild ändert sich aber nur, wenn ``RDATA_STEREO`` eingeschaltet ist — sonst ist es
+    bytegleich mit Mono, gleich welcher Modus.
+    """
+    mode = _get(camera, "CAMERAOBJECT_STEREO_MODE", None)
+    mono = getattr(c4d, "CAMERAOBJECT_STEREO_MODE_MONO", 0)
+    if mode is None or mode == mono:
+        return False
+    return bool(_get(doc.GetActiveRenderData(), "RDATA_STEREO", False))
+
+
+def film_offset(camera) -> tuple[float, float]:
+    """Film Offset X/Y der Kamera (Anteil der Bildbreite bzw. -höhe)."""
+    return (float(_get(camera, "CAMERAOBJECT_FILM_OFFSET_X", 0.0)),
+            float(_get(camera, "CAMERAOBJECT_FILM_OFFSET_Y", 0.0)))
+
+
+def camera_problem(doc, size: tuple[int, int], lens_and_shift: bool = False) -> str | None:
+    """Warum **keine** Kamera mitgeht — für den Dialog, bevor gesendet wird; jeder Satz sagt, was zu tun ist.
+
+    ``lens_and_shift``: der Server setzt Manifest 1.4.0 um (``mf.camera_lens_allowed``) — dann geht Film Offset
+    als ``shift`` mit.
+    """
     camera = render_camera(doc)
     if camera is None or not isinstance(camera, c4d.CameraObject):
-        return "Die Renderansicht hat keine Kamera."
+        return "Für die Kamera in der Renderansicht eine Kamera aktivieren."
     if camera.GetProjection() != c4d.Pperspective:
-        return ("Die Kamera ist nicht perspektivisch; wie weit eine Parallelkamera in Cinema 4D reicht, "
-                "ist nicht belegt (QC-09).")
+        return "Parallelprojektion wird nicht übertragen; dafür eine perspektivische Kamera verwenden."
     if not (camera.GetFocus() > 0 and camera.GetAperture() > 0):
-        return "Brennweite oder Sensorgröße der Kamera ist nicht positiv."
-    if (abs(float(_get(camera, "CAMERAOBJECT_FILM_OFFSET_X", 0.0))) > TOLERANCE
-            or abs(float(_get(camera, "CAMERAOBJECT_FILM_OFFSET_Y", 0.0))) > TOLERANCE):
-        return "Die Kamera hat Film Offset; der Vertrag kennt keine Bildverschiebung."
-    if _get(camera, "CAMERAOBJECT_STEREO_MODE", 0) != getattr(c4d, "CAMERAOBJECT_STEREO_MODE_MONO", 0):
-        return "Die Kamera ist eine Stereokamera; der Vertrag kennt eine Ansicht."
+        return "Brennweite und Sensorgröße der Kamera müssen größer als 0 sein."
+    if stereo(doc, camera):
+        return ("Stereoskopie ist eingeschaltet; für die Kamera in den Rendervoreinstellungen Stereoskopie "
+                "ausschalten oder den Stereomodus der Kamera auf Mono stellen.")
     if _get(camera, "CAMERAOBJECT_SPC_ENABLE", False):
-        return "Die Kamera ist sphärisch; der Vertrag kennt nur perspektivisch und parallel."
+        return "Sphärische Kameras werden nicht übertragen; dafür eine perspektivische Kamera verwenden."
     if (abs(float(_get(camera, "CAMERAOBJECT_LENS_DISTORTION_QUAD", 0.0))) > TOLERANCE
             or abs(float(_get(camera, "CAMERAOBJECT_LENS_DISTORTION_CUBIC", 0.0))) > TOLERANCE):
-        return "Die Kamera hat Linsenverzerrung; der Vertrag kennt sie nicht."
+        return "Für die Kamera die Linsenverzerrung auf 0 stellen."
     rd = doc.GetActiveRenderData()
     pixel = float(_get(rd, "RDATA_PIXELASPECT", 1.0))
     if abs(pixel - 1.0) > TOLERANCE:
-        return "Das Pixelseitenverhältnis ist nicht 1:1; das Sichtfeld wäre auf der zweiten Achse falsch."
+        return "Für die Kamera das Pixelseitenverhältnis in den Rendervoreinstellungen auf 1:1 stellen."
     film = _get(rd, "RDATA_FILMASPECT", None)
     width, height = size
     if film is not None and abs(float(film) - width / height) > 1e-3:
-        return (f"Das Filmformat ({float(film):.3f}) weicht vom Bild ({width} × {height}) ab; "
-                "das Sichtfeld wäre auf der zweiten Achse falsch.")
+        return f"Für die Kamera das Filmformat in den Rendervoreinstellungen an das Bild ({width} × {height}) anpassen."
+    offset = film_offset(camera)
+    if any(abs(value) > TOLERANCE for value in offset):
+        if not lens_and_shift:
+            return "Film Offset übernimmt der Server noch nicht; ohne Film Offset geht die Kamera mit."
+        if any(abs(value) > SHIFT_LIMIT for value in contract_shift(*offset, width, height)):
+            return "Für die Kamera den Film Offset auf höchstens 200 % stellen."
     axis, value = perspective_fov(camera.GetAperture(), camera.GetFocus())
     reported = _get(camera, "CAMERAOBJECT_FOV", None)
     if isinstance(reported, (int, float)) and not (
             abs(float(reported) - value) <= TOLERANCE or abs(float(reported) - math.degrees(value)) <= 1e-4):
-        return ("Das Sichtfeld von Cinema 4D (CAMERAOBJECT_FOV) weicht von 2·atan(Sensor / (2 · Brennweite)) "
-                "ab (QC-09).")
+        return "Das Sichtfeld der Kamera passt nicht zu Brennweite und Sensorgröße; beide prüfen."
     return None
 
 
-def camera_block(doc, size: tuple[int, int], meters: float) -> dict | None:
+def camera_block(doc, size: tuple[int, int], meters: float, lens_and_shift: bool = False) -> dict | None:
     """Die Kamera der Aufnahme im Exportraum — ``None``, wenn ``camera_problem`` einen Grund nennt.
 
     ``size`` sind die Maße des aufgenommenen Bildes (nicht der Voreinstellung:
-    „Blickpunkt-Rahmen" ändert sie).
+    „Blickpunkt-Rahmen" ändert sie). Mit ``lens_and_shift`` (Manifest 1.4.0) auch Objektiv und Shift.
     """
-    if camera_problem(doc, size):
+    if camera_problem(doc, size, lens_and_shift):
         return None
     camera = render_camera(doc)
     matrix = camera.GetMg()
@@ -571,6 +668,10 @@ def camera_block(doc, size: tuple[int, int], meters: float) -> dict | None:
     position = (matrix.off.x, matrix.off.y, matrix.off.z)
     direction = (matrix.v3.x, matrix.v3.y, matrix.v3.z)
     up = (matrix.v2.x, matrix.v2.y, matrix.v2.z)
+    extra = {}
+    if lens_and_shift:
+        extra = {"lens": lens_dict(camera.GetFocus(), camera.GetAperture()),
+                 "shift": contract_shift(*film_offset(camera), *size)}
     return camera_dict(position=position, direction=direction, up=up,
                        fov=perspective_fov(camera.GetAperture(), camera.GetFocus()),
-                       near=near, far=far, meters=meters)
+                       near=near, far=far, meters=meters, **extra)

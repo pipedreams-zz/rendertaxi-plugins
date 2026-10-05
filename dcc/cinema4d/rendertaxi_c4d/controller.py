@@ -536,7 +536,8 @@ class Controller:
         if cap:
             parts.append(f"Modelldatei höchstens {cap / 1048576:.0f} MB.")
         try:
-            why = self.adapter.camera_problem(self.capture_size() or self.document_size())
+            why = self.adapter.camera_problem(self.capture_size() or self.document_size(),
+                                              mf.camera_lens_allowed(mf.model_contract_version(self.state.handshake)))
         except RuntimeError as error:  # kein Dokument
             why = str(error)
         if why:
@@ -571,10 +572,11 @@ class Controller:
         camera = geometry = None
         if send_model:
             image = files[0].image
-            model, geometry, camera = self.adapter.export_model(
-                self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main)
-            files.append(model)
             contract_version = mf.model_contract_version(handshake)
+            model, geometry, camera = self.adapter.export_model(
+                self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main,
+                mf.camera_lens_allowed(contract_version))
+            files.append(model)
         data = mf.ManifestInput(
             capture_id=mf.uuid_v7(),
             created_at=mf.timestamp_utc(),
