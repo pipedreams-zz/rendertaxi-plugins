@@ -3,8 +3,10 @@
 1. **Verbindung** — Verbinden (Code und Adresse, der Browser öffnet sich),
    „Angemeldet als …", Abmelden; darunter die Einstellungen (Serveradresse,
    Gerätename, ausführliches Protokoll).
-2. **Projekt und Blickpunkt** — Projekt; neuer Blickpunkt mit Namen oder
-   bestehenden aktualisieren; „Rahmen an Aufnahme anpassen"
+2. **Projekt und Blickpunkt** — Projekt, „Neues Projekt …" (Name erfragen,
+   anlegen, gleich wählen), „Aktualisieren" (auch umbenannte Projekte); neuer
+   Blickpunkt mit Namen — der Name des Kameraobjekts steht als Vorschlag
+   darin, bis der Nutzer ihn ändert — oder bestehenden aktualisieren; „Rahmen an Aufnahme anpassen"
    (``frame: fit-to-capture``, sonst ``keep``); Rahmengröße Canvas-Vorgabe
    oder Render-Einstellung (``size``).
 3. **Bild übernehmen** — Viewport oder Beauty mit optionalen Pässen; Größe
@@ -51,6 +53,7 @@ ID_SAVE_SETTINGS = 1024
 ID_GRP_TARGET = 1030
 ID_PROJECT = 1031
 ID_REFRESH = 1032
+ID_NEW_PROJECT = 1039
 ID_TARGET_MODE = 1033
 ID_VP_NAME = 1034
 ID_VIEWPOINT = 1035
@@ -97,6 +100,7 @@ class RendertaxiDialog(gui.GeDialog):
         super().__init__()
         self.controller = controller
         self._lists: dict[int, list] = {}
+        self._labels: dict[int, list[str]] = {}
         # Referenz 2026: Add* gibt ein C4DGadget zurück, Enable nimmt genau dieses.
         self._gadgets: dict[int, object] = {}
         self._layout_state: tuple | None = None
@@ -149,8 +153,9 @@ class RendertaxiDialog(gui.GeDialog):
         self.GroupBegin(ID_GRP_TARGET, c4d.BFH_SCALEFIT, 1, 0, "Projekt und Blickpunkt")
         self.GroupBorder(c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 6, 6, 6)
-        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 1, "")
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 1, "")
         self._combo(ID_PROJECT)
+        self._gadgets[ID_NEW_PROJECT] = self.AddButton(ID_NEW_PROJECT, c4d.BFH_RIGHT, 0, 0, "Neues Projekt …")
         self._gadgets[ID_REFRESH] = self.AddButton(ID_REFRESH, c4d.BFH_RIGHT, 0, 0, "Aktualisieren")
         self.GroupEnd()
         self._combo(ID_TARGET_MODE, MODE_LABELS)
@@ -222,14 +227,19 @@ class RendertaxiDialog(gui.GeDialog):
             self.SetString(first_id + offset, line)
 
     def _fill(self, element_id: int, placeholder: str, items: list[tuple[str, str]], selected: str | None) -> None:
-        """Eine Auswahlliste mit Platzhalter; gewählt wird über die Kennung, nie über die Position."""
+        """Eine Auswahlliste mit Platzhalter; gewählt wird über die Kennung, nie über die Position.
+
+        Neu aufgebaut wird, wenn sich Kennungen **oder Namen** ändern — ein umbenanntes Projekt steht
+        nach „Aktualisieren" mit seinem neuen Namen da (RTX-P-013).
+        """
         ids = [None] + [item_id for item_id, _ in items]
-        if self._lists.get(element_id) != ids:
+        labels = [placeholder] + [name[:60] for _item_id, name in items]
+        if self._lists.get(element_id) != ids or self._labels.get(element_id) != labels:
             self.FreeChildren(element_id)
-            self.AddChild(element_id, 0, placeholder)
-            for index, (_item_id, name) in enumerate(items, start=1):
-                self.AddChild(element_id, index, name[:60])
+            for index, label in enumerate(labels):
+                self.AddChild(element_id, index, label)
             self._lists[element_id] = ids
+            self._labels[element_id] = labels
         self.SetInt32(element_id, ids.index(selected) if selected in ids else 0)
 
     def _chosen(self, element_id: int) -> str | None:
@@ -288,6 +298,10 @@ class RendertaxiDialog(gui.GeDialog):
         self._fill(ID_PROJECT, "— Projekt wählen —", state.projects, form.project_id)
         self.SetInt32(ID_TARGET_MODE, MODES.index(form.target_mode))
         creating = form.target_mode == frame.CREATE
+        # Der Kameraname als Vorschlag; was der Nutzer eingegeben hat, bleibt (Controller entscheidet).
+        self.controller.suggest_viewpoint_name()
+        if self.GetString(ID_VP_NAME) != form.viewpoint_name:
+            self.SetString(ID_VP_NAME, form.viewpoint_name)
         self._enable(ID_VP_NAME, creating)
         self._enable(ID_VIEWPOINT, not creating)
         self._enable(ID_FIT, not creating)
@@ -298,6 +312,7 @@ class RendertaxiDialog(gui.GeDialog):
         self.SetString(ID_SIZE_TEXT, self.controller.size_text())
         self._lines(ID_HINT, self.controller.aspect_hint() or "")
         self._enable(ID_REFRESH, not busy)
+        self._enable(ID_NEW_PROJECT, not busy)
 
     def _refresh_capture(self, form, busy: bool) -> None:
         controller = self.controller
@@ -384,6 +399,7 @@ class RendertaxiDialog(gui.GeDialog):
             ID_CANCEL: controller.cancel,
             ID_SIGN_OUT: controller.sign_out,
             ID_REFRESH: controller.refresh,
+            ID_NEW_PROJECT: controller.new_project,
             ID_CAPTURE: controller.capture,
             ID_RESUME: controller.resume,
             ID_DISCARD: controller.discard,

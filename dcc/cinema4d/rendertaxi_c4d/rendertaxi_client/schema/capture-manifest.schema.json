@@ -170,6 +170,13 @@
           },
           "required": ["os", "architecture"],
           "additionalProperties": false
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Seit 1.5.0, optional: der Name der Datei, aus der der Capture stammt (die gespeicherte Szene des Hosts), mit Endung und ohne Pfad — etwa SWH-Schule-Weberberg.c4d. Kein Pfadtrenner (/, \\, :), kein Steuer- oder Formatzeichen (auch keine Richtungsumkehr), höchstens 255 Zeichen, weder „.“ noch „..“. Eine ungespeicherte Szene hat keinen Dateinamen; das Feld entfällt dann. Nicht vertrauenswürdige Eingabe: der Server zeigt den Wert nur als Text. In einem Dokument unter 1.5.0 unzulässig; erzwingt tools/validate.mjs.",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!\\.\\.?$)[^/\\\\:\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF]+$"
         }
       },
       "required": ["host", "plugin", "machine"],

@@ -1,8 +1,9 @@
 """N-Panel „rendertaxi" — Verbinden, Ziel wählen, Aufnehmen, Übernehmen.
 
 Vier Bereiche, wie die Palette des Archicad-Add-ons: **Verbindung**,
-**Projekt und Blickpunkt**, **Bild übernehmen** (mit „Modell mitsenden",
-RTX-B-003), **Im Browser öffnen**. Generierung und Ergebnisbearbeitung
+**Projekt und Blickpunkt** (mit „Neues Projekt …" und dem Kameranamen als
+Vorschlag für einen neuen Blickpunkt, RTX-P-013), **Bild übernehmen** (mit
+„Modell mitsenden", RTX-B-003), **Im Browser öffnen**. Generierung und Ergebnisbearbeitung
 bleiben in der Webanwendung.
 
 **Faden-Regel.** Netzaufrufe laufen in einem Hintergrundfaden (``Job``), damit
@@ -31,8 +32,9 @@ from bpy.types import Operator, Panel, PropertyGroup
 from . import capture, export, settings
 from .rendertaxi_client import auth, frame
 from .rendertaxi_client import manifest as mf
-from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, handshake_problem,
-                                          normalize_server_url, prepare, supports_model)
+from .rendertaxi_client.transport import (PROJECT_NAME_MAX_LENGTH, ApiClient, ApiError, Cancelled, NewProject,
+                                          Transfer, Unauthorized, handshake_problem, normalize_server_url, prepare,
+                                          project_choices, project_name_problem, supports_model)
 from .settings import CredentialStore, TransferStore, log, log_exception
 
 # --------------------------------------------------------------------------
@@ -63,6 +65,8 @@ class State:
 
 
 STATE = State()
+# „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
+NEW_PROJECT = NewProject()
 
 
 def host_version() -> str:
@@ -70,11 +74,19 @@ def host_version() -> str:
 
 
 def _redraw() -> None:
+    """Das Panel neu zeichnen — die Seitenleiste ausdrücklich, nicht nur die Ansicht.
+
+    Nach jedem Ergebnis des Hintergrunds (``_pump``): ein umbenanntes Projekt steht nach
+    „Aktualisieren" sonst mit dem alten Namen da, bis der Zeiger über das Panel fährt (RTX-P-013).
+    """
     try:
         for window in bpy.context.window_manager.windows:
             for area in window.screen.areas:
                 if area.type == "VIEW_3D":
                     area.tag_redraw()
+                    for region in area.regions:
+                        if region.type == "UI":
+                            region.tag_redraw()
     except (AttributeError, ReferenceError):
         pass
 
@@ -211,7 +223,7 @@ def _api(token: str | None = None) -> ApiClient:
 
 
 def _load_targets(job: Job, api: ApiClient) -> None:
-    projects = [(p["id"], p.get("name") or p["id"]) for p in api.projects() if p.get("id")]
+    projects = project_choices(api.projects())
 
     def apply():
         STATE.projects = projects
@@ -588,7 +600,7 @@ class RTX_OT_refresh(Operator):
             api = ApiClient(server, token)
             _load_targets(job, api)
             if project_id and project_id != "NONE":
-                viewpoints = [(v["id"], v.get("name") or v["id"]) for v in api.viewpoints(project_id)]
+                viewpoints = [(v["id"], v.get("name") or v["id"]) for v in api.viewpoints(project_id) if v.get("id")]
                 desired = api.desired_outputs(project_id)
 
                 def apply():
@@ -601,15 +613,86 @@ class RTX_OT_refresh(Operator):
         return {"FINISHED"}
 
 
+class RTX_OT_create_project(Operator):
+    bl_idname = "rendertaxi.create_project"
+    bl_label = "Neues Projekt …"
+    bl_description = "Ein neues Projekt anlegen und gleich als Ziel wählen"
+
+    name: StringProperty(name="Name", default="", maxlen=PROJECT_NAME_MAX_LENGTH)
+
+    def invoke(self, context, _event):
+        self.name = ""
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        if not STATE.connected:
+            return {"CANCELLED"}
+        if STATE.job is not None:
+            _set_error("Es läuft schon ein Vorgang. Erst abwarten oder abbrechen.")
+            return {"CANCELLED"}
+        problem = project_name_problem(self.name)
+        if problem:
+            _set_error(problem)
+            self.report({"WARNING"}, problem)
+            return {"CANCELLED"}
+        name = self.name.strip()
+        key = NEW_PROJECT.key_for(name)
+        server = STATE.server
+        token = CredentialStore(settings.user_dir()).token(server)
+
+        def work(job: Job) -> None:
+            api = ApiClient(server, token)
+            created = api.create_project(name, key)
+            projects = project_choices(api.projects())
+            project_id = created.get("id")
+            if project_id and not any(pid == project_id for pid, _ in projects):
+                projects.insert(0, (project_id, created.get("name") or name))
+
+            def apply():
+                NEW_PROJECT.done(name)
+                STATE.projects = projects
+                if project_id:
+                    STATE.viewpoints[project_id] = []
+                    props = _props()
+                    props.project = project_id
+                    props.target_mode = "CREATE"
+                _set_message(f"Projekt „{created.get('name') or name}“ angelegt und gewählt.")
+
+            job.post(apply)
+
+        start_job("create-project", work)
+        return {"FINISHED"}
+
+
 # --------------------------------------------------------------------------
 # Operatoren: Übernahme
 # --------------------------------------------------------------------------
 
 
-def _target(props: RTX_Props) -> dict:
+def viewpoint_name_suggestion(context, props: RTX_Props) -> str | None:
+    """Der Kameraname als Vorschlag für einen neuen Blickpunkt — ``None`` ohne Kameraobjekt (RTX-P-013).
+
+    Das Panel zeigt ihn als Platzhalter im leeren Namensfeld; was der Nutzer eingibt, gilt.
+    """
+    try:
+        return export.capture_camera_name(context, props.capture_kind)
+    except (AttributeError, ReferenceError, RuntimeError):
+        return None
+
+
+def _target(props: RTX_Props, context=None) -> dict:
     mode = frame.CREATE if props.target_mode == "CREATE" else frame.UPDATE
-    return frame.target(props.project, mode, name=props.viewpoint_name, viewpoint_id=props.viewpoint,
+    name = props.viewpoint_name.strip() or viewpoint_name_suggestion(context or bpy.context, props) or ""
+    return frame.target(props.project, mode, name=name, viewpoint_id=props.viewpoint,
                         fit_to_capture=props.fit_to_capture, size=props.size_mode)
+
+
+def source_file_name() -> str | None:
+    """Der Name der gespeicherten ``.blend`` — ``source.fileName`` (1.5.0); ``None`` ohne Speicherstand.
+
+    Der Ordner geht nie mit; bereinigt wird im Client (``manifest.source_file_name``).
+    """
+    return os.path.basename(bpy.data.filepath) if bpy.data.filepath else None
 
 
 def capture_size(context, props: RTX_Props) -> tuple[int, int] | None:
@@ -642,7 +725,8 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
     umsetzt (PNG-Datenpässe, RTX-P-012), sonst ohne Modell 1.1.0 und mit Modell
     1.2.0. Ohne Modell sind ``camera`` und ``geometry`` ``null``; mit Modell
     geht die GLB mit und — wenn darstellbar — die Kamera der Aufnahme. Die
-    Datenpässe haben die Bittiefe aus den Einstellungen (``settings``).
+    Datenpässe haben die Bittiefe aus den Einstellungen (``settings``). Gegen einen Server mit 1.5.0
+    geht der Name der gespeicherten ``.blend`` als ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
     """
     scene = context.scene
     size = capture_size(context, props)
@@ -694,6 +778,7 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
         planned=planned,
         camera=camera,
         geometry=geometry,
+        source_file_name=source_file_name(),
         contract_version=contract_version,
     )
     manifest = mf.build_manifest(data)
@@ -757,7 +842,7 @@ class RTX_OT_capture(Operator):
             return {"CANCELLED"}
         props = _props(context)
         try:
-            target = _target(props)
+            target = _target(props, context)
             credentials, transfers = _stores()
             key = capture.document_key(context.scene, create=True)
             if transfers.pending(key):
@@ -940,10 +1025,15 @@ class RTX_PT_panel(Panel):
         row = box.row()
         row.label(text="Projekt und Blickpunkt", icon="OUTLINER_COLLECTION")
         row.operator(RTX_OT_refresh.bl_idname, text="", icon="FILE_REFRESH")
-        box.prop(props, "project", text="")
+        row = box.row(align=True)
+        row.prop(props, "project", text="")
+        row = box.row()
+        row.enabled = not busy
+        row.operator(RTX_OT_create_project.bl_idname, icon="ADD")
         box.prop(props, "target_mode", expand=True)
         if props.target_mode == "CREATE":
-            box.prop(props, "viewpoint_name")
+            # Der Kameraname als Vorschlag im leeren Feld; ohne Kameraobjekt bleibt es leer.
+            box.prop(props, "viewpoint_name", placeholder=viewpoint_name_suggestion(context, props) or "")
         else:
             box.prop(props, "viewpoint", text="")
             box.prop(props, "fit_to_capture")
@@ -1071,6 +1161,7 @@ CLASSES = (
     RTX_OT_cancel,
     RTX_OT_sign_out,
     RTX_OT_refresh,
+    RTX_OT_create_project,
     RTX_OT_capture,
     RTX_OT_forget_local,
     RTX_OT_resume,

@@ -35,6 +35,8 @@ from .log import log
 from .store import TransferStore
 
 TIMEOUT_SECONDS = 30
+# Wie ``PROJECT_NAME_MAX_LENGTH`` der Plattform (``packages/contracts/src/project.ts``).
+PROJECT_NAME_MAX_LENGTH = 120
 UPLOAD_TIMEOUT_SECONDS = 300
 MAX_KEY_ROTATIONS = 3
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -221,6 +223,24 @@ class ApiClient:
                 break
         return items
 
+    def create_project(self, name: str, key: str) -> dict:
+        """``POST /projects`` — ein neues Projekt mit den Rechten des angemeldeten Nutzers (ADR 0022).
+
+        ``key`` ist der Idempotenzschlüssel (UUIDv7): derselbe Schlüssel mit demselben Namen legt
+        **ein** Projekt an, auch wenn die erste Antwort verloren ging (``NewProject``). Eine Rolle ohne
+        Anlagerecht bekommt ``403``; der Satz sagt es, statt einen Statuscode zu nennen.
+        """
+        try:
+            return self.request("POST", "/projects", body={"name": name}, headers={"Idempotency-Key": key})
+        except Unauthorized:
+            raise
+        except ApiError as error:
+            if error.status == 403:
+                raise ApiError("Deine Rolle in diesem Büro erlaubt keine neuen Projekte. Ein Owner oder "
+                               "Mitglied kann es anlegen.", status=403, code=error.code,
+                               request_id=error.request_id) from None
+            raise
+
     def viewpoints(self, project_id: str) -> list[dict]:
         workspace = self.request("GET", f"/projects/{urllib.parse.quote(project_id)}/workspace")
         return [v for v in workspace.get("viewpoints", []) if isinstance(v, dict)]
@@ -281,6 +301,49 @@ class ApiClient:
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             raise ApiError("Die Übertragung einer Datei brach ab. Die Übernahme lässt sich fortsetzen.",
                            code="network", reason=type(error).__name__) from None
+
+
+# --------------------------------------------------------------------------
+# Projekt anlegen
+# --------------------------------------------------------------------------
+
+
+def project_name_problem(name: str) -> str | None:
+    """Warum dieser Name kein Projektname ist — oder ``None``. Dieselben Grenzen wie die Plattform."""
+    text = (name or "").strip()
+    if not text:
+        return "Bitte einen Namen für das neue Projekt eingeben."
+    if len(text) > PROJECT_NAME_MAX_LENGTH:
+        return f"Ein Projektname hat höchstens {PROJECT_NAME_MAX_LENGTH} Zeichen."
+    return None
+
+
+class NewProject:
+    """Eine Projektanlage aus dem Plugin, gegen doppelte Anlage gesichert.
+
+    Der Idempotenzschlüssel gehört zur **Absicht**, nicht zum Klick: wer nach einem Fehlschlag
+    (Netz weg, Antwort verloren) denselben Namen noch einmal bestätigt, sendet denselben Schlüssel,
+    und die Plattform liefert das Projekt, das sie schon angelegt hat. Ein anderer Name ist eine neue
+    Absicht mit neuem Schlüssel. Nach dem Erfolg ist die Absicht erledigt.
+    """
+
+    def __init__(self):
+        self._pending: tuple[str, str] | None = None
+
+    def key_for(self, name: str) -> str:
+        text = (name or "").strip()
+        if self._pending is None or self._pending[0] != text:
+            self._pending = (text, mf.uuid_v7())
+        return self._pending[1]
+
+    def done(self, name: str) -> None:
+        if self._pending is not None and self._pending[0] == (name or "").strip():
+            self._pending = None
+
+
+def project_choices(projects: list[dict]) -> list[tuple[str, str]]:
+    """``(id, Name)`` je Projekt für die Auswahlliste — ohne Namen steht die Kennung da."""
+    return [(p["id"], p.get("name") or p["id"]) for p in projects if isinstance(p, dict) and p.get("id")]
 
 
 # --------------------------------------------------------------------------

@@ -217,11 +217,37 @@ def document_name(doc) -> str | None:
     return stem or None
 
 
+def document_file_name(doc) -> str | None:
+    """Der Name der gespeicherten Datei mit Endung — ``source.fileName`` (1.5.0); ``None``, solange nie gespeichert.
+
+    Nur der Name, nie der Ordner (``GetDocumentPath`` sagt allein, **ob** gespeichert ist). Bereinigt
+    wird im Client (``manifest.source_file_name``); der Name steht nie im Protokoll.
+    """
+    getter = getattr(doc, "GetDocumentPath", None)
+    if getter is None or not (getter() or ""):
+        return None
+    return doc.GetDocumentName() or None
+
+
 def render_view(doc):
     """Die Ansicht, aus der Cinema 4D rendert (Renderansicht); ohne sie die aktive."""
     getter = getattr(doc, "GetRenderBaseDraw", None)
     view = getter() if getter is not None else None
     return view if view is not None else doc.GetActiveBaseDraw()
+
+
+def camera_name(doc) -> str | None:
+    """Der Name des Kameraobjekts, aus dem gerendert wird — ``None`` für die Editor-Kamera.
+
+    Er ist der Vorschlag für den Namen eines neuen Blickpunkts (RTX-P-013); ohne Kameraobjekt gibt es
+    keinen Vorschlag.
+    """
+    bd = render_view(doc)
+    camera = bd.GetSceneCamera(doc) if bd is not None else None
+    editor = bd.GetEditorCamera() if bd is not None else None
+    if camera is None or (editor is not None and camera == editor):
+        return None
+    return (camera.GetName() or "").strip() or None
 
 
 def view_name(doc) -> str:

@@ -11,6 +11,7 @@ import os
 import webbrowser
 
 import c4d
+from c4d import gui
 
 from . import capture, export, host
 from .controller import BEAUTY
@@ -41,6 +42,19 @@ class Cinema4DAdapter:
 
     def document_name(self) -> str | None:
         return capture.document_name(capture.active_document())
+
+    def document_file_name(self) -> str | None:
+        """Der Name der gespeicherten Datei (``source.fileName``, 1.5.0); ``None`` ohne Speicherstand."""
+        return capture.document_file_name(capture.active_document())
+
+    def camera_name(self) -> str | None:
+        """Der Name des Kameraobjekts der Renderansicht — Vorschlag für einen neuen Blickpunkt."""
+        return capture.camera_name(capture.active_document())
+
+    def ask_text(self, title: str, preset: str = "") -> str | None:
+        """Eine Zeile Text vom Nutzer (``gui.InputDialog``); ``None`` bei „Abbrechen"."""
+        answer = gui.InputDialog(title, preset)
+        return answer if isinstance(answer, str) and answer.strip() else None
 
     def probe(self, model: bool = False) -> dict:
         """Die Laufzeitprobe; mit Modell auch ``geometryExport`` und ``cameraExport``."""

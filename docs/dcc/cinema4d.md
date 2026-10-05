@@ -53,9 +53,13 @@ lassen sich dort abmelden.
 
 ## Bild übernehmen
 
-1. Unter **Projekt und Blickpunkt** das Projekt wählen.
+1. Unter **Projekt und Blickpunkt** das Projekt wählen — oder mit **Neues
+   Projekt …** eines anlegen (mit den Rechten deiner Rolle im Büro); es ist
+   danach gewählt. **Aktualisieren** zeigt umbenannte Projekte mit ihrem
+   neuen Namen.
 2. **Neuer Blickpunkt** mit Namen oder **Bestehenden aktualisieren** und den
-   Blickpunkt wählen. Ein Update legt keinen zweiten Blickpunkt an.
+   Blickpunkt wählen. Ein Update legt keinen zweiten Blickpunkt an. Als Name
+   steht der Name der Kamera schon da; du kannst ihn ändern.
 3. Unter **Bild übernehmen** die Aufnahmeart wählen:
    - **Viewport** — die Ansicht, gerendert mit dem **Viewport Renderer** (so,
      wie sie im Editor zu sehen ist; bei mehreren Ansichten die Renderansicht). Das Plugin

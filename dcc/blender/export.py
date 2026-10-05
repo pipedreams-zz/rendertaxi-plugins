@@ -289,6 +289,20 @@ def _view_uses_camera(context) -> bool:
     return found is not None and found[1].view_perspective == "CAMERA"
 
 
+def capture_camera_name(context, kind: str) -> str | None:
+    """Der Name des Kameraobjekts, aus dem aufgenommen wird — ``None`` ohne Kameraobjekt.
+
+    Beauty rendert aus der Szenenkamera; der Viewport nur dann, wenn die 3D-Ansicht durch sie schaut.
+    Der Name ist der Vorschlag für einen neuen Blickpunkt (RTX-P-013).
+    """
+    scene = context.scene
+    if scene is None or scene.camera is None:
+        return None
+    if kind != "BEAUTY" and not _view_uses_camera(context):
+        return None
+    return scene.camera.name.strip() or None
+
+
 def camera_from_object(camera, scene, size: tuple[int, int], meters: float, lens_and_shift: bool = False) -> dict:
     from mathutils import Vector
 

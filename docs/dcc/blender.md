@@ -52,9 +52,14 @@ Gerätename (dieselben Einstellungen) hilft, Blender dort wiederzuerkennen.
 
 ## Bild übernehmen
 
-1. Unter **Projekt und Blickpunkt** das Projekt wählen.
+1. Unter **Projekt und Blickpunkt** das Projekt wählen — oder mit **Neues
+   Projekt …** eines anlegen (mit den Rechten deiner Rolle im Büro); es ist
+   danach gewählt. **Aktualisieren** zeigt umbenannte Projekte mit ihrem
+   neuen Namen.
 2. Entweder **Neuer Blickpunkt** mit Namen oder **Bestehenden aktualisieren**
    und den Blickpunkt wählen. Ein Update legt keinen zweiten Blickpunkt an.
+   Bleibt der Name leer, gilt der Name der Kamera (er steht grau im Feld);
+   ohne Kamera ist ein Name Pflicht.
 3. Unter **Bild übernehmen** die Aufnahmeart wählen:
    - **Viewport** — die aktuelle 3D-Ansicht, so wie sie zu sehen ist.
      **Overlays ausblenden** (Vorgabe) lässt Gitter, Gizmos und Auswahlumrisse
@@ -179,6 +184,9 @@ Blender **nicht** — dafür ist Schritt 1 da.
   `extensions/.user/user_default/rendertaxi/`). Die `.blend`-Datei trägt nur
   eine zufällige Kennung der Szene, über die die Extension den zuletzt
   gewählten Blickpunkt vorschlägt.
+- Ist die `.blend` gespeichert, geht ihr **Name** (ohne Ordner) mit; die
+  Plattform nennt das Modell danach `blender-<Datei>` und zeigt die Datei in
+  der Herkunft. Eine ungespeicherte Szene sendet keinen Dateinamen.
 - Meldungen erscheinen in der Systemkonsole (**Window › Toggle System
   Console** unter Windows, das Terminal unter macOS/Linux). „Ausführliches Protokoll" in den
   Einstellungen schreibt bei Fehlern zusätzlich die Codestellen im Add-on —

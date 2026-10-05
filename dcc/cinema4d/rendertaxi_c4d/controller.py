@@ -32,8 +32,9 @@ from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception, set_debug
 from .rendertaxi_client.store import CredentialStore, SettingsStore, TransferStore, has_local_material
 from .rendertaxi_client.glb import MAX_TRIANGLES
-from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, Transfer, Unauthorized, handshake_problem,
-                                          normalize_server_url, prepare, supports_model)
+from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewProject, Transfer, Unauthorized,
+                                          handshake_problem, normalize_server_url, prepare, project_choices,
+                                          project_name_problem, supports_model)
 
 DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender (RTX-P-012).
@@ -45,6 +46,8 @@ BEAUTY = "beauty"
 RESOLUTION_DOCUMENT = "document"
 RESOLUTION_VIEWPOINT = "viewpoint"
 FRAME_OPTION = "Rahmen an Aufnahme anpassen"
+NEW_PROJECT_PROMPT = "Name des neuen Projekts"
+VIEWPOINT_NAME_MAX_LENGTH = 200
 SIZE_OPTION = "Blickpunkt-Rahmen"
 
 
@@ -55,6 +58,9 @@ class Form:
     project_id: str | None = None
     target_mode: str = frame.CREATE
     viewpoint_name: str = ""
+    # Der zuletzt vorgeschlagene Name (Kameraname, RTX-P-013). Steht im Feld noch genau er, folgt das Feld
+    # der Kamera; hat der Nutzer etwas anderes eingegeben — auch ein leeres Feld —, bleibt seine Eingabe.
+    suggested_viewpoint_name: str = ""
     viewpoint_id: str | None = None
     fit_to_capture: bool = False
     size: str = frame.SIZE_CANVAS_DEFAULT
@@ -139,6 +145,8 @@ class Controller:
         self._jobs: list[Job] = []
         # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke) — nur ein Hinweis.
         self.model_estimate: tuple[str, int, int] | None = None
+        # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
+        self.new_project_intent = NewProject()
 
     # -- Ablage und Einstellungen -------------------------------------------
 
@@ -360,7 +368,7 @@ class Controller:
     # -- Projekte und Blickpunkte -------------------------------------------
 
     def _load_targets(self, job: Job, api: ApiClient) -> None:
-        projects = [(p["id"], p.get("name") or p["id"]) for p in api.projects() if p.get("id")]
+        projects = project_choices(api.projects())
 
         def apply():
             self.state.projects = projects
@@ -393,6 +401,70 @@ class Controller:
                 job.post(apply)
 
         return self.start_job("refresh", work)
+
+    def new_project(self) -> bool:
+        """„Neues Projekt …": den Namen erfragen und das Projekt anlegen — „Abbrechen" tut nichts."""
+        if self.state.job is not None:
+            self._set_error("Es läuft schon ein Vorgang. Erst abwarten oder abbrechen.")
+            return False
+        if not self.state.connected:
+            return False
+        name = self.adapter.ask_text(NEW_PROJECT_PROMPT, "")
+        return self.create_project(name) if name else False
+
+    def create_project(self, name: str) -> bool:
+        """Ein Projekt mit den Rechten des Nutzers anlegen und gleich als Ziel wählen (RTX-P-013).
+
+        Neuer Blickpunkt ist dann das Ziel — im neuen Projekt gibt es noch keinen. Scheitert die
+        Anlage, bleibt die bisherige Wahl; dieselbe Eingabe noch einmal legt kein zweites Projekt an.
+        """
+        problem = project_name_problem(name)
+        if problem:
+            self._set_error(problem)
+            return False
+        name = name.strip()
+        key = self.new_project_intent.key_for(name)
+        server = self.state.server
+        token = CredentialStore(self._directory()).token(server)
+
+        def work(job: Job) -> None:
+            api = ApiClient(server, token)
+            created = api.create_project(name, key)
+            projects = project_choices(api.projects())
+            project_id = created.get("id")
+            if project_id and not any(pid == project_id for pid, _ in projects):
+                projects.insert(0, (project_id, created.get("name") or name))
+
+            def apply():
+                self.new_project_intent.done(name)
+                self.state.projects = projects
+                if project_id:
+                    self.form.project_id = project_id
+                    self.form.viewpoint_id = None
+                    self.form.target_mode = frame.CREATE
+                    self.state.viewpoints[project_id] = []
+                self._set_message(f"Projekt „{created.get('name') or name}“ angelegt und gewählt.")
+
+            job.post(apply)
+
+        return self.start_job("create-project", work)
+
+    def suggest_viewpoint_name(self) -> bool:
+        """Den Kameranamen als Namen eines neuen Blickpunkts vorschlagen — ``True``, wenn sich das Feld ändert.
+
+        Ohne Kameraobjekt (Editor-Kamera, kein Dokument) gibt es keinen Vorschlag: das Feld bleibt, wie es
+        heute ist. Was der Nutzer eingegeben hat, überschreibt der Vorschlag nie.
+        """
+        try:
+            camera = self.adapter.camera_name()
+        except (RuntimeError, AttributeError, TypeError):
+            camera = None
+        suggestion = (camera or "").strip()[:VIEWPOINT_NAME_MAX_LENGTH]
+        form = self.form
+        if form.viewpoint_name != form.suggested_viewpoint_name or suggestion == form.suggested_viewpoint_name:
+            return False
+        form.viewpoint_name = form.suggested_viewpoint_name = suggestion
+        return True
 
     def select_project(self, project_id: str | None) -> None:
         self.form.project_id = project_id or None
@@ -554,7 +626,8 @@ class Controller:
         ``mf.model_contract_version``); sonst ohne Modell 1.1.0 mit ``camera``
         und ``geometry`` ``null``, mit Modell 1.2.0 mit GLB und — wenn
         darstellbar — der Kamera der Aufnahme. Die Pässe tragen die gemerkte
-        Bittiefe (8 oder 16 Bit).
+        Bittiefe (8 oder 16 Bit). Gegen einen Server mit 1.5.0 geht der Name der
+        gespeicherten Datei als ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
@@ -577,6 +650,10 @@ class Controller:
                 self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main,
                 mf.camera_lens_allowed(contract_version))
             files.append(model)
+        try:
+            file_name = self.adapter.document_file_name()
+        except (RuntimeError, AttributeError, TypeError):  # ohne Dateinamen geht der Capture trotzdem
+            file_name = None
         data = mf.ManifestInput(
             capture_id=mf.uuid_v7(),
             created_at=mf.timestamp_utc(),
@@ -592,6 +669,7 @@ class Controller:
             planned=planned,
             camera=camera,
             geometry=geometry,
+            source_file_name=file_name,
             contract_version=contract_version,
         )
         manifest = mf.build_manifest(data)

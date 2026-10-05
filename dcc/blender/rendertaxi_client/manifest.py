@@ -1,4 +1,4 @@
-"""Capture-Manifest 1.1.0 bis 1.4.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
+"""Capture-Manifest 1.1.0 bis 1.5.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
 Kein Hostmodul. Die Python-Fassung dessen, was der Referenzclient
 (``integrations/_shared/tools/capture-client.mjs``) und das Archicad-Add-on
@@ -46,12 +46,17 @@ PNG_CONTRACT_VERSION = "1.3.0"
 # 1.4.0: die Kamera trägt optional Objektiv (``lens``) und Shift (RTX-M2-026,
 # capture-manifest.md Abschnitt 11.3).
 CAMERA_CONTRACT_VERSION = "1.4.0"
+# 1.5.0: ``source.fileName``, der Name der Ursprungsdatei ohne Pfad (RTX-P-013,
+# capture-manifest.md Abschnitt 13). Bildweg und Modellweg schreiben 1.5.0, sobald der Server sie umsetzt.
+SOURCE_FILE_CONTRACT_VERSION = "1.5.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 PNG_MEDIA_TYPE = "image/png"
-IMPLEMENTED_MINOR = 4
+IMPLEMENTED_MINOR = 5
 PNG_SINCE_MINOR = 3
 CAMERA_LENS_SINCE_MINOR = 4
+SOURCE_FILE_NAME_SINCE_MINOR = 5
+SOURCE_FILE_NAME_MAX_LENGTH = 255
 
 # Bittiefe der Datenpässe — der Nutzer wählt im Plugin, Standard 8 Bit (Nutzerentscheidung
 # vom 29.09.2026). Beide Plugins zeigen genau diesen Wortlaut.
@@ -80,20 +85,25 @@ def _highest_minor(handshake: dict | None) -> int | None:
 
 
 def image_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung des Bildwegs (§3, Regel 2): 1.3.0, wenn der Server sie umsetzt, sonst 1.1.0;
-    gegen einen Server mit höchstens 1.0 dann 1.0.0. Ohne Angabe 1.1.0."""
+    """Vertragsfassung des Bildwegs (§3, Regel 2): 1.5.0 (Name der Ursprungsdatei) oder 1.3.0 (PNG),
+    wenn der Server sie umsetzt, sonst 1.1.0; gegen einen Server mit höchstens 1.0 dann 1.0.0. Ohne
+    Angabe 1.1.0. Ein Bild-Capture braucht 1.4.0 nicht: Objektiv und Shift gehören zur Kamera des Modells."""
     minor = _highest_minor(handshake)
     if minor is None:
         return CONTRACT_VERSION
+    if minor >= SOURCE_FILE_NAME_SINCE_MINOR:
+        return SOURCE_FILE_CONTRACT_VERSION
     if minor >= PNG_SINCE_MINOR:
         return PNG_CONTRACT_VERSION
     return "1.0.0" if minor == 0 else CONTRACT_VERSION
 
 
 def model_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung mit Modell: die höchste, die der Server umsetzt — 1.4.0 (Objektiv und
-    Shift der Kamera), 1.3.0 (PNG) oder 1.2.0 (ADR 0032)."""
+    """Vertragsfassung mit Modell: die höchste, die der Server umsetzt — 1.5.0 (Name der
+    Ursprungsdatei), 1.4.0 (Objektiv und Shift der Kamera), 1.3.0 (PNG) oder 1.2.0 (ADR 0032)."""
     minor = _highest_minor(handshake)
+    if minor is not None and minor >= SOURCE_FILE_NAME_SINCE_MINOR:
+        return SOURCE_FILE_CONTRACT_VERSION
     if minor is not None and minor >= CAMERA_LENS_SINCE_MINOR:
         return CAMERA_CONTRACT_VERSION
     return PNG_CONTRACT_VERSION if minor is not None and minor >= PNG_SINCE_MINOR else MODEL_CONTRACT_VERSION
@@ -103,6 +113,44 @@ def camera_lens_allowed(contract_version: str) -> bool:
     """Ob ein Dokument dieser Fassung ``camera.lens`` und ``camera.shift`` tragen darf (ab 1.4.0)."""
     match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
     return match is not None and int(match.group(1)) >= CAMERA_LENS_SINCE_MINOR
+
+
+def source_file_name_allowed(contract_version: str) -> bool:
+    """Ob ein Dokument dieser Fassung ``source.fileName`` tragen darf (ab 1.5.0)."""
+    match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
+    return match is not None and int(match.group(1)) >= SOURCE_FILE_NAME_SINCE_MINOR
+
+
+# Dieselben Funde wie ``FORBIDDEN_CONTENT`` in ``tools/validate.mjs`` und im Server, soweit sie einen
+# Dateinamen treffen können: ein Name, der dort aufliefe, ließe das **ganze** Manifest scheitern.
+# ``re.ASCII``: ``\b`` wie in JavaScript ohne ``u`` — „ö" ist dort kein Wortzeichen.
+_FILE_NAME_FORBIDDEN = (
+    re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*", re.ASCII),  # name@host
+    re.compile(r"\b[A-Za-z0-9-]+\.(local|lan|internal|localdomain)\b", re.IGNORECASE | re.ASCII),  # Rechnername
+    re.compile(r"\b(secret|password|passwd|api[_-]?key|access[_-]?token|bearer)\b\s*[:=]", re.IGNORECASE | re.ASCII),
+    re.compile(r"X-Amz-[A-Za-z-]+=|X-Goog-Signature=|[?&](Signature|sig)=", re.ASCII),  # signierte Storage-URL
+    re.compile(r"\bBEGIN [A-Z ]*PRIVATE KEY\b", re.ASCII),  # privater Schlüssel
+)
+
+
+def source_file_name(raw) -> str | None:
+    """``source.fileName`` aus dem Namen der gespeicherten Szene — oder ``None``: dann entfällt das Feld.
+
+    Nur der **Name**, nie ein Pfad (Nutzerentscheidung vom 04.10.2026): ein Pfad wird auf seinen letzten
+    Teil gekürzt. NFC wie jeder Text des Manifests (macOS liefert Dateinamen zerlegt). Ein Name, den die
+    Regel des Schemas (kein Pfadtrenner, kein Steuer- oder Formatzeichen, höchstens 255 Zeichen) oder ein
+    Inhaltsverbot des Servers abwiese, entfällt — der Capture geht dann ohne ihn, statt zu scheitern.
+    Der Name steht nie im Protokoll.
+    """
+    if not isinstance(raw, str):
+        return None
+    name = unicodedata.normalize("NFC", raw).replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name or len(name) > SOURCE_FILE_NAME_MAX_LENGTH:
+        return None
+    pattern = registry().documents["capture-manifest.schema.json"]["$defs"]["source"]["properties"]["fileName"]["pattern"]
+    if not re.search(pattern, name) or any(p.search(name) for p in _FILE_NAME_FORBIDDEN):
+        return None
+    return name
 
 
 def data_pass_bit_depth(value) -> int:
@@ -420,6 +468,9 @@ def validate_manifest(document: dict) -> list[str]:
         for index, asset in enumerate(assets if isinstance(assets, list) else []):
             if isinstance(asset, dict) and asset.get("role") == "model":
                 problems.append(f"/assets/{index}/role: model ist erst ab contractVersion 1.2.0 zulässig")
+    source = document.get("source") if isinstance(document, dict) else None
+    if isinstance(source, dict) and "fileName" in source and re.fullmatch(r"1\.[0-4]\.[0-9]+", version):
+        problems.append("/source/fileName: erst ab contractVersion 1.5.0 zulässig")
     camera = document.get("camera") if isinstance(document, dict) else None
     if isinstance(camera, dict) and re.fullmatch(r"1\.[0-3]\.[0-9]+", version):
         for key in ("lens", "shift"):
@@ -577,6 +628,8 @@ class ManifestInput:
     planned: list[PlannedRole] = field(default_factory=list)
     camera: dict | None = None
     geometry: dict | None = None
+    # Seit 1.5.0: der Name der gespeicherten Szene (``source_file_name``); ``None`` bei einer ungespeicherten.
+    source_file_name: str | None = None
     # 1.0.0 nur, wenn der Server 1.1 nicht umsetzt; dann ohne ``capabilities`` (§3).
     contract_version: str = CONTRACT_VERSION
 
@@ -634,16 +687,20 @@ def build_manifest(data: ManifestInput) -> dict:
     view: dict = {"sourceViewKey": None}
     if data.view_display_name:
         view["displayName"] = data.view_display_name[:512]
+    source: dict = {
+        "host": host,
+        "plugin": {"identifier": plugin.client_id, "version": data.plugin_version},
+        "machine": dict(data.machine),
+    }
+    file_name = source_file_name(data.source_file_name)
+    if file_name and source_file_name_allowed(data.contract_version):
+        source["fileName"] = file_name
     return {
         "contract": CONTRACT,
         "contractVersion": data.contract_version,
         "captureId": data.capture_id,
         "createdAt": data.created_at,
-        "source": {
-            "host": host,
-            "plugin": {"identifier": plugin.client_id, "version": data.plugin_version},
-            "machine": dict(data.machine),
-        },
+        "source": source,
         "project": project,
         "view": view,
         "intent": {},
