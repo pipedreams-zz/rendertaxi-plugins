@@ -102,14 +102,23 @@ OCIO_RAW = getattr(c4d, "RENDERFLAGS_OCIO_RAW_RENDERING", None)
 # ``docs/measurements/2026-10-01-overlays.md``). Der Videopost gehört zum RenderData-Objekt, nicht zu dessen
 # Container: die Filter wirken nur über die Voreinstellung des Dokuments selbst — transient, nur für die Dauer des
 # Renders (``transient.TransientRenderSettings``; ein Dokumentklon stürzt beim nächsten Render ab).
-# DISPLAYFILTER_SPLINE (1020, ``docs/measurements/2026-10-05-nur-geometrie.md``): Nutzerentscheidung 05.10.2026 —
-# Splines werden ausgeblendet, nicht deaktiviert; die Spline-Objekte und was aus ihnen erzeugt wird, bleiben unberührt.
-# Wirkung am Host noch nicht gemessen (Hostprobe: ``tools/measure_viewport_capture.py``).
+# Jeder Anzeigefilter des Viewport Renderers ist am Host eingeordnet (``docs/measurements/2026-10-05-viewport-filter.md``):
+# Editor-Hilfsmittel werden für die Aufnahme abgeschaltet, Szeneninhalt bleibt (Polygone, Generatoren, Subdivision
+# Surfaces, SDS Mesh, Umgebung, Partikel, Hair). „Deformer“ zeigt nur das Hilfsgitter des Deformers — die Verformung
+# bleibt, wenn er aus ist (gemessen): Hilfsmittel. DISPLAYFILTER_SPLINE: Nutzerentscheidung 05.10.2026 —
+# Splines werden ausgeblendet, nicht deaktiviert; was aus ihnen erzeugt wird, bleibt. DATA_SHOWPATH ist der Filter
+# „Animationspfade“ (1040), er heißt im SDK nicht DISPLAYFILTER_*.
 HARDWARE_VIDEOPOST = 300001061
 OVERLAY_FILTERS = ("DISPLAYFILTER_GRID", "DISPLAYFILTER_BASEGRID", "DISPLAYFILTER_WORLDAXIS", "DISPLAYFILTER_HORIZON",
                    "DISPLAYFILTER_HUD", "DISPLAYFILTER_GUIDELINES", "DISPLAYFILTER_OBJECTHANDLES",
-                   "DISPLAYFILTER_CAMERA", "DISPLAYFILTER_LIGHT", "DISPLAYFILTER_NULL", "DISPLAYFILTER_OTHER",
-                   "DISPLAYFILTER_SPLINE")
+                   "DISPLAYFILTER_MULTIAXIS", "DISPLAYFILTER_HANDLES", "DISPLAYFILTER_CAMERA", "DISPLAYFILTER_LIGHT",
+                   "DISPLAYFILTER_NULL", "DISPLAYFILTER_OTHER", "DISPLAYFILTER_SPLINE", "DISPLAYFILTER_JOINT",
+                   "DISPLAYFILTER_DEFORMER",
+                   "DISPLAYFILTER_FIELD", "DISPLAYFILTER_SDSCAGE", "DISPLAYFILTER_NGONLINES", "DISPLAYFILTER_ONION",
+                   "DATA_SHOWPATH")
+# Szeneninhalt: bleibt, wie der Nutzer ihn eingestellt hat (gemessen im selben Protokoll).
+CONTENT_FILTERS = ("DISPLAYFILTER_POLYGON", "DISPLAYFILTER_GENERATOR", "DISPLAYFILTER_HYPERNURBS", "DISPLAYFILTER_SDS",
+                   "DISPLAYFILTER_SCENE", "DISPLAYFILTER_PARTICLE", "DISPLAYFILTER_HAIR")
 
 # Tiefe über den Positions-Pass (RTX-C4D-005, am Host gemessen: ``docs/measurements/2026-10-04-position-pass.md``,
 # ``2026-10-05-paesse-dateiweg.md``): Videopost 1027117 und Kanal „Post-Effekte" liefern die Float-Ebene 1027751 mit
