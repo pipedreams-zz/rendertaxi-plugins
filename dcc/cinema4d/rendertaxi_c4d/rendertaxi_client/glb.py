@@ -9,8 +9,8 @@ benutzen genau diese Funktionen — eine zweite Zählung in einem Plugin wäre e
 zweiter Weg zu derselben Grenze.
 
 Zwei Schreibzugriffe, beide nur auf den JSON-Chunk, der Binärteil bleibt
-unverändert (``_write``): ``scale_scene`` hängt die Wurzeln der Szene unter
-einen Knoten mit gleichförmigem Maßstab — das braucht Cinema 4D, dessen
+unverändert und die Datei wird nur als Ganzes ersetzt (``_write``):
+``scale_scene`` hängt die Wurzeln der Szene unter einen Knoten mit gleichförmigem Maßstab — das braucht Cinema 4D, dessen
 glTF-Exporter seinen Maßstab nicht über die Python-API preisgibt (QC-02).
 ``set_camera_extras`` schreibt Objektiv und Shift je Kamera in
 ``cameras[i].extras.rendertaxi.camera`` (RTX-B-004) — glTF selbst kennt
@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import struct
+import tempfile
 
 MODEL_PATH = "model/scene.glb"
 
@@ -212,15 +214,29 @@ def scale_scene(path: str, factor: float) -> None:
 
 
 def _write(path: str, document: dict, rest: bytes) -> None:
-    """Den JSON-Chunk neu schreiben (auf vier Bytes mit Leerzeichen aufgefüllt), den Rest dahinter."""
+    """Den JSON-Chunk neu schreiben (auf vier Bytes mit Leerzeichen aufgefüllt), den Rest dahinter.
+
+    Erst in eine Nachbardatei, dann ``os.replace``: scheitert das Schreiben, bleibt die geprüfte Datei
+    bytegleich — nie eine halbe GLB unter ihrem Namen.
+    """
     raw = json.dumps(document, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     raw += b" " * (-len(raw) % 4)
     total = 12 + 8 + len(raw) + len(rest)
-    with open(path, "wb") as handle:
-        handle.write(_MAGIC + struct.pack("<II", 2, total))
-        handle.write(struct.pack("<II", len(raw), _JSON))
-        handle.write(raw)
-        handle.write(rest)
+    directory, name = os.path.split(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(_MAGIC + struct.pack("<II", 2, total))
+            handle.write(struct.pack("<II", len(raw), _JSON))
+            handle.write(raw)
+            handle.write(rest)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
 # --------------------------------------------------------------------------

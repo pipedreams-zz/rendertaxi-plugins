@@ -49,6 +49,10 @@ und wird mit ``tools/measure_model_way.py`` am Mac gemessen.
   ist — der Dialog zeigt ihn **vor** dem Senden.
 * **Kameras in der Datei (QC-16).** Die sichtbaren Kameras der Szene gehen
   mit in die GLB; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum.
+  Objektiv und Film Offset (als Shift) trägt das Plugin danach in
+  ``cameras[i].extras.rendertaxi.camera`` ein (RTX-B-004, Vertrag 11.5) —
+  gerechnet mit dem ``aspectRatio``, das der Exporter geschrieben hat, und nur
+  für Kameras, deren Werte am Host belegt sind (``_lens_of``).
 
 Das Modul erfindet nichts: was nicht belegt oder nicht geprüft ist, geht nicht
 mit.
@@ -58,7 +62,7 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import c4d
 
@@ -328,6 +332,7 @@ class Prepared:
     low: list | None
     high: list | None
     cameras: int = 0
+    lenses: dict = field(default_factory=dict)  # Knotenname → (Brennweite, Sensor, Film Offset X, Y) oder None
 
 
 def _baked(obj, mesh_index: int):
@@ -361,6 +366,72 @@ def _camera(obj):
     return camera
 
 
+def _lens_of(obj, doc):
+    """``(Brennweite, Sensorbreite, Film Offset X, Film Offset Y)`` einer Kamera für ``extras`` — oder ``None``.
+
+    Nur, was am Host belegt ist (``docs/measurements/2026-10-05-kamera.md``): perspektivisch, ohne echtes Stereo,
+    nicht sphärisch, ohne Linsenverzerrung, Pixelseitenverhältnis 1:1. Eine Parallelkamera bleibt ohne Angabe: ihre
+    Ausdehnung und ihr Film Offset sind nicht gemessen (QC-09).
+    """
+    if obj.GetProjection() != c4d.Pperspective or not (obj.GetFocus() > 0 and obj.GetAperture() > 0):
+        return None
+    if stereo(doc, obj) or _get(obj, "CAMERAOBJECT_SPC_ENABLE", False):
+        return None
+    if (abs(float(_get(obj, "CAMERAOBJECT_LENS_DISTORTION_QUAD", 0.0))) > TOLERANCE
+            or abs(float(_get(obj, "CAMERAOBJECT_LENS_DISTORTION_CUBIC", 0.0))) > TOLERANCE):
+        return None
+    if abs(float(_get(doc.GetActiveRenderData(), "RDATA_PIXELASPECT", 1.0)) - 1.0) > TOLERANCE:
+        return None
+    offset = film_offset(obj)
+    if not all(math.isfinite(value) for value in offset):
+        return None
+    return float(obj.GetFocus()), float(obj.GetAperture()), offset[0], offset[1]
+
+
+def extras_block(lens, definition: dict) -> dict | None:
+    """``extras.rendertaxi.camera`` für eine Kameradefinition der Datei — mit ihrem ``aspectRatio`` gerechnet.
+
+    Shift wie im Kamerablock (``contract_shift``), die Bildmaße aus dem Seitenverhältnis, das der Exporter selbst
+    geschrieben hat (Breite / Höhe; die längere Seite ist 1). ``lens`` nur, wenn es mit ``aspectRatio`` denselben
+    vertikalen Winkel beschreibt wie ``yfov`` (Vertrag 11.5, 1e-5 rad).
+    """
+    if lens is None or not isinstance(definition, dict) or definition.get("type") != "perspective":
+        return None
+    perspective = definition.get("perspective")
+    if not isinstance(perspective, dict):
+        return None
+    aspect, yfov = perspective.get("aspectRatio"), perspective.get("yfov")
+    if not (isinstance(aspect, (int, float)) and aspect > 0 and math.isfinite(aspect)):
+        return None
+    focus, aperture, offset_x, offset_y = lens
+    width, height = (1.0, 1.0 / aspect) if aspect >= 1.0 else (aspect, 1.0)
+    shift = contract_shift(offset_x, offset_y, width, height)
+    described = lens_dict(focus, aperture)
+    vertical = 2.0 * math.atan(aperture / (2.0 * focus) / aspect)
+    if not (isinstance(yfov, (int, float)) and abs(vertical - yfov) <= 1e-5):
+        described = None
+    return glb.camera_extras(described, {"x": _num(shift[0], 6), "y": _num(shift[1], 6)})
+
+
+def write_camera_extras(target: str, lenses: dict) -> int:
+    """Objektiv und Shift in die Kameradefinitionen der GLB-Datei (Knotenname = Kameraname) — die Zahl der beschriebenen."""
+    document = glb.read_glb_json(target)
+    cameras = document.get("cameras") if isinstance(document, dict) else None
+    if not isinstance(cameras, list):
+        return 0
+    by_name = {}
+    for node in document.get("nodes") or []:
+        index = node.get("camera") if isinstance(node, dict) else None
+        name = node.get("name") if isinstance(node, dict) else None
+        if (not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(cameras)
+                or not isinstance(name, str) or name not in lenses):
+            continue
+        block = extras_block(lenses[name], cameras[index])
+        if block is not None:
+            by_name[name] = block
+    return glb.set_camera_extras(target, by_name) if by_name else 0
+
+
 def _image_size(target, size: tuple[int, int] | None) -> None:
     """Die Bildmaße der Aufnahme im Exportdokument: der Exporter rechnet ``yfov`` und ``aspectRatio`` daraus."""
     if size is None:
@@ -386,12 +457,16 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
         target[c4d.DOCUMENT_DOCUNIT] = doc[c4d.DOCUMENT_DOCUNIT]
         _image_size(target, size)
         objects = triangles = cameras = 0
+        lenses: dict = {}
         low = [math.inf] * 3
         high = [-math.inf] * 3
         for obj in _walk(source.GetFirstObject()):
             if isinstance(obj, c4d.CameraObject) and visible(obj, source, kind):
                 target.InsertObject(_camera(obj))
                 cameras += 1
+                name = obj.GetName()
+                # Zwei Kameras gleichen Namens: der Knoten wäre nicht eindeutig — beide ohne extras.
+                lenses[name] = None if name in lenses else _lens_of(obj, doc)
                 continue
             if not isinstance(obj, c4d.PolygonObject) or not visible(obj, source, kind):
                 continue
@@ -411,8 +486,8 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
     finally:
         c4d.documents.KillDocument(source)
     if objects == 0:
-        return Prepared(target, 0, 0, None, None, cameras)
-    return Prepared(target, objects, triangles, low, high, cameras)
+        return Prepared(target, 0, 0, None, None, cameras, lenses)
+    return Prepared(target, objects, triangles, low, high, cameras, lenses)
 
 
 @dataclass
@@ -546,10 +621,16 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
     correction = meters / factor
     if abs(correction - 1.0) > SCALE_TOLERANCE:
         glb.scale_scene(target, correction)
+    try:
+        described = write_camera_extras(target, prepared.lenses) if prepared.cameras else 0
+    except Exception:  # noqa: BLE001 — die Datei ist nicht vertrauenswürdig: ohne extras lädt sie wie bisher
+        described = 0  # (Shift 0, Objektiv aus yfov); die Aufnahme bricht nie daran ab
     sha, size = mf.sha256_file(target)
     scaled = (f"Maßstab des Exporters {factor:g} je Einheit gemessen, auf Meter gesetzt ({correction:g})"
               if abs(correction - 1.0) > SCALE_TOLERANCE else "Maßstab des Exporters in Metern gemessen")
     cameras = {0: "ohne Kameras", 1: "1 Kamera"}.get(prepared.cameras, f"{prepared.cameras} Kameras")
+    if prepared.cameras:
+        cameras += f", davon {described} mit Objektiv und Shift (extras)"
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Cinema 4D (Flip Z): sichtbare Objekte polygonisiert, "
             f"Weltkoordinaten, ohne Animation, Materialien und UVs; {triangles} Dreiecke; {cameras}; {scaled}.")
     file = mf.CaptureFile(role="model", path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
