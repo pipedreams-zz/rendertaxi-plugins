@@ -62,8 +62,8 @@ ID_GRP_CAPTURE = 1050
 ID_KIND = 1051
 ID_RESOLUTION = 1052
 ID_CUT = 1053
-ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062}
-ID_PASS_HINT = {"depth": 1065, "normal": 1066, "albedo": 1067}
+ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062, "object-id": 1063, "material-id": 1064}
+ID_PASS_HINT = {"depth": 1065, "normal": 1066, "albedo": 1067, "object-id": 1069, "material-id": 1074}
 ID_BIT_DEPTH = 1068
 ID_MODEL = 1100
 ID_MODEL_COUNT = 1101
@@ -172,7 +172,8 @@ class RendertaxiDialog(gui.GeDialog):
         self._combo(ID_RESOLUTION, RESOLUTION_LABELS)
         self._text(ID_CUT)
         self._text(0, "Pässe (optional, nur Beauty)")
-        for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo")):
+        for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo"),
+                                 ("object-id", "Objekt-ID"), ("material-id", "Material-ID")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
             self._text(ID_PASS_HINT[spec_role])
         self._text(0, mf.DATA_PASS_BIT_DEPTH_LABEL)
@@ -328,9 +329,13 @@ class RendertaxiDialog(gui.GeDialog):
             elif state != "available":
                 note = hint
             elif spec.blocked_by:
-                note = f"wird als „geplant“ gemeldet ({spec.blocked_by})"
+                note = "wird als „geplant“ gemeldet"
             elif no_png:
                 note = "Der Server nimmt derzeit kein PNG an: wird als „geplant“ vermerkt."
+            elif role == "depth":
+                note = f"PNG {bit_depth} Bit, Tiefe von nah (0) bis fern (1)"
+            elif role == "object-id":
+                note = f"PNG {bit_depth} Bit, je Pixel die ID des Objektpuffers"
             else:
                 note = f"PNG {bit_depth} Bit, linear"
             self.SetString(ID_PASS_HINT[role], note[:120])

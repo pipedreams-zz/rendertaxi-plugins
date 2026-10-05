@@ -15,8 +15,9 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
 * **Beauty**: ``RenderDocument`` mit dem im Dokument aktiven Renderer auf
   einer Kopie seines Containers (Größe, nur das aktuelle Bild, kein
   Speichern). Das Dokument wird nicht verändert.
-* **Pässe**: nur Standard/Physical Multi-Pass, nur was der Nutzer
-  eingeschaltet hat — das Plugin schaltet keinen Pass ein (QC-13). Die Ebene
+* **Pässe**: nur Standard/Physical Multi-Pass. Normalen und Albedo nur, wenn der Nutzer
+  den Kanal eingeschaltet hat (QC-13); Tiefe und Objekt-ID schaltet das Plugin nur für
+  den einen Render ein (``transient``) und baut alles danach zurück. Die Ebene
   eines Kanals findet ``MPBTYPE_USERID`` („In the renderer this is
   VPBUFFER_xxx"). Jeder Pass ist ein PNG ``images/<role>.png`` mit 8 oder 16
   Bit je Kanal nach Wahl des Nutzers (Capture-Manifest 1.3.0): die rohen Floats
@@ -30,7 +31,9 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
   die Float-Ebene ist ``(n + 1) / 2`` im Weltraum in Cinema-4D-Achsen, ein Pixel (0, 0, 0) ist „kein
   Treffer“ und wird in der Datei 0,5 (Vertrag 1.3.0); Manifest ``normal.space: world`` — der Exportraum
   des Manifests wie bei Kamera und Modell, also ist die Z-Komponente gespiegelt (``1 − b``). **Tiefe**
-  (QC-03) bleibt ``planned``: nicht gemessen. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
+  (QC-03, gemessen 05.10.2026) aus dem Positions-Pass, transient eingeschaltet, planar ``normalized-linear``;
+  **Objekt-ID** (QC-05) über den Dateiweg (Multi-Pass speichern aus einer markierten Kopie der Voreinstellung);
+  **Material-ID** (QC-06) liefern Standard und Physical nicht. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
   ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG aus den Floats.
 * **Corona** (RTX-C4D-004): die Engine ist der Videopost 1030480 (``CORONA``;
   das c4d-Modul hat kein Symbol dafür — die ID stammt aus der Corona-Installation
@@ -59,15 +62,18 @@ Dokumentation nicht nennt, werden nicht erfunden.
 
 from __future__ import annotations
 
+import math
 import os
 import re
+import shutil
 import struct
+import tempfile
 import uuid
 from dataclasses import dataclass
 
 import c4d
 
-from . import host, pngwrite, transient
+from . import host, pngwrite, tiffread, transient
 from .rendertaxi_client import manifest as mf
 
 PNG = mf.PNG_MEDIA_TYPE
@@ -105,6 +111,23 @@ OVERLAY_FILTERS = ("DISPLAYFILTER_GRID", "DISPLAYFILTER_BASEGRID", "DISPLAYFILTE
                    "DISPLAYFILTER_CAMERA", "DISPLAYFILTER_LIGHT", "DISPLAYFILTER_NULL", "DISPLAYFILTER_OTHER",
                    "DISPLAYFILTER_SPLINE")
 
+# Tiefe über den Positions-Pass (RTX-C4D-005, am Host gemessen: ``docs/measurements/2026-10-04-position-pass.md``,
+# ``2026-10-05-paesse-dateiweg.md``): Videopost 1027117 und Kanal „Post-Effekte" liefern die Float-Ebene 1027751 mit
+# der Weltposition je Pixel, ohne Treffer (0, 0, 0), auch mit Antialiasing ohne Mischwerte an Silhouetten — Standard
+# und Physical, im selben Render wie Normalen und Albedo. Beides kommt nur transient in die Voreinstellung.
+POSITION_VIDEOPOST = 1027117
+POSITION_LAYER = 1027751
+POST_EFFECTS = getattr(c4d, "VPBUFFER_ALLPOSTEFFECTS", None)
+# Objekt-ID über den Dateiweg (gemessen 05.10.2026): ``RenderDocument`` legt Objektpuffer nicht als Ebene in die
+# MultipassBitmap, schreibt sie aber mit „Multi-Pass speichern" als TIFF 32 Bit ``<Name>_object_<ID>.tif``; mit
+# Antialiasing „Keines" exakt 0 oder 1. Grundlage sind die Compositing-Tags des Nutzers (Kanäle 1–12).
+OBJECT_BUFFER = getattr(c4d, "VPBUFFER_OBJECTBUFFER", None)
+COMPOSITING_TAG = getattr(c4d, "Tcompositing", None)
+_CHANNELS = tuple((getattr(c4d, f"COMPOSITINGTAG_ENABLECHN{i}", None), getattr(c4d, f"COMPOSITINGTAG_IDCHN{i}", None))
+                  for i in range(12))
+COMPOSITING_CHANNELS = tuple(pair for pair in _CHANNELS if None not in pair)
+PASS_FILE_PREFIX = "pass"
+
 # Dokumentkennung: Untercontainer unter der Plugin-ID im Container des Dokuments (QC-10).
 DOCUMENT_KEY_ID = 1
 DOCUMENT_KEY_PREFIX = f"{host.KEY}:"
@@ -115,12 +138,19 @@ class CaptureError(RuntimeError):
     """Ein Grund, warum nicht aufgenommen wurde — lesbar, ohne Pfad."""
 
 
+# Woher ein Pass kommt.
+LAYER = "layer"  # Ebene eines Multi-Pass-Kanals, den der Nutzer eingeschaltet hat
+POSITION = "position"  # Positions-Pass, transient (Tiefe)
+FILES = "files"  # Dateiweg: Multi-Pass speichern aus einer transienten Kopie der Voreinstellung (Objekt-ID)
+NOWHERE = "nowhere"  # Cinema 4D liefert den Pass mit Standard/Physical nicht
+
+
 @dataclass(frozen=True)
 class PassSpec:
     role: str
     capability: str
     label: str
-    buffer: int | None  # VPBUFFER_* des Multi-Pass-Kanals; None: im c4d-Modul nicht vorhanden
+    buffer: int | None  # VPBUFFER_* des Multi-Pass-Kanals (Tiefe: die Positions-Ebene); None: im c4d-Modul nicht vorhanden
     channel: str  # wie der Kanal im Multi-Pass-Menü heißt
     color_space: str
     channels: int = pngwrite.RGB  # Kanäle der PNG-Datei: RGB (Albedo, Normalen) oder Graustufen (Tiefe, IDs)
@@ -129,15 +159,13 @@ class PassSpec:
     mirror_z: bool = False  # Z-Komponente spiegeln: Cinema 4D (linkshändig) → Exportraum des Manifests (x, y, −z)
     blocked_by: str | None = None
     blocked_note: str | None = None
+    source: str = LAYER
 
 
 PASSES: tuple[PassSpec, ...] = (
-    PassSpec("depth", "depthPass", "Tiefe (Depth)", getattr(c4d, "VPBUFFER_DEPTH", None), "Depth", "non-color",
-             blocked_by="QC-03",
-             blocked_note="Tiefe wird nicht übertragen: Standard/Physical kodieren den Abstand zur Fokusebene "
-                          "(Kontrast über Front/Rear Blur), nicht normalized-linear zwischen near und far entlang "
-                          "der Blickachse; die Umrechnung ist nicht belegt "
-                          "(integrations/cinema-4d/docs/open-questions.md, QC-03)."),
+    # QC-03 (05.10.2026): planare Tiefe aus dem Positions-Pass, normalized-linear zwischen near und far.
+    PassSpec("depth", "depthPass", "Tiefe (Depth)", POSITION_LAYER if POST_EFFECTS is not None else None,
+             "Positions-Pass", "non-color", channels=pngwrite.GRAY, source=POSITION),
     # QC-04 am Host gemessen (01.10.2026, docs/measurements/2026-10-01-standard-paesse.md): die Float-Ebene ist exakt
     # (n + 1) / 2, linear, im Weltraum in Cinema-4D-Achsen; ohne Treffer steht (0, 0, 0) — der Vertrag verlangt dort 0,5.
     # ``normal.space: world`` ist der Raum des Manifests, in dem auch Kamera und Modell geliefert werden (Exportraum,
@@ -148,6 +176,14 @@ PASSES: tuple[PassSpec, ...] = (
     # („Reflectance Channel Diffuse Albedo", C++ 2026, group VPBUFFER).
     PassSpec("albedo", "albedoPass", "Albedo", getattr(c4d, "VPBUFFER_REFLECTANCE_ALBEDO", None), "Albedo",
              "linear"),
+    # QC-05 (05.10.2026): Objektpuffer der Compositing-Tags über den Dateiweg, als Index ohne Antialiasing.
+    PassSpec("object-id", "objectIdPass", "Objekt-ID", OBJECT_BUFFER if COMPOSITING_CHANNELS else None, "Objektpuffer",
+             "non-color", channels=pngwrite.GRAY, source=FILES),
+    # QC-06: Standard und Physical haben keinen Kanal für eine Material-ID (gemessen 05.10.2026); offen als
+    # Produktentscheidung (transientes Compositing-Tag je Material oder Redshift).
+    PassSpec("material-id", "materialIdPass", "Material-ID", 0, "Material-ID", "non-color", channels=pngwrite.GRAY,
+             blocked_by="QC-06", blocked_note="Die Material-ID liefert Cinema 4D mit Standard oder Physical nicht.",
+             source=NOWHERE),
 )
 PASS_BY_ROLE = {spec.role: spec for spec in PASSES}
 
@@ -254,18 +290,64 @@ def _multipass_channels(rd) -> set:
     return found
 
 
-def pass_status(spec: PassSpec, rd) -> tuple[str, str]:
+def _objects(obj):
+    while obj is not None:
+        yield obj
+        yield from _objects(obj.GetDown())
+        obj = obj.GetNext()
+
+
+def object_buffer_ids(doc) -> list[int]:
+    """Die Objektpuffer-IDs, die Compositing-Tags im Dokument vergeben (eingeschaltete Kanäle), aufsteigend.
+
+    Nur gelesen: das Plugin legt keine Tags an und ändert keine (Entscheidung RTX-C4D-005).
+    """
+    if COMPOSITING_TAG is None:
+        return []
+    found = set()
+    for obj in _objects(doc.GetFirstObject()):
+        for tag in obj.GetTags():
+            if tag.GetType() != COMPOSITING_TAG:
+                continue
+            for enable, number in COMPOSITING_CHANNELS:
+                if tag[enable]:
+                    value = tag[number]
+                    if isinstance(value, int) and value > 0:
+                        found.add(value)
+    return sorted(found)
+
+
+def position_pass_available() -> bool:
+    return POST_EFFECTS is not None and c4d.plugins.FindPlugin(POSITION_VIDEOPOST, c4d.PLUGINTYPE_VIDEOPOST) is not None
+
+
+def pass_status(spec: PassSpec, doc) -> tuple[str, str]:
     """Zustand eines Passes in **diesem** Dokument und was der Nutzer einstellen muss."""
+    if spec.source == NOWHERE:
+        return "unavailable", spec.blocked_note or ""
+    rd = doc.GetActiveRenderData()
     engine = rd[c4d.RDATA_RENDERENGINE]
     where = f"Rendervoreinstellungen › Multi-Pass › Kanal „{spec.channel}“"
+    if spec.source == LAYER:
+        then = f", dann {where} hinzufügen"
+    elif spec.source == FILES:
+        then = ", dann an Objekten ein Compositing-Tag mit Objektpuffer vergeben"
+    else:
+        then = ""
     if engine == CORONA:
         return ("requires-user-action",
-                "Mit Corona derzeit nicht übertragbar: seine Pässe haben keinen vertragskonformen Weg "
-                "(Datenpässe über den Standard-Renderer folgen mit QC-03 bis QC-06). "
-                f"Für Datenpässe Renderer Standard oder Physical wählen, dann {where} hinzufügen.")
+                f"Mit Corona nicht übertragbar. Für Datenpässe Renderer Standard oder Physical wählen{then}.")
     if not MULTIPASS_RENDERERS or engine not in MULTIPASS_RENDERERS:
-        return ("requires-user-action",
-                f"Renderer Standard oder Physical wählen (jetzt {renderer_label(engine)}), dann {where} hinzufügen.")
+        return ("requires-user-action", f"Renderer Standard oder Physical wählen (jetzt {renderer_label(engine)}){then}.")
+    if spec.source == POSITION:
+        if not position_pass_available():
+            return "unavailable", "Der Positions-Pass fehlt in diesem Cinema 4D."
+        return "available", ""
+    if spec.source == FILES:
+        if not object_buffer_ids(doc):
+            return ("requires-user-action",
+                    "An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1).")
+        return "available", ""
     if not rd[c4d.RDATA_MULTIPASS_ENABLE]:
         return "requires-user-action", f"Multi-Pass einschalten und {where} hinzufügen."
     if spec.buffer not in _multipass_channels(rd):
@@ -306,8 +388,11 @@ def probe(doc) -> dict:
     for spec in PASSES:
         if spec.buffer is None:
             continue
-        state, _hint = pass_status(spec, rd)
-        capabilities[spec.capability] = {"state": state, "constraints": {"mediaTypes": [PNG]}}
+        state, _hint = pass_status(spec, doc)
+        entry = {"state": state}
+        if state != "unavailable":
+            entry["constraints"] = {"mediaTypes": [PNG]}
+        capabilities[spec.capability] = entry
     return capabilities
 
 
@@ -316,7 +401,7 @@ def pass_rows(doc) -> list[tuple[PassSpec, str, str]]:
     rd = doc.GetActiveRenderData()
     if rd is None:
         return []
-    return [(spec, *pass_status(spec, rd)) for spec in PASSES if spec.buffer is not None]
+    return [(spec, *pass_status(spec, doc)) for spec in PASSES if spec.buffer is not None]
 
 
 # --------------------------------------------------------------------------
@@ -511,19 +596,205 @@ def _save_pass(layer, path: str, size: tuple[int, int], spec: PassSpec, bit_dept
     return True
 
 
+class PassMissing(Exception):
+    """Ein gewählter Pass geht nicht mit — der Text sagt in Nutzersprache, warum; die Aufnahme läuft weiter."""
+
+
+def _get(obj, name: str, default=None):
+    pid = getattr(c4d, name, None)
+    if pid is None:
+        return default
+    try:
+        value = obj[pid]
+    except (AttributeError, TypeError, KeyError):
+        return default
+    return default if value is None else value
+
+
+def _depth_range(camera, hits: list, meters: float) -> tuple[float, float, str]:
+    """``(near, far, Herkunft)`` in Metern: Clipping der Kamera, wo eingeschaltet, sonst die Treffer im Bild.
+
+    Ohne Clipping wäre ``far`` unendlich; dann gilt die kleinste und größte Tiefe der Treffer, auf Millimeter nach
+    außen gerundet. ``far`` liegt immer über ``near``.
+    """
+    near = far = None
+    clipped, measured = [], []
+    if _get(camera, "CAMERAOBJECT_NEAR_CLIPPING_ENABLE", False):
+        near = float(_get(camera, "CAMERAOBJECT_NEAR_CLIPPING", 0.0)) * meters
+        clipped.append("near")
+    if _get(camera, "CAMERAOBJECT_FAR_CLIPPING_ENABLE", False):
+        far = float(_get(camera, "CAMERAOBJECT_FAR_CLIPPING", 0.0)) * meters
+        clipped.append("far")
+    if near is None:
+        near = math.floor(min(hits) * meters * 1000.0) / 1000.0
+        measured.append("near")
+    if far is None:
+        far = math.ceil(max(hits) * meters * 1000.0) / 1000.0
+        measured.append("far")
+    sources = ([f"{' und '.join(clipped)} aus dem Clipping der Kamera"] if clipped else []) + \
+              ([f"{' und '.join(measured)} aus den Treffern im Bild"] if measured else [])
+    near = max(round(near, 6), 0.000001)
+    far = round(far, 6)
+    if far <= near:
+        far = round(near + 0.001, 6)
+    return near, far, ", ".join(sources)
+
+
+def _write_depth(doc, layer, path: str, size: tuple[int, int], bit_depth: int) -> tuple[dict, str]:
+    """Planare Tiefe aus der Positions-Ebene als Grau-PNG ``normalized-linear`` — ``(depth, Herkunft von near/far)``.
+
+    ``d = (P − Kamera) · Blickrichtung`` in Einheiten des Dokuments, in Meter umgerechnet wie das Modell; kein Treffer
+    (0, 0, 0) wird 1 (Vertrag 1.3.0).
+    """
+    from . import export  # export importiert capture
+
+    view = render_view(doc)
+    camera = view.GetSceneCamera(doc) if view is not None else None
+    if camera is None:
+        raise PassMissing("Für die Tiefe in der Renderansicht eine Kamera aktivieren.")
+    try:
+        meters = export.meters_per_unit(doc)
+    except export.ExportError as error:
+        raise PassMissing(str(error)) from None
+    matrix = camera.GetMg()
+    axis = matrix.v3
+    norm = math.sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z) or 1.0
+    ox, oy, oz = matrix.off.x, matrix.off.y, matrix.off.z
+    ax, ay, az = axis.x / norm, axis.y / norm, axis.z / norm
+    width, height = size
+    buffer = bytearray(12 * width)
+    unpack = struct.Struct(f"<{3 * width}f").unpack
+    depths: list = []
+    for y in range(height):
+        if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
+            raise PassMissing("Cinema 4D hat den Positions-Pass nicht lesbar geliefert.")
+        values = unpack(bytes(buffer))
+        for x in range(width):
+            px, py, pz = values[3 * x], values[3 * x + 1], values[3 * x + 2]
+            depths.append(None if (px == 0.0 and py == 0.0 and pz == 0.0)
+                          else (px - ox) * ax + (py - oy) * ay + (pz - oz) * az)
+    hits = [d for d in depths if d is not None]
+    if not hits:
+        raise PassMissing("Im Bild ist keine Geometrie; die Tiefe bleibt leer.")
+    near, far, origin = _depth_range(camera, hits, meters)
+    span = far - near
+
+    def rows():
+        for y in range(height):
+            yield [1.0 if d is None else (d * meters - near) / span for d in depths[y * width:(y + 1) * width]]
+
+    pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth, rows())
+    return {"encoding": "normalized-linear", "near": near, "far": far}, origin
+
+
+def _object_files(doc, rd, ids: list[int], folder: str, size: tuple[int, int], progress) -> None:
+    """Der Dateiweg: eine markierte Kopie der Voreinstellung (Antialiasing „Keines", je ID ein Objektpuffer-Kanal,
+    Multi-Pass speichern als TIFF 32 Bit nach ``folder``) nur für diesen Render aktiv, danach entfernt."""
+    names = ("RDATA_SAVEIMAGE", "RDATA_MULTIPASS_SAVEIMAGE", "RDATA_MULTIPASS_SAVEONEFILE", "RDATA_MULTIPASS_FILENAME",
+             "RDATA_MULTIPASS_SAVEFORMAT", "RDATA_MULTIPASS_SAVEDEPTH", "RDATA_MULTIPASS_SAVEDEPTH_32",
+             "RDATA_ANTIALIASING", "RDATA_ANTIALIASING_NONE", "FILTER_TIF", "MULTIPASSOBJECT_OBJECTBUFFER")
+    if any(getattr(c4d, name, None) is None for name in names):
+        raise PassMissing("Dieses Cinema 4D kann die Objektpuffer nicht speichern.")
+    copy = rd.GetClone(c4d.COPYFLAGS_NONE)
+    transient._mark(copy)
+    channel = copy.GetFirstMultipass()
+    while channel is not None:  # nur die Objektpuffer: nichts sonst landet als Datei
+        following = channel.GetNext()
+        channel.Remove()
+        channel = following
+    for number in ids:
+        buffer = c4d.BaseList2D(c4d.Zmultipass)
+        buffer[c4d.MULTIPASSOBJECT_TYPE] = OBJECT_BUFFER
+        buffer[c4d.MULTIPASSOBJECT_OBJECTBUFFER] = number
+        copy.InsertMultipass(buffer)
+    _prepare_data(copy.GetDataInstance(), size)
+    # Über die Parameter des Objekts, nicht den Container: der Dateiname ist ein ``Filename`` — als Text in den
+    # Container geschrieben meldet Cinema 4D 2026.3.1 „CRITICAL: Stop“ und speichert nichts (am Host beobachtet).
+    copy[c4d.RDATA_GLOBALSAVE] = True
+    copy[c4d.RDATA_SAVEIMAGE] = False
+    copy[c4d.RDATA_MULTIPASS_ENABLE] = True
+    copy[c4d.RDATA_MULTIPASS_SAVEIMAGE] = True
+    copy[c4d.RDATA_MULTIPASS_SAVEONEFILE] = False
+    copy[c4d.RDATA_MULTIPASS_FILENAME] = os.path.join(folder, PASS_FILE_PREFIX)
+    copy[c4d.RDATA_MULTIPASS_SAVEFORMAT] = c4d.FILTER_TIF
+    copy[c4d.RDATA_MULTIPASS_SAVEDEPTH] = c4d.RDATA_MULTIPASS_SAVEDEPTH_32
+    copy[c4d.RDATA_ANTIALIASING] = c4d.RDATA_ANTIALIASING_NONE
+    bitmap = c4d.bitmaps.MultipassBitmap(size[0], size[1], c4d.COLORMODE_RGBf)
+    if bitmap is None:
+        raise CaptureError("Cinema 4D konnte keine MultipassBitmap anlegen.")
+    doc.InsertRenderData(copy)
+    try:
+        doc.SetActiveRenderData(copy)
+        _render(doc, copy.GetDataInstance(), bitmap, progress, "Objekt-ID rendern", bake=False)
+    finally:
+        doc.SetActiveRenderData(rd)
+        copy.Remove()
+
+
+def _write_object_ids(doc, rd, path: str, size: tuple[int, int], bit_depth: int, progress) -> list[int]:
+    """Die Objekt-ID als Grau-PNG: je Pixel die ID des Objektpuffers, 0 ohne — geprüft, sonst ``PassMissing``."""
+    ids = object_buffer_ids(doc)
+    if not ids:
+        raise PassMissing("An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1).")
+    top = (1 << bit_depth) - 1
+    if ids[-1] > top:
+        if bit_depth == 8 and ids[-1] <= 65535:
+            raise PassMissing(f"Objektpuffer-ID {ids[-1]} passt nicht in 8 Bit; „16 Bit“ wählen oder IDs bis {top} vergeben.")
+        raise PassMissing(f"Objektpuffer-IDs bis {top} vergeben (gefunden: {ids[-1]}).")
+    width, height = size
+    folder = tempfile.mkdtemp(prefix="rendertaxi-objektpuffer-")
+    try:
+        _object_files(doc, rd, ids, folder, size, progress)
+        index = [0] * (width * height)
+        for number in ids:
+            name = os.path.join(folder, f"{PASS_FILE_PREFIX}_object_{number}.tif")
+            if not os.path.isfile(name):
+                raise PassMissing(f"Cinema 4D hat den Objektpuffer {number} nicht geliefert.")
+            try:
+                w, h, values = tiffread.read_float_gray(name)
+            except (OSError, tiffread.TiffError):
+                raise PassMissing(f"Der Objektpuffer {number} ist nicht lesbar.") from None
+            if (w, h) != (width, height):
+                raise PassMissing(f"Der Objektpuffer {number} hat nicht die Bildgröße.")
+            for i, value in enumerate(values):
+                if value == 0.0:
+                    continue
+                if abs(value - 1.0) > 1e-6:
+                    raise PassMissing("Die Objektpuffer sind nicht eindeutig (Kantenglättung); die Objekt-ID bleibt geplant.")
+                if index[i]:
+                    raise PassMissing("Ein Bildpunkt liegt in mehreren Objektpuffern; je Objekt nur einen Objektpuffer vergeben.")
+                index[i] = number
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
+                       ([value / top for value in index[y * width:(y + 1) * width]] for y in range(height)))
+    return ids
+
+
+def _remove(path: str) -> None:
+    for stale in (path, path + ".part"):
+        try:
+            os.remove(stale)
+        except FileNotFoundError:
+            pass
+
+
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
                   allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH):
     """Beauty als PNG und die gewählten Pässe als PNG mit ``bit_depth`` — ``(beauty, pass_files, planned)``.
 
-    Gerendert wird mit dem aktiven Renderer auf einer Kopie des Containers der
-    aktiven Rendervoreinstellung; das Dokument bleibt unverändert. Ein
-    gewählter Pass wird ``planned`` mit Begründung, wenn eine offene Frage
-    ``present`` verbietet (QC-03, QC-04), der Kanal nicht eingeschaltet ist
-    oder der Server ``image/png`` nicht annimmt — kein stiller Umweg über ein
-    anderes Format. Nur wenn ein Pass wirklich als Datei mitgeht, rendert das
-    Plugin ein zweites Mal in eine MultipassBitmap (``COLORMODE_RGBf``, roh im
-    Renderraum) und speichert die Ebene als PNG 8 oder 16 Bit. Eine ungültige
-    Bittiefe wird zum Standard 8 Bit (``mf.data_pass_bit_depth``).
+    Gerendert wird mit dem aktiven Renderer auf einer Kopie des Containers der aktiven Rendervoreinstellung. Ein
+    gewählter Pass wird ``planned`` mit Begründung, wenn Cinema 4D ihn nicht liefert (Material-ID), der Kanal nicht
+    eingeschaltet ist oder der Server ``image/png`` nicht annimmt — kein stiller Umweg über ein anderes Format.
+
+    * **Normalen, Albedo:** zweiter Render in eine MultipassBitmap (``COLORMODE_RGBf``, roh im Renderraum), die Ebene
+      als PNG aus den Floats.
+    * **Tiefe:** im selben zweiten Render der Positions-Pass — Videopost und Kanal „Post-Effekte" nur für diesen
+      Render in der Voreinstellung (``transient``, exakter Rückbau); planare Tiefe ``normalized-linear``.
+    * **Objekt-ID:** dritter Render über den Dateiweg (``_object_files``), Index-PNG; das temporäre Verzeichnis
+      wird immer entfernt.
+
+    Eine ungültige Bittiefe wird zum Standard 8 Bit (``mf.data_pass_bit_depth``).
     """
     bit_depth = mf.data_pass_bit_depth(bit_depth)
     rd = doc.GetActiveRenderData()
@@ -539,14 +810,13 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
     for role in roles:
         spec = PASS_BY_ROLE[role]
         path = f"images/{role}.png"
-        state, hint = pass_status(spec, rd) if spec.buffer is not None else ("unknown", "")
+        state, hint = pass_status(spec, doc) if spec.buffer is not None else ("unknown", "")
         if spec.blocked_by:
             planned.append(mf.PlannedRole(role, path, PNG, spec.blocked_note))
         elif state != "available":
-            planned.append(mf.PlannedRole(role, path, PNG, f"Pass nicht eingeschaltet: {hint}".strip()))
+            planned.append(mf.PlannedRole(role, path, PNG, f"Pass nicht verfügbar: {hint}".strip()))
         elif not png_allowed:
-            planned.append(mf.PlannedRole(role, path, PNG,
-                                          "Der Server nimmt image/png nicht an (limits.allowedMediaTypes)."))
+            planned.append(mf.PlannedRole(role, path, PNG, "Der Server nimmt derzeit kein PNG an."))
         else:
             wanted.append(spec)
 
@@ -559,33 +829,89 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
     _save_png(bitmap, beauty_path)
 
     files: list[mf.CaptureFile] = []
-    if wanted:
+
+    def missing(spec: PassSpec, reason: str) -> None:
+        _remove(os.path.join(images, f"{spec.role}.png"))
+        planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.png", PNG, reason))
+
+    def describe(spec: PassSpec, path: str, note, **extra) -> None:
+        """``note(written)`` bekommt „PNG <Bit> Bit <Kanäle>“ aus der geschriebenen Datei."""
+        image = dict(mf.describe_png(path), colorSpace=spec.color_space)
+        written = f"PNG {image['bitDepth']} Bit {image['channels']}"
+        if image["bitDepth"] != bit_depth:
+            written += f" (gewählt: {bit_depth} Bit; die Datei entscheidet)"
+        files.append(mf.capture_file(path, root, spec.role, PNG, image, note(written), **extra))
+
+    layered_specs = [spec for spec in wanted if spec.source in (LAYER, POSITION)]
+    if layered_specs:
         layered = c4d.bitmaps.MultipassBitmap(size[0], size[1], c4d.COLORMODE_RGBf)
         if layered is None:
             raise CaptureError("Cinema 4D konnte keine MultipassBitmap anlegen.")
-        _render(doc, data, layered, progress, "Pässe rendern", bake=False)
-        for spec in wanted:
-            layer = _find_layer(layered, spec.buffer)
-            relative = f"images/{spec.role}.png"
+        depth_spec = next((spec for spec in layered_specs if spec.source == POSITION), None)
+        layer_data = data.GetClone(c4d.COPYFLAGS_NONE)
+        problems: list[str] = []
+        swept = 0
+        if depth_spec is None:
+            _render(doc, layer_data, layered, progress, "Pässe rendern", bake=False)
+        else:
+            layer_data[c4d.RDATA_MULTIPASS_ENABLE] = True
+            with transient.TransientRenderSettings(doc) as settings:
+                swept = settings.swept
+                try:
+                    settings.videopost(POSITION_VIDEOPOST, {})
+                    settings.multipass(POST_EFFECTS)
+                except Exception:  # noqa: BLE001 — Regel 3: ohne Positions-Pass bleibt die Tiefe geplant
+                    layered_specs.remove(depth_spec)
+                    missing(depth_spec, "Der Positions-Pass ließ sich nicht einschalten; die Tiefe bleibt geplant.")
+                    depth_spec = None
+                _render(doc, layer_data, layered, progress, "Pässe rendern", bake=False)
+            problems = settings.problems
+        space = ("Float der Ebene im Renderraum ohne Anzeigetransformation (RENDERFLAGS_OCIO_RAW_RENDERING; "
+                 "bei OCIO ACEScg, QC-12)" if OCIO_RAW is not None
+                 else "Float der Ebene, linear, Primärvalenzen nicht belegt (QC-12)")
+        for spec in layered_specs:
             path = os.path.join(images, f"{spec.role}.png")
-            if layer is None or not _save_pass(layer, path, size, spec, bit_depth):
-                planned.append(mf.PlannedRole(spec.role, relative, PNG,
-                                              f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert."))
+            layer = _find_layer(layered, spec.buffer)
+            if spec.source == POSITION:
+                if layer is None:
+                    missing(spec, "Cinema 4D hat den Positions-Pass nicht geliefert; die Tiefe bleibt geplant.")
+                    continue
+                try:
+                    depth, origin = _write_depth(doc, layer, path, size, bit_depth)
+                except PassMissing as reason:
+                    missing(spec, str(reason))
+                    continue
+                tail = f"; {swept} verwaiste rendertaxi-Einträge aus der Rendervoreinstellung entfernt" if swept else ""
+                tail += f"; Zurücksetzen meldete: {', '.join(problems)}" if problems else ""
+                describe(spec, path, lambda written, depth=depth, origin=origin, tail=tail: (
+                    f"Tiefe entlang der Blickachse (planar) aus dem Positions-Pass von {engine} (Videopost 1027117, nur "
+                    f"für den Render eingeschaltet und zurückgesetzt), {written}, normalized-linear zwischen near "
+                    f"{depth['near']:g} m und far {depth['far']:g} m ({origin}), kein Treffer = 1, zweiter "
+                    f"Renderdurchgang (QC-03, am Host gemessen){tail}."), depth=depth)
                 continue
-            image = dict(mf.describe_png(path), colorSpace=spec.color_space)
-            space = ("Float der Ebene im Renderraum ohne Anzeigetransformation (RENDERFLAGS_OCIO_RAW_RENDERING; "
-                     "bei OCIO ACEScg, QC-12)" if OCIO_RAW is not None
-                     else "Float der Ebene, linear, Primärvalenzen nicht belegt (QC-12)")
-            written = f"PNG {image['bitDepth']} Bit {image['channels']}"
-            if image["bitDepth"] != bit_depth:
-                written += f" (gewählt: {bit_depth} Bit; die Datei entscheidet)"
-            note = (f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space}, "
-                    f"eigener PNG-Schreiber aus den Floats (GetPixelCnt), zweiter Renderdurchgang.")
-            if spec.normal_space:
-                note += (" Normalen im Exportraum des Manifests (wie Kamera und Modell), aus den rohen Cinema-4D-Weltnormalen "
-                         "gespiegelt (z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5 (am Host gemessen, QC-04).")
+            if layer is None or not _save_pass(layer, path, size, spec, bit_depth):
+                missing(spec, f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert.")
+                continue
+            extra = (" Normalen im Exportraum des Manifests (wie Kamera und Modell), aus den rohen Cinema-4D-Weltnormalen "
+                     "gespiegelt (z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5 (am Host gemessen, QC-04)."
+                     if spec.normal_space else "")
             normal = {"space": spec.normal_space} if spec.normal_space else None
-            files.append(mf.capture_file(path, root, spec.role, PNG, image, note, normal=normal))
+            describe(spec, path, lambda written, spec=spec, extra=extra: (
+                f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space}, eigener PNG-Schreiber aus den Floats "
+                f"(GetPixelCnt), zweiter Renderdurchgang.{extra}"), normal=normal)
+
+    for spec in [spec for spec in wanted if spec.source == FILES]:
+        path = os.path.join(images, f"{spec.role}.png")
+        try:
+            ids = _write_object_ids(doc, rd, path, size, bit_depth, progress)
+        except PassMissing as reason:
+            missing(spec, str(reason))
+            continue
+        describe(spec, path, lambda written, ids=ids: (
+            f"Objekt-ID aus den Objektpuffern der Compositing-Tags (IDs {', '.join(map(str, ids))}), {engine}, "
+            f"{written}, Wert = ID, 0 = kein Objektpuffer; Multi-Pass als TIFF 32 Bit in ein temporäres Verzeichnis, "
+            f"Antialiasing „Keines“ nur in einer Kopie der Rendervoreinstellung, dritter Renderdurchgang (QC-05, am "
+            f"Host gemessen)."))
 
     extra = beauty_engine_note(rd[c4d.RDATA_RENDERENGINE])
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),

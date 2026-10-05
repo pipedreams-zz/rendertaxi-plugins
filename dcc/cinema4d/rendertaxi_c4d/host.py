@@ -41,9 +41,9 @@ HOST = client.configure(client.Host(
     label=LABEL,
     plugin_version=PLUGIN_VERSION,
     roots=(PLUGIN_DIR,),
-    # Tiefe: Standard/Physical kodieren den Abstand zur Fokusebene, die Umrechnung in
-    # normalized-linear (1.3.0) ist nicht belegt (QC-03). Normalen sind seit RTX-C4D-005 belegt (QC-04, gemessen).
-    never_present={"depth": "QC-03"},
+    # Tiefe (QC-03, Positions-Pass), Normalen (QC-04) und Objekt-ID (QC-05, Dateiweg) sind seit RTX-C4D-005 am Host
+    # gemessen. Die Material-ID liefern Standard und Physical nicht (QC-06, Produktentscheidung offen).
+    never_present={"material-id": "QC-06"},
 ))
 
 

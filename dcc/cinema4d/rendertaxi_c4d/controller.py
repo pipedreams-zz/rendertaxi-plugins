@@ -490,7 +490,7 @@ class Controller:
     def selected_roles(self) -> list[str]:
         if self.form.capture_kind != BEAUTY:
             return []
-        return [role for role in ("depth", "normal", "albedo") if role in self.form.passes]
+        return [role for role in ("depth", "normal", "albedo", "object-id", "material-id") if role in self.form.passes]
 
     # -- Modell --------------------------------------------------------------
 

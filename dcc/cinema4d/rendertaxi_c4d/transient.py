@@ -49,15 +49,31 @@ def _items(first):
 
 
 def sweep(doc) -> int:
-    """Entfernt verwaiste Marker-Videoposts und -Kanäle aus allen Rendervoreinstellungen des Dokuments; liefert die Zahl."""
+    """Entfernt verwaiste Marker-Einträge des Dokuments und liefert die Zahl: Videoposts und Kanäle in jeder
+    Rendervoreinstellung, und markierte Kopien einer ganzen Rendervoreinstellung (Dateiweg der Objekt-ID,
+    RTX-C4D-005). Eigentum nur über Name **und** privaten Marker. Ist eine verwaiste Kopie aktiv, wird zuerst eine
+    unmarkierte Voreinstellung aktiv."""
     removed = 0
     rd = doc.GetFirstRenderData()
+    orphans = []
     while rd is not None:
-        for first in (rd.GetFirstVideoPost(), rd.GetFirstMultipass()):
-            for item in [i for i in _items(first) if _is_marker(i)]:
-                item.Remove()
-                removed += 1
+        if _is_marker(rd):
+            orphans.append(rd)
+        else:
+            for first in (rd.GetFirstVideoPost(), rd.GetFirstMultipass()):
+                for item in [i for i in _items(first) if _is_marker(i)]:
+                    item.Remove()
+                    removed += 1
         rd = rd.GetNext()
+    if orphans:
+        active = doc.GetActiveRenderData()
+        if any(orphan is active or orphan == active for orphan in orphans):
+            keep = next((item for item in _items(doc.GetFirstRenderData()) if not _is_marker(item)), None)
+            if keep is not None:
+                doc.SetActiveRenderData(keep)
+        for orphan in orphans:
+            orphan.Remove()
+            removed += 1
     return removed
 
 
