@@ -537,6 +537,41 @@ class RTX_OT_sign_out(Operator):
         return {"FINISHED"}
 
 
+class RTX_OT_forget_local(Operator):
+    bl_idname = "rendertaxi.forget_local"
+    bl_label = "Abmelden und lokale Daten entfernen"
+    bl_description = ("Jedes abgelegte Token beim Server widerrufen und Anmeldung, angefangene Übernahmen und "
+                      "ihre Dateien auf diesem Rechner löschen")
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_confirm(self, _event)
+
+    def execute(self, _context):
+        if STATE.job is not None:
+            _set_error("Es läuft schon ein Vorgang. Erst abwarten oder abbrechen.")
+            self.report({"WARNING"}, STATE.error)
+            return {"CANCELLED"}
+        directory = settings.user_dir()
+        online = bool(bpy.app.online_access)
+        server = STATE.server or _server_url()
+
+        def work(job: Job) -> None:
+            warning = auth.sign_out_and_forget(
+                directory, lambda url: ApiClient(normalize_server_url(url)), online=online)
+
+            def apply():
+                STATE.reset()
+                STATE.server = server
+                STATE.message = "Abgemeldet; lokale Daten entfernt."
+                if warning:
+                    STATE.error = warning
+
+            job.post(apply)
+
+        start_job("forget-local", work)
+        return {"FINISHED"}
+
+
 class RTX_OT_refresh(Operator):
     bl_idname = "rendertaxi.refresh"
     bl_label = "Aktualisieren"
@@ -1037,6 +1072,7 @@ CLASSES = (
     RTX_OT_sign_out,
     RTX_OT_refresh,
     RTX_OT_capture,
+    RTX_OT_forget_local,
     RTX_OT_resume,
     RTX_OT_discard,
     RTX_OT_count_model,

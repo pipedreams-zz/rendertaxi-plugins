@@ -97,6 +97,11 @@ class CredentialStore:
         servers[server] = entry
         self._save(servers)
 
+    def servers_with_token(self) -> list[str]:
+        """Die Serveradressen, für die ein Token abgelegt ist — sortiert."""
+        return sorted(server for server, entry in self._load().items()
+                      if isinstance(entry, dict) and isinstance(entry.get("token"), str) and entry["token"])
+
     def forget_token(self, server: str) -> None:
         """Abmelden löscht das Token; die ``deviceId`` der Installation bleibt."""
         servers = self._load()
@@ -201,6 +206,33 @@ class SettingsStore:
                 merged[key] = values[key]
         write_json_private(self.path, {"version": 1, "settings": merged})
         return merged
+
+
+def remove_local_data(directory: str) -> list[str]:
+    """**Alles**, was das Plugin in seinem Nutzerordner abgelegt hat, löschen (RTX-B-004).
+
+    Anmeldung, Übernahmen samt Dateien, Einstellungsdatei — der Ordner gehört
+    nur dem Plugin; er selbst bleibt (leer) stehen, damit ein laufendes Plugin
+    weiter hineinschreiben kann. Gibt die Namen zurück, die sich **nicht**
+    löschen ließen (leer heißt: nichts übrig). Wirft nie.
+    """
+    left: list[str] = []
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return left
+    except OSError:
+        return ["."]
+    for name in sorted(names):
+        path = os.path.join(directory, name)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.unlink(path)
+        except OSError:
+            left.append(name)
+    return left
 
 
 def has_local_material(pending: dict) -> bool:

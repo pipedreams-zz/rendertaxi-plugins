@@ -8,10 +8,14 @@ und Cinema 4D (``integrations/cinema-4d/plugin/rendertaxi_c4d/export.py``)
 benutzen genau diese Funktionen — eine zweite Zählung in einem Plugin wäre ein
 zweiter Weg zu derselben Grenze.
 
-``scale_scene`` ist der einzige Schreibzugriff: er hängt die Wurzeln der Szene
-unter einen Knoten mit gleichförmigem Maßstab und lässt den Binärteil
-unverändert. Das braucht Cinema 4D, dessen glTF-Exporter seinen Maßstab nicht
-über die Python-API preisgibt (QC-02).
+Zwei Schreibzugriffe, beide nur auf den JSON-Chunk, der Binärteil bleibt
+unverändert (``_write``): ``scale_scene`` hängt die Wurzeln der Szene unter
+einen Knoten mit gleichförmigem Maßstab — das braucht Cinema 4D, dessen
+glTF-Exporter seinen Maßstab nicht über die Python-API preisgibt (QC-02).
+``set_camera_extras`` schreibt Objektiv und Shift je Kamera in
+``cameras[i].extras.rendertaxi.camera`` (RTX-B-004) — glTF selbst kennt
+beides nicht. Format: ``integrations/_shared/contracts/v1/gltf-camera-extras.schema.json``,
+``capture-manifest.md`` Abschnitt 11.5.
 """
 
 from __future__ import annotations
@@ -204,6 +208,11 @@ def scale_scene(path: str, factor: float) -> None:
     nodes.append({"name": "rendertaxi-meter", "scale": [factor, factor, factor],
                   "children": list(scene.get("nodes", []))})
     scene["nodes"] = [len(nodes) - 1]
+    _write(path, document, rest)
+
+
+def _write(path: str, document: dict, rest: bytes) -> None:
+    """Den JSON-Chunk neu schreiben (auf vier Bytes mit Leerzeichen aufgefüllt), den Rest dahinter."""
     raw = json.dumps(document, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     raw += b" " * (-len(raw) % 4)
     total = 12 + 8 + len(raw) + len(rest)
@@ -212,3 +221,98 @@ def scale_scene(path: str, factor: float) -> None:
         handle.write(struct.pack("<II", len(raw), _JSON))
         handle.write(raw)
         handle.write(rest)
+
+
+# --------------------------------------------------------------------------
+# Objektiv und Shift je Kamera (RTX-B-004)
+# --------------------------------------------------------------------------
+
+# Der Schlüssel unter ``extras`` einer glTF-Kameradefinition und der Teil darin.
+CAMERA_EXTRAS_KEY = "rendertaxi"
+CAMERA_EXTRAS_PART = "camera"
+
+# Dieselben Grenzen wie ``camera.lens`` und ``camera.shift`` im Capture-Manifest 1.4.0 (Abschnitt 11.3).
+FOCAL_LENGTH_MM = (1.0, 1200.0)
+SENSOR_MM = (1.0, 300.0)
+SHIFT_LIMIT = 2.0
+SENSOR_FITS = ("auto", "horizontal", "vertical")
+
+
+def _finite_in(value, low: float, high: float) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+            and low <= value <= high)
+
+
+def camera_extras(lens: dict | None, shift: dict | None) -> dict | None:
+    """``{"lens": …, "shift": …}`` für ``extras.rendertaxi.camera`` — ``None``, wenn nichts zu sagen ist.
+
+    ``lens`` und ``shift`` haben die Form des Manifests (1.4.0): ``lens`` mit
+    ``focalLengthMm``, ``sensorWidthMm``, ``sensorFit``; ``shift`` mit ``x``,
+    ``y`` als Anteil der längeren Bildseite. Ein Wert außerhalb der Grenzen
+    lässt seinen Teil weg, statt eine Datei zu schreiben, die der Leser
+    verwerfen müsste; ein Shift ``(0, 0)`` entfällt.
+    """
+    block: dict = {}
+    if lens is not None and (_finite_in(lens.get("focalLengthMm"), *FOCAL_LENGTH_MM)
+                             and _finite_in(lens.get("sensorWidthMm"), *SENSOR_MM)
+                             and lens.get("sensorFit") in SENSOR_FITS):
+        block["lens"] = {"focalLengthMm": lens["focalLengthMm"], "sensorWidthMm": lens["sensorWidthMm"],
+                         "sensorFit": lens["sensorFit"]}
+    if shift is not None and all(_finite_in(shift.get(axis), -SHIFT_LIMIT, SHIFT_LIMIT) for axis in "xy"):
+        if shift["x"] != 0 or shift["y"] != 0:
+            block["shift"] = {"x": shift["x"], "y": shift["y"]}
+    return block or None
+
+
+def set_camera_extras(path: str, by_node_name: dict[str, dict]) -> int:
+    """Objektiv und Shift in die Kameradefinitionen der Knoten schreiben — die Zahl der beschriebenen.
+
+    ``by_node_name`` ordnet dem Namen eines Knotens mit Kamera den Block aus
+    ``camera_extras`` zu. Teilen sich mehrere Knoten eine Definition und
+    nennen verschiedene Werte, bleibt sie ohne Angabe — lieber Shift 0 als der
+    Shift einer anderen Kamera. Vorhandene ``extras`` anderer Schlüssel bleiben.
+    """
+    document, rest = _read(path)
+    cameras = document.get("cameras")
+    nodes = document.get("nodes")
+    if not isinstance(cameras, list) or not isinstance(nodes, list):
+        return 0
+    wanted: dict[int, dict | None] = {}
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("name") not in by_node_name:
+            continue
+        index = node.get("camera")
+        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(cameras):
+            continue
+        block = by_node_name[node["name"]]
+        if index in wanted and wanted[index] != block:
+            wanted[index] = None
+        else:
+            wanted[index] = block
+    written = 0
+    for index, block in sorted(wanted.items()):
+        definition = cameras[index]
+        if block is None or not isinstance(definition, dict):
+            continue
+        extras = definition.get("extras")
+        extras = dict(extras) if isinstance(extras, dict) else {}
+        extras[CAMERA_EXTRAS_KEY] = {CAMERA_EXTRAS_PART: block}
+        definition["extras"] = extras
+        written += 1
+    if written:
+        _write(path, document, rest)
+    return written
+
+
+def read_camera_extras(definition) -> dict | None:
+    """``extras.rendertaxi.camera`` einer Kameradefinition, geprüft wie im Browser — ``None`` ohne."""
+    if not isinstance(definition, dict):
+        return None
+    extras = definition.get("extras")
+    part = extras.get(CAMERA_EXTRAS_KEY) if isinstance(extras, dict) else None
+    block = part.get(CAMERA_EXTRAS_PART) if isinstance(part, dict) else None
+    if not isinstance(block, dict):
+        return None
+    lens = block.get("lens")
+    shift = block.get("shift")
+    return camera_extras(lens if isinstance(lens, dict) else None, shift if isinstance(shift, dict) else None)

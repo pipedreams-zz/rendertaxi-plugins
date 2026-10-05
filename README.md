@@ -10,12 +10,12 @@ Webanwendung.
 Fertige Zips liegen unter [Releases](../../releases/latest). Die
 Webanwendung verlinkt dieselbe Seite unter **Verbundene Geräte › Plugins herunterladen** (`/geraete`).
 
-| Plugin    | Ordner         | Voraussetzung                           | Stand           |
-| --------- | -------------- | --------------------------------------- | --------------- |
-| Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64) | verfügbar       |
-| Blender   | `dcc/blender`  | Blender 5.2 LTS (macOS, Win, Linux)     | Vorschau        |
-| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026 (macOS, Win)             | Vorschau        |
-| Rhino     | `dcc/rhino`    | —                                       | in Vorbereitung |
+| Plugin    | Ordner         | Voraussetzung                                     | Stand           |
+| --------- | -------------- | ------------------------------------------------- | --------------- |
+| Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64)           | verfügbar       |
+| Blender   | `dcc/blender`  | Blender 4.5 LTS, 5.1, 5.2 LTS (macOS, Win, Linux) | Vorschau        |
+| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026 (macOS, Win)                       | Vorschau        |
+| Rhino     | `dcc/rhino`    | —                                                 | in Vorbereitung |
 
 Jedes Plugin zählt seine Version eigenständig. Releases tragen ein Datum
 (`2026.09.26`) und nennen in ihrer Notiz die enthaltenen Versionen.

@@ -1,4 +1,4 @@
-# rendertaxi.ai für Blender 5.2 LTS
+# rendertaxi.ai für Blender 4.5 LTS, 5.1 und 5.2 LTS
 
 Die Extension übergibt die **aktuelle Ansicht** oder das **gerenderte Bild**
 an rendertaxi.ai — auf Wunsch zusammen mit dem **Modell** und der Kamera —,
@@ -8,9 +8,11 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 
 ## Installation
 
-Voraussetzung: Blender 5.2 LTS (macOS, Windows, Linux). Die Zip
-`rendertaxi-blender5.2-<Version>-<Release>.zip` (etwa
-`rendertaxi-blender5.2-0.3.0-2026.09.29.zip`) von der
+Voraussetzung: Blender 4.5 LTS, 5.1 oder 5.2 LTS (macOS, Windows, Linux) — ab
+Extension 0.5.0; ältere Fassungen der Extension brauchen 5.2. Die Zip
+`rendertaxi-blender4.5-<Version>-<Release>.zip` (etwa
+`rendertaxi-blender4.5-0.5.0-2026.10.05.zip`; die Zahl nach „blender" ist die
+Mindestversion) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 **Nicht entpacken** — die Zip ist die Extension.
@@ -26,8 +28,9 @@ laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen*
 
 Alternativ die Zip auf ein Blender-Fenster ziehen.
 
-**Aktualisieren:** eine neuere Zip genauso installieren. **Entfernen:**
-**Edit › Preferences › Add-ons › rendertaxi.ai** › Menü › **Uninstall**.
+**Aktualisieren:** eine neuere Zip genauso installieren. **Entfernen:** siehe
+[Entfernen](#entfernen) — „Uninstall" steht unter **Get Extensions**, nicht
+unter **Add-ons**.
 
 ## Verbinden
 
@@ -104,7 +107,9 @@ einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
 - **Was exportiert wird:** alle in der 3D-Ansicht sichtbaren Objekte der
   aktuellen Szene, Modifier angewendet, ohne Animation und Lichter. Die
   sichtbaren **Kameras** der Szene gehen mit ihren Namen mit (seit 0.4.0) —
-  im Blickpunkt lassen sie sich unter „Kameras im Modell" übernehmen.
+  im Blickpunkt lassen sie sich unter „Kameras im Modell" übernehmen, seit
+  0.5.0 jede mit ihrer Brennweite, ihrem Sensor und ihrem **Shift** (die Liste
+  nennt den Shift). Eine Panoramakamera geht nicht mit.
   **Materialien und Texturen** nur, wenn angehakt — die Datei wird dann
   größer.
 - **Vor dem Senden** nennt das Panel die Zahl der Dreiecke und sichtbaren
@@ -149,6 +154,23 @@ statt es still aufzulösen.
 diesem Rechner. Ist der Server gerade nicht erreichbar, wird das Token trotzdem
 gelöscht, und das Panel nennt den Weg über **Verbundene Geräte** in der
 Webanwendung.
+
+## Entfernen
+
+1. **Vorher:** **Edit › Preferences › Add-ons › rendertaxi.ai** aufklappen und
+   **Abmelden und lokale Daten entfernen** wählen. Das widerruft die Anmeldung
+   beim Server und löscht Anmeldung, angefangene Übernahmen und ihre Dateien auf
+   diesem Rechner. Ohne Online-Zugriff wird nur lokal gelöscht; das Gerät dann
+   in der Webanwendung unter **Verbundene Geräte** abmelden.
+2. **Deinstallieren:** **Edit › Preferences › Get Extensions**, oben den Filter
+   auf **Installed** stellen, beim Eintrag **rendertaxi.ai** das Menü (Pfeil
+   nach unten) › **Uninstall**. Unter **Add-ons** bietet Blender „Uninstall"
+   nur alten Add-ons an, nicht Extensions — deshalb fehlt der Knopf dort.
+
+Beim Deinstallieren löscht Blender selbst den Ordner der Extension samt
+Anmeldung und angefangenen Übernahmen und vergisst ihre Einstellungen
+(Serveradresse, Gerätename, Bittiefe). Die Anmeldung beim Server widerruft
+Blender **nicht** — dafür ist Schritt 1 da.
 
 ## Hinweise
 

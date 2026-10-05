@@ -7,7 +7,7 @@
 # Dateinamen tragen Hostprogramm, Hostversion, Plugin-Version und
 # Release-Nummer, damit Nutzer Stände unterscheiden können:
 #   rendertaxi-archicad28-1.0.0-2026.09.26.zip
-#   rendertaxi-blender5.2-0.1.0-2026.09.26.zip
+#   rendertaxi-blender4.5-0.5.0-2026.10.05.zip   (Zahl nach „blender" = Mindestversion)
 #   rendertaxi-cinema4d2026-0.1.0-2026.09.30.zip
 # RELEASE ist das Tag des Releases (der Release-Workflow übergibt es); ohne
 # Angabe das heutige Datum.

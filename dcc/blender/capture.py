@@ -20,6 +20,17 @@ Die Knoten rechnen die Kodierung des Vertrags (Tiefe normalisiert, Normalen
 ``(n + 1) / 2``, Indizes als Ganzzahl) und schreiben mit der Ansicht „Raw",
 also ohne Farbumrechnung. Kein EXR, auch nicht als Zwischenschritt.
 
+Blender 4.5 LTS (RTX-B-004, gemessen am 05.10.2026 mit 4.5.14) kennt keine
+Compositing-Gruppe an der Szene (``Scene.compositing_node_group`` kam mit 5.0),
+sondern einen in die Szene eingebetteten Baum (``Scene.node_tree``,
+``use_nodes``), den man nicht austauschen kann. Dort rendert das Add-on die
+Pässe deshalb aus einer **vorübergehenden Kopie der Szene** (``Scene.copy``:
+dieselben Objekte, Kamera, Welt und View Layer, ein eigener Baum), deren Baum
+es ergänzt — der Baum des Nutzers bleibt auch hier unverändert. Welcher Weg
+gilt, entscheidet die Laufzeit an der API (``COMPOSITING_GROUPS``), nicht an
+der Versionsnummer. ``ImageFormatSettings.media_type`` gibt es ebenfalls erst
+ab 5.0; ohne es ist ``file_format`` allein maßgeblich.
+
 Das Add-on **schaltet keinen Pass ein** und stellt keine Engine um. Welche
 Pässe möglich sind, sagt die Laufzeitprobe; was fehlt, nennt der Hinweis. Jede
 vorübergehende Änderung an der Szene (Auflösung, Ausgabeformat, Overlays,
@@ -44,8 +55,14 @@ from .rendertaxi_client.frame import viewpoint_size  # noqa: F401 — Teil der S
 
 DOCUMENT_KEY_PROPERTY = "rendertaxi_document_key"
 PNG = "image/png"
-# Die Ansicht der Farbverwaltung, die nichts umrechnet (Blender-Konfiguration 5.2).
+# Die Ansicht der Farbverwaltung, die nichts umrechnet (Blender-Konfiguration 4.5 bis 5.2).
 RAW_VIEW = "Raw"
+# Ab Blender 5.0: Compositing als austauschbare Gruppe an der Szene; 4.5: eingebetteter Baum.
+COMPOSITING_GROUPS = "compositing_node_group" in bpy.types.Scene.bl_rna.properties
+# Ab Blender 5.0: ``media_type`` vor ``file_format``; 4.5 kennt nur ``file_format``.
+IMAGE_SETTINGS = tuple(name for name in
+                       ("media_type", "file_format", "color_mode", "color_depth", "exr_codec", "compression")
+                       if name in bpy.types.ImageFormatSettings.bl_rna.properties)
 
 ENGINE_LABELS = {
     "CYCLES": "Cycles",
@@ -66,6 +83,7 @@ class PassSpec:
     color_space: str
     ui_path: str  # wo der Nutzer den Pass einschaltet
     extra_hint: str | None = None
+    socket_4_5: str | None = None  # Name des Ausgangs in Blender 4.5, wenn er anders heißt (gemessen 4.5.14)
 
     def enabled(self, view_layer) -> bool:
         if self.role == "albedo":
@@ -90,10 +108,10 @@ PASSES: tuple[PassSpec, ...] = (
              "Denoising Albedo", "rgb", "linear", "View Layer › Passes › Data › Denoising Data (Cycles)"),
     PassSpec("object-id", "objectIdPass", "Objekt-ID", ("CYCLES",),
              "Object Index", "gray", "non-color", "View Layer › Passes › Data › Object Index (Cycles)",
-             extra_hint="Objekte brauchen einen Pass-Index (Objekt › Relations)."),
+             extra_hint="Objekte brauchen einen Pass-Index (Objekt › Relations).", socket_4_5="IndexOB"),
     PassSpec("material-id", "materialIdPass", "Material-ID", ("CYCLES",),
              "Material Index", "gray", "non-color", "View Layer › Passes › Data › Material Index (Cycles)",
-             extra_hint="Materialien brauchen einen Pass-Index (Material › Settings)."),
+             extra_hint="Materialien brauchen einen Pass-Index (Material › Settings).", socket_4_5="IndexMA"),
 )
 PASS_BY_ROLE = {spec.role: spec for spec in PASSES}
 
@@ -239,16 +257,16 @@ def _resolution(scene, size: tuple[int, int] | None):
 @contextmanager
 def _image_settings(scene, media_type: str, file_format: str, color_mode: str, color_depth: str):
     settings = scene.render.image_settings
-    saved = {name: getattr(settings, name) for name in
-             ("media_type", "file_format", "color_mode", "color_depth", "exr_codec", "compression")}
+    saved = {name: getattr(settings, name) for name in IMAGE_SETTINGS}
     try:
-        settings.media_type = media_type
+        if "media_type" in saved:
+            settings.media_type = media_type
         settings.file_format = file_format
         settings.color_mode = color_mode
         settings.color_depth = color_depth
         yield
     finally:
-        for name in ("media_type", "file_format", "color_mode", "color_depth", "exr_codec", "compression"):
+        for name in IMAGE_SETTINGS:
             try:
                 setattr(settings, name, saved[name])
             except (TypeError, ValueError):
@@ -382,12 +400,19 @@ def _encoded(tree, spec: PassSpec, source, bit_depth: int, depth: tuple[float, f
 
 
 def _file_output(tree, spec: PassSpec, directory: str, bit_depth: int):
-    """Ein File-Output-Knoten: PNG, Ansicht „Raw" — Blender quantisiert, ohne umzurechnen."""
+    """Ein File-Output-Knoten: PNG, Ansicht „Raw" — Blender quantisiert, ohne umzurechnen.
+
+    5.x schreibt ``<directory>/<role>.png``; 4.5 hängt an den Pfad des Slots die
+    Bildnummer an (``<role>0001.png``) — ``_written`` findet beide.
+    """
     node = tree.nodes.new("CompositorNodeOutputFile")
-    node.directory = directory
-    node.file_name = ""
     image_format = node.format
-    image_format.media_type = "IMAGE"
+    if COMPOSITING_GROUPS:
+        node.directory = directory
+        node.file_name = ""
+        image_format.media_type = "IMAGE"
+    else:
+        node.base_path = directory
     image_format.file_format = "PNG"
     image_format.color_mode = "BW" if spec.channels == "gray" else "RGB"
     image_format.color_depth = str(bit_depth)
@@ -401,9 +426,24 @@ def _file_output(tree, spec: PassSpec, directory: str, bit_depth: int):
     view.exposure = 0.0
     view.gamma = 1.0
     view.use_curve_mapping = False
+    if not COMPOSITING_GROUPS:
+        # 4.5: ein Slot mit Farbeingang; Blender wandelt Zahl und Vektor beim Verbinden selbst.
+        node.file_slots.clear()
+        node.file_slots.new(spec.role)
+        return node.inputs[0]
     kind = "FLOAT" if spec.channels == "gray" else ("VECTOR" if spec.role == "normal" else "RGBA")
     item = node.file_output_items.new(kind, spec.role)
     return node.inputs[item.name]
+
+
+def _written(directory: str, role: str) -> str | None:
+    """Die Datei, die der File-Output-Knoten der Rolle geschrieben hat — ``None``, wenn keine."""
+    exact = os.path.join(directory, f"{role}.png")
+    if os.path.isfile(exact):
+        return exact
+    numbered = [name for name in (os.listdir(directory) if os.path.isdir(directory) else ())
+                if name.startswith(role) and name.endswith(".png") and name[len(role):-4].isdigit()]
+    return os.path.join(directory, numbered[0]) if len(numbered) == 1 else None
 
 
 def _pass_tree(scene, view_layer, specs: list[PassSpec], directory: str, bit_depth: int):
@@ -425,32 +465,94 @@ def _pass_tree(scene, view_layer, specs: list[PassSpec], directory: str, bit_dep
             tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
             output = tree.nodes.new("NodeGroupOutput")
             tree.links.new(layers.outputs["Image"], output.inputs[0])
-        depth = depth_range(scene) if scene.camera else None
-        for spec in specs:
-            source = layers.outputs.get(spec.socket)
-            if source is None or not source.enabled:
-                continue  # fehlt nach dem Rendern und wird dann „geplant"
-            tree.links.new(_encoded(tree, spec, source, bit_depth, depth), _file_output(tree, spec, directory, bit_depth))
+        _connect_passes(tree, layers, scene, specs, directory, bit_depth)
     except Exception:
         bpy.data.node_groups.remove(tree)
         raise
     return tree
 
 
+def _connect_passes(tree, layers, scene, specs: list[PassSpec], directory: str, bit_depth: int) -> None:
+    depth = depth_range(scene) if scene.camera else None
+    for spec in specs:
+        source = layers.outputs.get(spec.socket)
+        if source is None and spec.socket_4_5:
+            source = layers.outputs.get(spec.socket_4_5)
+        if source is None or not source.enabled:
+            continue  # fehlt nach dem Rendern und wird dann „geplant"
+        tree.links.new(_encoded(tree, spec, source, bit_depth, depth), _file_output(tree, spec, directory, bit_depth))
+
+
+def _pass_scene(scene, view_layer, specs: list[PassSpec], directory: str, bit_depth: int):
+    """Blender 4.5: eine vorübergehende Kopie der Szene, deren eigener Baum die File Outputs trägt.
+
+    ``Scene.copy`` verknüpft Objekte, Sammlungen, Kamera und Welt und kopiert
+    Render-Einstellungen, View Layer und den eingebetteten Baum. Ist das
+    Compositing des Nutzers aus (``use_nodes`` oder ``use_compositing``), reicht
+    der Baum der Kopie das Bild nur durch — wie ohne Compositing.
+    """
+    copy = scene.copy()
+    try:
+        copy.pop(DOCUMENT_KEY_PROPERTY, None)  # die Kennung gehört der Szene des Nutzers
+        active = scene.use_nodes and scene.render.use_compositing and scene.node_tree is not None
+        copy.use_nodes = True
+        copy.render.use_compositing = True
+        tree = copy.node_tree
+        if not active:
+            tree.nodes.clear()
+        layers = None
+        for node in tree.nodes:
+            if node.bl_idname == "CompositorNodeRLayers" and node.scene in (scene, copy):
+                node.scene = copy  # die Kopie rendert sich selbst, nicht die Szene des Nutzers ein zweites Mal
+                if layers is None and node.layer == view_layer.name:
+                    layers = node
+        if layers is None:
+            layers = tree.nodes.new("CompositorNodeRLayers")
+            layers.scene = copy
+            layers.layer = view_layer.name
+        if not active:
+            composite = tree.nodes.new("CompositorNodeComposite")
+            tree.links.new(layers.outputs["Image"], composite.inputs[0])
+        _connect_passes(tree, layers, scene, specs, directory, bit_depth)
+    except Exception:
+        bpy.data.scenes.remove(copy)
+        raise
+    return copy
+
+
+def _prepare_passes(scene, view_layer, specs: list[PassSpec], directory: str, bit_depth: int):
+    """Das Vorübergehende für die Pässe: Gruppe (5.x) oder Szenenkopie (4.5); ``None`` ohne Pässe."""
+    if not specs:
+        return None
+    if COMPOSITING_GROUPS:
+        return _pass_tree(scene, view_layer, specs, directory, bit_depth)
+    return _pass_scene(scene, view_layer, specs, directory, bit_depth)
+
+
 @contextmanager
-def _compositing(scene, tree):
-    """Die Gruppe nur für dieses Rendering einsetzen — danach die des Nutzers, wie sie war."""
-    if tree is None:
-        yield
+def _compositing(scene, prepared):
+    """Die Szene, die rendert — danach ist die des Nutzers, wie sie war, und das Vorübergehende weg.
+
+    5.x: die Gruppe nur für dieses Rendering an der Szene des Nutzers einsetzen.
+    4.5: die Kopie rendern; die Szene des Nutzers wird nicht angefasst.
+    """
+    if prepared is None:
+        yield scene
+        return
+    if isinstance(prepared, bpy.types.Scene):
+        try:
+            yield prepared
+        finally:
+            bpy.data.scenes.remove(prepared)
         return
     saved = (scene.compositing_node_group, scene.render.use_compositing)
     try:
-        scene.compositing_node_group = tree
+        scene.compositing_node_group = prepared
         scene.render.use_compositing = True
-        yield
+        yield scene
     finally:
         scene.compositing_node_group, scene.render.use_compositing = saved
-        bpy.data.node_groups.remove(tree)
+        bpy.data.node_groups.remove(prepared)
 
 
 def _note(spec: PassSpec, engine: str, bit_depth: int, depth: tuple[float, float] | None) -> str:
@@ -503,35 +605,41 @@ def capture_beauty(context, root: str, size: tuple[int, int] | None, roles: list
 
     beauty_path = os.path.join(images, "beauty.png")
     staging = os.path.join(root, "passes-staging")
-    tree = None
-    if wanted:
-        try:
-            tree = _pass_tree(scene, view_layer, wanted, staging, bit_depth)
-        except (TypeError, ValueError, RuntimeError):
-            # Etwa eine eigene OCIO-Konfiguration ohne die Ansicht „Raw": dann kein Pass, aber das Bild.
-            for spec in wanted:
-                planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.png", PNG,
-                                              "Blender kann den Pass hier nicht ohne Farbumrechnung schreiben "
-                                              f"(Farbverwaltung ohne Ansicht „{RAW_VIEW}“)."))
-            wanted = []
     files: list[mf.CaptureFile] = []
     engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
     try:
         with _resolution(scene, size):
-            with _compositing(scene, tree):
+            # Nach der Auflösung: die Szenenkopie (4.5) übernimmt sie.
+            prepared = None
+            try:
+                prepared = _prepare_passes(scene, view_layer, wanted, staging, bit_depth)
+            except (TypeError, ValueError, RuntimeError):
+                # Etwa eine eigene OCIO-Konfiguration ohne die Ansicht „Raw": dann kein Pass, aber das Bild.
+                for spec in wanted:
+                    planned.append(mf.PlannedRole(spec.role, f"images/{spec.role}.png", PNG,
+                                                  "Blender kann den Pass hier nicht ohne Farbumrechnung schreiben "
+                                                  f"(Farbverwaltung ohne Ansicht „{RAW_VIEW}“)."))
+                wanted = []
+            with _compositing(scene, prepared) as rendering:
                 try:
-                    result = bpy.ops.render.render(write_still=False)
+                    if rendering is scene:
+                        result = bpy.ops.render.render(write_still=False)
+                    else:
+                        result = bpy.ops.render.render(write_still=False, scene=rendering.name,
+                                                       layer=view_layer.name)
                 except RuntimeError as error:
                     raise CaptureError(f"Blender hat das Rendering abgelehnt: {error}") from None
                 if "FINISHED" not in result:
                     raise CaptureError("Blender hat das Rendering nicht ausgeführt.")
-            _save_png(scene, beauty_path)
+                # Noch in der Klammer und mit der Szene, die gerendert hat: das Render Result gehört
+                # ihr, und mit der Szenenkopie (4.5) verschwindet es (gemessen).
+                _save_png(rendering, beauty_path)
         depth = depth_range(scene)
         for spec in wanted:
-            written = os.path.join(staging, f"{spec.role}.png")
+            written = _written(staging, spec.role)
             path = os.path.join(images, f"{spec.role}.png")
             image = None
-            if os.path.isfile(written):
+            if written is not None:
                 os.replace(written, path)
                 image = dict(mf.describe_png(path), colorSpace=spec.color_space)
             if image is None or image["channels"] != spec.channels or image["bitDepth"] != bit_depth:

@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 # Die eine Quelle der Pluginversion: manifest.plugin_version() liest sie hier,
 # scripts/pack.sh im öffentlichen Spiegel ebenso.
 id = "rendertaxi"
-version = "0.4.0"
+version = "0.5.0"
 name = "rendertaxi.ai"
 tagline = "Ansicht, Rendering und Modell an rendertaxi.ai übergeben"
 maintainer = "rendertaxi.ai"
@@ -11,7 +11,7 @@ type = "add-on"
 website = "https://github.com/pipedreams-zz/rendertaxi-plugins"
 tags = ["Render", "Import-Export"]
 
-blender_version_min = "5.2.0"
+blender_version_min = "4.5.0"
 
 license = ["SPDX:MIT"]
 

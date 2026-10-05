@@ -1,4 +1,4 @@
-"""rendertaxi.ai für Blender 5.2 LTS — Extension (RTX-B-002, #176).
+"""rendertaxi.ai für Blender 4.5 LTS, 5.1 und 5.2 LTS — Extension (RTX-B-002, #176; Versionen RTX-B-004).
 
 Übergibt die aktuelle Ansicht (Viewport) oder das gerenderte Bild (Beauty,
 optional mit Datenpässen als PNG) als Capture-Manifest an rendertaxi.ai und

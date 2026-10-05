@@ -35,6 +35,13 @@ Kamera steht im selben **Exportraum**. Was hier gilt, ist gemessen
 * **Kameras in der Datei (RTX-M2-026).** Die GLB-Datei trägt die sichtbaren
   Kameras der Szene (glTF ``cameras[]``, Knotennamen = Objektnamen), keine
   Lichter. Die Plattform liest sie nur im Browser, als Liste zum Übernehmen.
+* **Objektiv und Shift jeder Kamera (RTX-B-004).** glTF kennt beides nicht.
+  Nach dem Export schreibt das Add-on je Kamera ``lens`` und ``shift`` in der
+  Form des Manifests 1.4.0 nach ``cameras[i].extras.rendertaxi.camera``
+  (``rendertaxi_client.glb.set_camera_extras``) — nur diesen einen Schlüssel,
+  ``export_extras`` bleibt aus (keine Custom Properties). Der Shift wird mit dem
+  Seitenverhältnis der Szene auf die längere Seite umgerechnet, demselben, mit
+  dem der Exporter ``yfov`` und ``aspectRatio`` schreibt.
 
 Das Modul erfindet nichts: was der Vertrag nicht darstellen kann, führt zu
 ``None`` mit einem Grund, den das Panel **vor** dem Senden zeigt.
@@ -434,6 +441,7 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
         raise ExportError("Blender hat den glTF-Export abgelehnt.") from None
     if "FINISHED" not in result or not os.path.exists(target):
         raise ExportError("Blender hat den glTF-Export nicht ausgeführt.")
+    _write_camera_extras(scene, target)
     document = read_glb_json(target)
     if external_references(document):
         raise ExportError("Die GLB-Datei verweist auf Dateien außerhalb ihrer selbst.")
@@ -448,3 +456,45 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
             f"+Y oben, ohne Animation; {'mit' if include_materials else 'ohne'} Materialien; {triangles} Dreiecke.")
     return mf.CaptureFile(role="model", path=MODEL_PATH, media_type=MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
+
+
+def camera_extras_of(data, width: int, height: int) -> dict | None:
+    """``extras.rendertaxi.camera`` einer Blender-Kamera für ein Bild ``width × height`` — oder ``None``.
+
+    Perspektivisch: Objektiv und Shift; parallel: nur Shift. Eine Kamera, die
+    der Vertrag nicht trägt (Panorama, Shift über ±2), bleibt ohne Angabe —
+    der Browser liest sie dann wie bisher mit Shift 0.
+    """
+    if data.type not in ("PERSP", "ORTHO") or max(abs(data.shift_x), abs(data.shift_y)) > SHIFT_LIMIT:
+        return None
+    sx, sy = contract_shift(data.sensor_fit, data.shift_x, data.shift_y, width, height)
+    lens = lens_dict(data.sensor_fit, data.sensor_width, data.sensor_height, data.lens) \
+        if data.type == "PERSP" else None
+    return glb.camera_extras(lens, {"x": _num(sx, 6), "y": _num(sy, 6)})
+
+
+def effective_size(render) -> tuple[float, float]:
+    """Die Bildmaße, mit denen Blenders glTF-Exporter ``aspectRatio`` und ``yfov`` rechnet: Auflösung × Pixel Aspect.
+
+    Bei nicht quadratischen Pixeln weicht das Seitenverhältnis von der Auflösung ab; Sensor Fit AUTO und der
+    Shift beziehen sich in Blender ebenfalls auf diese Maße.
+    """
+    return render.resolution_x * render.pixel_aspect_x, render.resolution_y * render.pixel_aspect_y
+
+
+def _write_camera_extras(scene, target: str) -> None:
+    """Objektiv und Shift aller Kameras der Datei nachtragen — Knotenname = Objektname."""
+    import bpy
+
+    width, height = effective_size(scene.render)
+    by_name = {}
+    for obj in bpy.data.objects:
+        if obj.type == "CAMERA" and obj.data is not None:
+            block = camera_extras_of(obj.data, width, height)
+            if block is not None:
+                by_name[obj.name] = block
+    if by_name:
+        try:
+            glb.set_camera_extras(target, by_name)
+        except glb.GlbError as error:
+            raise ExportError(str(error)) from None

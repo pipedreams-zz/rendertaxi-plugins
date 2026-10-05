@@ -101,6 +101,9 @@ try:
             layout.prop(self, "debug_logging")
             layout.prop(self, "data_pass_bit_depth")
             layout.label(text="Die Anmeldung liegt nicht hier, sondern im Nutzerordner der Extension (nur für dich lesbar).")
+            # Vor dem Deinstallieren (RTX-B-004): Blender löscht den Nutzerordner, widerruft aber kein Token.
+            layout.separator()
+            layout.operator("rendertaxi.forget_local", icon="TRASH")
 
     def preferences():
         """Die Einstellungen — oder ``None``, wenn sie (noch) nicht lesbar sind."""

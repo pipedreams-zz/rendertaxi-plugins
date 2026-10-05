@@ -17,7 +17,7 @@ import time
 from . import current
 from . import manifest as mf
 from .log import log
-from .store import CredentialStore
+from .store import CredentialStore, remove_local_data
 from .transport import ApiClient, ApiError, Cancelled, Unauthorized
 
 MAX_INTERVAL_SECONDS = 60
@@ -154,3 +154,35 @@ def sign_out(api: ApiClient, store: CredentialStore) -> str | None:
     api.token = None
     log("Abgemeldet; Token lokal gelöscht.")
     return warning
+
+
+def sign_out_and_forget(directory: str, api_for, online: bool = True) -> str | None:
+    """**Abmelden und lokale Daten entfernen** (RTX-B-004): jedes abgelegte Token widerrufen, dann alles löschen.
+
+    ``api_for(server)`` liefert den Client für eine Serveradresse. Widerrufen
+    wird je Server, für den ein Token abgelegt ist; ``online=False`` (der Host
+    verbietet Netz) überspringt das. Gelöscht wird **immer** —
+    ``remove_local_data`` —, auch wenn ein Widerruf scheitert; die Rückgabe
+    nennt dann den Weg über „Verbundene Geräte". Sie nennt auch, was sich
+    nicht löschen ließ (nur Anzahl, keine Pfade).
+    """
+    store = CredentialStore(directory)
+    unconfirmed = 0
+    for server in store.servers_with_token():
+        token = store.token(server)
+        if not online:
+            unconfirmed += 1
+            continue
+        try:
+            api_for(server).revoke(token)
+        except (ApiError, Unauthorized, OSError, ValueError):
+            unconfirmed += 1
+    left = remove_local_data(directory)
+    log(f"Lokale Daten entfernt; {len(left)} Einträge übrig, {unconfirmed} Widerrufe unbestätigt.")
+    warnings = []
+    if unconfirmed:
+        warnings.append("Der Server hat den Widerruf nicht bestätigt. Das Gerät lässt sich in der "
+                        "Webanwendung unter „Verbundene Geräte“ abmelden.")
+    if left:
+        warnings.append(f"{len(left)} Einträge im Nutzerordner ließen sich nicht löschen.")
+    return " ".join(warnings) or None
