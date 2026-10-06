@@ -1685,7 +1685,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	// --- 2. Lokal prüfen, bevor irgendetwas das Gerät verlässt --------------
 	const rtx::Status valid = manifest.Validate ();
 	if (!valid) {
-		shared.SetProgress ("Das Manifest ist ungültig: " + valid.GetError ().message);
+		shared.SetProgress ("Die Aufnahme ließ sich nicht vollständig zusammenstellen und wird nicht "
+							"hochgeladen. Einzelheiten stehen im Protokoll.");
 		rtx::LogLine ("Manifest ungültig: " + valid.GetError ().code + " " +
 					  valid.GetError ().pointer);
 		return;
@@ -1696,7 +1697,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		return;
 	}
 	if (!rtx::WriteTextFile (directory + "/capture-manifest.json", manifestText.Value ())) {
-		shared.SetProgress ("Das Manifest ließ sich nicht schreiben.");
+		shared.SetProgress ("Die Aufnahme ließ sich nicht schreiben.");
 		return;
 	}
 

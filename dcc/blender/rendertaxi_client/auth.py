@@ -116,7 +116,7 @@ class DeviceLogin:
                 raise ApiError(text, status=error.status, code=error.code, reason=reason) from None
             access = token.get("access_token")
             if not access:
-                raise ApiError("Der Server hat kein Token geliefert.", code="invalid_response")
+                raise ApiError("Der Server hat die Anmeldung nicht bestätigt. Bitte erneut verbinden.", code="invalid_response")
             self.store.store_token(self.api.server_url, access)
             self.api.token = access
             log("Anmeldung: Token erhalten und abgelegt (wird nicht ausgegeben).")

@@ -98,13 +98,13 @@ Status CaptureTransfer::CheckLimits (const CaptureManifest& manifest, std::int64
 		}
 	}
 	if (limits.maxAssetCount > 0 && count > limits.maxAssetCount)
-		return Status::Fail (errc::LimitExceeded, "Mehr Dateien, als der Server je Capture annimmt.");
+		return Status::Fail (errc::LimitExceeded, "Mehr Dateien, als der Server je Aufnahme annimmt.");
 	if (limits.maxTotalBytes > 0 && total > limits.maxTotalBytes)
-		return Status::Fail (errc::LimitExceeded, "Der Capture ist insgesamt zu groß.");
+		return Status::Fail (errc::LimitExceeded, "Die Aufnahme ist insgesamt zu groß.");
 	// V-19: auch die Manifestgröße kommt aus `limits` und wird lokal geprüft.
 	if (limits.maxManifestBytes > 0 && manifestBytes > limits.maxManifestBytes)
 		return Status::Fail (errc::LimitExceeded,
-							 "Das Manifest ist größer, als der Server annimmt.");
+							 "Die Beschreibung der Aufnahme ist größer, als der Server annimmt.");
 	return Status::Ok ();
 }
 
@@ -184,7 +184,7 @@ Status CaptureTransfer::Discard (const PendingTransfer& pending, CancelToken* ca
 Result<CaptureResult> CaptureTransfer::Run (const TransferRequest& request, CancelToken* cancel,
 											const TransferReporter& report)
 {
-	Report (report, TransferStage::Preparing, "Manifest prüfen", 0);
+	Report (report, TransferStage::Preparing, "Aufnahme prüfen", 0);
 
 	const Status valid = request.manifest.Validate ();
 	if (!valid) return Result<CaptureResult>::Fail (valid.GetError ());
@@ -203,7 +203,7 @@ Result<CaptureResult> CaptureTransfer::Run (const TransferRequest& request, Canc
 		manifestText = serialized.Value ();
 		if (!WriteTextFile (manifestPath, manifestText))
 			return Result<CaptureResult>::Fail (errc::IoFailed,
-												"Das Manifest ließ sich nicht ablegen.");
+												"Die Aufnahme ließ sich nicht ablegen.");
 	}
 	const std::string manifestSha256 = Sha256::OfString (manifestText);
 
@@ -327,7 +327,7 @@ Result<CaptureResult> CaptureTransfer::Run (const TransferRequest& request, Canc
 			if (asset == nullptr)
 				return Result<CaptureResult>::Fail (
 					errc::SchemaInvalid,
-					"Der Server erwartet eine Datei, die dieses Manifest nicht führt: " + file.path);
+					"Der Server erwartet eine Datei, die diese Aufnahme nicht enthält: " + file.path);
 
 			const int base = 10 + (70 * (index - 1)) / outstanding;
 			Report (report, TransferStage::UploadingFiles, "Bild übertragen: " + asset->path, base);
@@ -382,7 +382,7 @@ Result<CaptureResult> CaptureTransfer::Run (const TransferRequest& request, Canc
 
 	// --- 5. Manifest übertragen ----------------------------------------------
 	if (session.Value ().manifestState != "accepted") {
-		Report (report, TransferStage::SubmittingManifest, "Manifest übertragen", 85);
+		Report (report, TransferStage::SubmittingManifest, "Aufnahme beschreiben", 85);
 		session = api.SubmitManifest (captureId, key, manifestText, cancel);
 		if (!session) return Result<CaptureResult>::Fail (session.GetError ());
 		if (session.Value ().state == "rejected")

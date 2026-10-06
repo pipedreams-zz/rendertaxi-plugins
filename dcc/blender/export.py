@@ -227,11 +227,11 @@ def unit_problem(scene) -> str | None:
     """Warum der Maßstab nicht belegt ist (QB-03) — oder ``None`` bei einer Einheit = ein Meter."""
     units = scene.unit_settings
     if units.system == "NONE":
-        return ("Einheitensystem „None“ hat keinen Bezug zu Metern (QB-03). Für das Modell "
+        return ("Das Einheitensystem „None“ hat keinen Bezug zu Metern. Für das Modell "
                 "Scene › Units › Unit System „Metric“ oder „Imperial“ wählen.")
     if abs(units.scale_length - 1.0) > UNIT_TOLERANCE:
-        return (f"Unit Scale ist {units.scale_length:g}, nicht 1: der Maßstab des Modells ist dann nicht "
-                "eindeutig (QB-03). Das Modell wird nicht gesendet.")
+        return (f"Unit Scale ist {units.scale_length:g}. Für das Modell Scene › Units › Unit Scale "
+                "auf 1 stellen.")
     return None
 
 
@@ -245,15 +245,15 @@ def meters_per_unit(scene) -> float:
 def _camera_problem(camera, scene, lens_and_shift: bool = False) -> str | None:
     data = camera.data
     if data.type not in ("PERSP", "ORTHO"):
-        return f"Die Kamera ist vom Typ {data.type}; der Vertrag kennt nur perspektivisch und parallel."
+        return f"Die Kamera ist vom Typ {data.type}; übertragen werden perspektivische und parallele Kameras."
     shifted = abs(data.shift_x) > UNIT_TOLERANCE or abs(data.shift_y) > UNIT_TOLERANCE
     if shifted and not lens_and_shift:
-        return "Die Kamera hat Shift; der Server kennt die Bildverschiebung erst ab Manifest 1.4.0 (QB-04)."
+        return "Shift übernimmt dieser Server noch nicht; ohne Shift geht die Kamera mit."
     if max(abs(data.shift_x), abs(data.shift_y)) > SHIFT_LIMIT:
-        return "Der Shift der Kamera liegt außerhalb von ±2; der Vertrag trägt ihn nicht."
+        return "Für die Kamera Shift X und Y auf höchstens ±2 stellen."
     render = scene.render
     if abs(render.pixel_aspect_x - render.pixel_aspect_y) > UNIT_TOLERANCE:
-        return "Pixel Aspect ist nicht 1:1; das Sichtfeld wäre auf der zweiten Achse falsch."
+        return "Für die Kamera unter Output › Format Aspect X und Y gleich setzen."
     return None
 
 
@@ -270,7 +270,7 @@ def camera_problem(context, kind: str, lens_and_shift: bool = False) -> str | No
     if _region(context) is None:
         return "Keine 3D-Ansicht offen."
     if abs(scene.render.pixel_aspect_x - scene.render.pixel_aspect_y) > UNIT_TOLERANCE:
-        return "Pixel Aspect ist nicht 1:1; das Sichtfeld wäre auf der zweiten Achse falsch."
+        return "Für die Kamera unter Output › Format Aspect X und Y gleich setzen."
     return None
 
 

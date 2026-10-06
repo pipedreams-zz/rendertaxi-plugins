@@ -569,7 +569,7 @@ class Controller:
     def model_problem(self) -> str | None:
         """Warum „Modell mitsenden" nicht geht — im Dialog **vor** dem Senden, beim Aufnehmen als Fehler."""
         if self.state.handshake is not None and not supports_model(self.state.handshake):
-            return "Der Server nimmt Capture-Manifest 1.2.0 (mit Modell) noch nicht an."
+            return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne „Modell mitsenden“ übernehmen."
         return self.adapter.model_problem()
 
     def set_send_model(self, on: bool) -> None:
@@ -675,7 +675,7 @@ class Controller:
         manifest = mf.build_manifest(data)
         problems = mf.validate_manifest(manifest)
         if problems:
-            raise ValueError("Das Manifest ist ungültig und wird nicht hochgeladen: " + problems[0])
+            raise ValueError(mf.invalid_capture(problems))
         raw = mf.serialize(manifest)
         problem = mf.check_limits(manifest, len(raw), limits)
         if problem:

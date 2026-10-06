@@ -35,7 +35,7 @@ unter **Add-ons**.
 ## Verbinden
 
 1. In der 3D-Ansicht mit **N** die Seitenleiste öffnen, Reiter
-   **rendertaxi**.
+   **rendertaxi.ai**.
 2. Unter **Verbindung** steht die Serveradresse (Vorgabe
    `https://dev.rendertaxi.ai`, änderbar unter **Edit › Preferences › Add-ons ›
    rendertaxi.ai** —

@@ -159,6 +159,13 @@ double DesiredOutput::Ratio () const
 	return 0.0;
 }
 
+// Was die Palette sagt, wenn Server und Add-on keine gemeinsame Manifestfassung haben
+// (RTX-M2-030) — derselbe Satz wie `VERSION_MISMATCH` im Python-Client. Welche Fassung
+// fehlt, unterscheidet der Fehlercode.
+static const char* const VersionMismatch =
+	"Add-on und Server passen nicht zusammen. Bitte die Add-on-Fassung verwenden, "
+	"die zur Webanwendung passt.";
+
 Status HandshakeInfo::RequireCaptureContract () const
 {
 	// **Der Server bewertet.** Der erste Durchgang rechnete selbst und meldete
@@ -166,26 +173,17 @@ Status HandshakeInfo::RequireCaptureContract () const
 	// ist genau diese Antwort — und sie ist eine Zeichenkette, keine Zahl: hier
 	// wird nichts geparst, was werfen könnte (F-02).
 	if (!negotiationPresent) {
-		return Status::Fail (errc::Transport,
-							 "Der Server hat die Vertragsfassung nicht bewertet. Frage den "
-							 "Handshake mit contract und contractVersion ab.");
+		return Status::Fail (errc::Transport, VersionMismatch);
 	}
 	if (negotiationResult == "supported") return Status::Ok ();
 	if (negotiationResult == "unsupported_contract_minor") {
-		return Status::Fail (errc::UnsupportedContractMinor,
-							 "Dieser Server setzt das Capture-Manifest nur bis " +
-								 (highestSupportedVersion.empty () ? std::string ("einer älteren Fassung")
-																   : highestSupportedVersion) +
-								 " um. Das Add-on braucht eine neuere Serverfassung.");
+		return Status::Fail (errc::UnsupportedContractMinor, VersionMismatch);
 	}
 	if (negotiationResult == "unsupported_contract_major") {
-		return Status::Fail (errc::UnsupportedContractMajor,
-							 "Dieser Server kennt die Hauptfassung des Capture-Manifests nicht, "
-							 "die dieses Add-on erzeugt.");
+		return Status::Fail (errc::UnsupportedContractMajor, VersionMismatch);
 	}
 	if (negotiationResult == "unsupported_contract") {
-		return Status::Fail (errc::UnsupportedContractMajor,
-							 "Dieser Server nimmt das Capture-Manifest nicht an.");
+		return Status::Fail (errc::UnsupportedContractMajor, VersionMismatch);
 	}
 	return Status::Fail (errc::Transport,
 						 "Unbekanntes Ergebnis der Versionsaushandlung: " + negotiationResult);

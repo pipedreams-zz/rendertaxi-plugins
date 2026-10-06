@@ -901,9 +901,9 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
                     depth_spec = None
                 _render(doc, layer_data, layered, progress, "Pässe rendern", bake=False)
             problems = settings.problems
-        space = ("Float der Ebene im Renderraum ohne Anzeigetransformation (RENDERFLAGS_OCIO_RAW_RENDERING; "
-                 "bei OCIO ACEScg, QC-12)" if OCIO_RAW is not None
-                 else "Float der Ebene, linear, Primärvalenzen nicht belegt (QC-12)")
+        space_note = ("Float der Ebene im Renderraum ohne Anzeigetransformation (RENDERFLAGS_OCIO_RAW_RENDERING; "
+                      "bei OCIO ACEScg, QC-12)" if OCIO_RAW is not None
+                      else "Float der Ebene, linear, Primärvalenzen nicht belegt (QC-12)")
         for spec in layered_specs:
             path = os.path.join(images, f"{spec.role}.png")
             layer = _find_layer(layered, spec.buffer)
@@ -927,13 +927,13 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
             if layer is None or not _save_pass(layer, path, size, spec, bit_depth):
                 missing(spec, f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert.")
                 continue
-            extra = (" Normalen im Exportraum des Manifests (wie Kamera und Modell), aus den rohen Cinema-4D-Weltnormalen "
-                     "gespiegelt (z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5 (am Host gemessen, QC-04)."
-                     if spec.normal_space else "")
+            normal_note = (" Normalen im Exportraum des Manifests (wie Kamera und Modell), aus den rohen Cinema-4D-Weltnormalen "
+                           "gespiegelt (z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5 (am Host gemessen, QC-04)."
+                           if spec.normal_space else "")
             normal = {"space": spec.normal_space} if spec.normal_space else None
-            describe(spec, path, lambda written, spec=spec, extra=extra: (
-                f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space}, eigener PNG-Schreiber aus den Floats "
-                f"(GetPixelCnt), zweiter Renderdurchgang.{extra}"), normal=normal)
+            describe(spec, path, lambda written, spec=spec, normal_note=normal_note: (
+                f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space_note}, eigener PNG-Schreiber aus den Floats "
+                f"(GetPixelCnt), zweiter Renderdurchgang.{normal_note}"), normal=normal)
 
     for spec in [spec for spec in wanted if spec.source == FILES]:
         path = os.path.join(images, f"{spec.role}.png")

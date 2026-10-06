@@ -35,6 +35,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from . import CLIENT_DIR, current
+from .log import log
 
 CONTRACT = "rendertaxi.plugin.capture-manifest"
 CONTRACT_VERSION = "1.1.0"
@@ -718,6 +719,19 @@ def serialize(manifest: dict) -> bytes:
     return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
+#: Was der Dialog sagt, wenn die eigene Schemaprüfung anschlägt (RTX-M2-030). Die Befunde selbst nennen
+#: Schemapfade und Fassungen — sie gehören ins Protokoll (``invalid_capture``).
+INVALID_CAPTURE = ("Die Aufnahme ließ sich nicht vollständig zusammenstellen und wird nicht hochgeladen. "
+                   "Einzelheiten stehen in der Konsole.")
+
+
+def invalid_capture(problems: list[str]) -> str:
+    """Die Dialogmeldung zu den Befunden von ``validate_manifest`` — die Befunde gehen ins Protokoll."""
+    for problem in problems:
+        log(f"Schemaprüfung: {problem}")
+    return INVALID_CAPTURE
+
+
 def check_limits(manifest: dict, manifest_size: int, limits: dict | None) -> str | None:
     """Die Grenzen aus dem Handshake, lokal geprüft — wie ``CheckLimits`` in Archicad."""
     if not limits:
@@ -736,11 +750,11 @@ def check_limits(manifest: dict, manifest_size: int, limits: dict | None) -> str
         if allowed and asset["mediaType"] not in allowed:
             return f"Der Server nimmt den Medientyp {asset['mediaType']} nicht an."
     if limits.get("maxAssetCount") and len(present) > limits["maxAssetCount"]:
-        return "Mehr Dateien, als der Server je Capture annimmt."
+        return "Mehr Dateien, als der Server je Aufnahme annimmt."
     if limits.get("maxTotalBytes") and sum(a["byteSize"] for a in present) > limits["maxTotalBytes"]:
-        return "Der Capture ist insgesamt zu groß."
+        return "Die Aufnahme ist insgesamt zu groß."
     if limits.get("maxManifestBytes") and manifest_size > limits["maxManifestBytes"]:
-        return "Das Manifest ist größer, als der Server annimmt."
+        return "Die Beschreibung der Aufnahme ist größer, als der Server annimmt."
     return None
 
 

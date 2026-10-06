@@ -351,8 +351,8 @@ def pass_problem(spec: PassSpec, scene, bit_depth: int) -> str | None:
             return (f"Die Kamera ist vom Typ {scene.camera.data.type}; Tiefe entlang der Blickachse gibt es "
                     "nur für perspektivische und parallele Kameras.")
         if export.unit_problem(scene) is not None:
-            return ("Tiefe nur mit Unit System „Metric“ oder „Imperial“ und Unit Scale 1: sonst sind near "
-                    "und far nicht belegt in Metern (QB-03).")
+            return ("Für die Tiefe Scene › Units › Unit System „Metric“ oder „Imperial“ und Unit Scale 1 "
+                    "wählen.")
         if depth_range(scene) is None:
             return "Der Clipbereich der Kamera ist leer (Clip End nicht größer als Clip Start)."
     if spec.role in ("object-id", "material-id"):

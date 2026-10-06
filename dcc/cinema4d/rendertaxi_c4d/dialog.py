@@ -292,7 +292,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._lines(ID_MESSAGE, state.error or state.message)
         has_result = bool(state.result and state.result.get("openUrl"))
         self._enable(ID_OPEN_RESULT, has_result)
-        self.SetString(ID_RESULT, f"Capture {state.result['captureId']}" if has_result else "")
+        self.SetString(ID_RESULT, "Aufnahme übernommen." if has_result else "")
 
     def _refresh_target(self, form, state, busy: bool) -> None:
         self._fill(ID_PROJECT, "— Projekt wählen —", state.projects, form.project_id)
@@ -344,9 +344,9 @@ class RendertaxiDialog(gui.GeDialog):
             elif state != "available":
                 note = hint
             elif spec.blocked_by:
-                note = "wird als „geplant“ gemeldet"
+                note = spec.blocked_note or "Nicht übertragbar."
             elif no_png:
-                note = "Der Server nimmt derzeit kein PNG an: wird als „geplant“ vermerkt."
+                note = "Dieser Server nimmt noch keine Pässe an; übertragen wird das Bild."
             elif role == "depth":
                 note = f"PNG {bit_depth} Bit, Tiefe von nah (0) bis fern (1)"
             elif role == "object-id":

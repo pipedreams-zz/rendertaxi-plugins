@@ -411,8 +411,8 @@ class RTX_Props(PropertyGroup):
     )
     capture_kind: EnumProperty(
         name="Aufnahme",
-        items=[("VIEWPORT", "Viewport", "Die aktuelle 3D-Ansicht (bpy.ops.render.opengl)"),
-               ("BEAUTY", "Beauty", "Rendern aus der aktiven Kamera (bpy.ops.render.render)")],
+        items=[("VIEWPORT", "Viewport", "Die aktuelle 3D-Ansicht"),
+               ("BEAUTY", "Beauty", "Rendern aus der aktiven Kamera")],
         default="VIEWPORT",
     )
     hide_overlays: BoolProperty(name="Overlays ausblenden", default=True,
@@ -430,7 +430,7 @@ class RTX_Props(PropertyGroup):
     pass_material_id: BoolProperty(name="Material-ID", default=False)
     send_model: BoolProperty(
         name="Modell mitsenden",
-        description="Die sichtbaren Objekte als GLB und die Kamera der Aufnahme mitsenden (Capture-Manifest 1.2.0)",
+        description="Die sichtbaren Objekte als GLB und die Kamera der Aufnahme mitsenden",
         default=False,
         update=_send_model_changed,
     )
@@ -573,7 +573,7 @@ class RTX_OT_cancel(Operator):
 class RTX_OT_sign_out(Operator):
     bl_idname = "rendertaxi.sign_out"
     bl_label = "Abmelden"
-    bl_description = "Das Token beim Server widerrufen und auf diesem Rechner löschen"
+    bl_description = "Die Anmeldung beim Server widerrufen und auf diesem Rechner löschen"
 
     def execute(self, _context):
         credentials, _ = _stores()
@@ -600,7 +600,7 @@ class RTX_OT_sign_out(Operator):
 class RTX_OT_forget_local(Operator):
     bl_idname = "rendertaxi.forget_local"
     bl_label = "Abmelden und lokale Daten entfernen"
-    bl_description = ("Jedes abgelegte Token beim Server widerrufen und Anmeldung, angefangene Übernahmen und "
+    bl_description = ("Jede gespeicherte Anmeldung beim Server widerrufen und sie, angefangene Übernahmen und "
                       "ihre Dateien auf diesem Rechner löschen")
 
     def invoke(self, context, _event):
@@ -759,7 +759,7 @@ def selected_roles(props: RTX_Props) -> list[str]:
 def model_problem(context, props: RTX_Props, handshake: dict | None) -> str | None:
     """Warum „Modell mitsenden" nicht geht — im Panel **vor** dem Senden, im Operator als Fehler."""
     if handshake is not None and not supports_model(handshake):
-        return "Der Server nimmt Capture-Manifest 1.2.0 (mit Modell) noch nicht an."
+        return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne „Modell mitsenden“ übernehmen."
     problem = export.unit_problem(context.scene)
     if problem:
         return problem
@@ -832,7 +832,7 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
     manifest = mf.build_manifest(data)
     problems = mf.validate_manifest(manifest)
     if problems:
-        raise ValueError("Das Manifest ist ungültig und wird nicht hochgeladen: " + problems[0])
+        raise ValueError(mf.invalid_capture(problems))
     raw = mf.serialize(manifest)
     problem = mf.check_limits(manifest, len(raw), limits)
     if problem:
@@ -916,7 +916,7 @@ class RTX_OT_capture(Operator):
 class RTX_OT_resume(Operator):
     bl_idname = "rendertaxi.resume"
     bl_label = "Übernahme fortsetzen"
-    bl_description = "Die angefangene Übernahme mit demselben Vorgangsschlüssel zu Ende führen"
+    bl_description = "Die angefangene Übernahme zu Ende führen"
 
     def execute(self, context):
         key = capture.document_key(context.scene, create=False)
@@ -1026,7 +1026,7 @@ class RTX_PT_panel(Panel):
     bl_idname = "RTX_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "rendertaxi"
+    bl_category = "rendertaxi.ai"
 
     def draw(self, context):
         layout = self.layout
@@ -1134,13 +1134,13 @@ class RTX_PT_panel(Panel):
         if STATE.result and STATE.result.get("openUrl"):
             box = layout.box()
             box.operator(RTX_OT_open_result.bl_idname, icon="URL")
-            box.label(text=f"Capture {STATE.result['captureId']}")
+            box.label(text="Aufnahme übernommen.")
 
     def _passes(self, layout, context, props):
         layout.label(text="Pässe (optional)")
         allowed = ((STATE.handshake or {}).get("limits") or {}).get("allowedMediaTypes")
         if allowed is not None and capture.PNG not in allowed:
-            _wrapped(layout, "Der Server nimmt derzeit kein PNG an: gewählte Pässe werden nur als „geplant“ vermerkt.", "INFO")
+            _wrapped(layout, "Dieser Server nimmt noch keine Pässe an; übertragen wird das Bild.", "INFO")
         prefs = settings.preferences()
         if prefs is not None:
             layout.prop(prefs, "data_pass_bit_depth")
@@ -1159,7 +1159,7 @@ class RTX_PT_panel(Panel):
                 # Nur für gewählte Pässe: die Prüfung geht über alle Objekte der Szene.
                 problem = capture.pass_problem(spec, scene, bit_depth)
                 if problem:
-                    _wrapped(layout, f"wird als „geplant“ gemeldet: {problem}", "INFO")
+                    _wrapped(layout, f"Nicht übertragbar: {problem}", "INFO")
 
     def _model(self, layout, context, props):
         """„Modell mitsenden": Größe und Grenzen vor dem Senden, und was nicht mitgeht."""

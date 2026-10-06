@@ -400,11 +400,18 @@ def _needs_new_key(session: dict) -> bool:
     return session.get("state") in ("expired", "aborted")
 
 
+#: Was der Dialog sagt, wenn Server und Plugin keine gemeinsame Manifestfassung haben (RTX-M2-030).
+#: Fassung und Verhandlungsergebnis stehen im Protokoll.
+VERSION_MISMATCH = ("Plugin und Server passen nicht zusammen. Bitte die Plugin-Fassung verwenden, "
+                    "die zur Webanwendung passt.")
+
+
 def handshake_problem(handshake: dict) -> str | None:
     """Warum dieser Server nicht bedient wird — oder ``None``: Vertrag und Pluginfassung."""
     negotiation = handshake.get("negotiation") or {}
     if negotiation.get("result") not in (None, "supported"):
-        return f"Der Server nimmt das Capture-Manifest {mf.CONTRACT_VERSION} nicht an ({negotiation.get('result')})."
+        log(f"Handshake: Capture-Manifest {mf.CONTRACT_VERSION} → {negotiation.get('result')}")
+        return VERSION_MISMATCH
     update = handshake.get("update") or {}
     if update.get("status") == "update_required":
         return update.get("message") or "Bitte das Plugin aktualisieren; diese Fassung nimmt der Server nicht mehr an."
@@ -469,13 +476,13 @@ class Transfer:
             # Ein MINOR-Feld erst schreiben, wenn die Gegenseite die MINOR umsetzt
             # (capture-manifest.md, §3, Regel 2) — vor der Anlage gefragt, auch beim Fortsetzen:
             # 1.2.0 (Modell) und 1.3.0 (PNG-Datenpässe).
-            self.progress(f"Vertrag {version} prüfen", 2)
+            self.progress("Server prüfen", 2)
             source = manifest["source"]
             answer = self.api.handshake(source["host"]["version"], source["plugin"]["version"], version)
             result = (answer.get("negotiation") or {}).get("result")
+            log(f"Handshake: Capture-Manifest {version} → {result}")
             if result != "supported":
-                raise ApiError(f"Der Server nimmt das Capture-Manifest {version} nicht an ({result}).",
-                               code=str(result or "negotiation"))
+                raise ApiError(VERSION_MISMATCH, code=str(result or "negotiation"))
         self.progress("Übernahme anmelden", 5)
         log(f"Vorgang {'fortgesetzt' if pending.get('captureId') else 'begonnen'}, Schlüssel {pending['idempotencyKey']}")
         session = self.api.create_capture(pending["idempotencyKey"], body)
@@ -519,7 +526,7 @@ class Transfer:
                     continue
                 asset = present.get(file.get("path"))
                 if asset is None:
-                    raise ApiError(f"Der Server erwartet eine Datei, die dieses Manifest nicht führt: {file.get('path')}",
+                    raise ApiError(f"Der Server erwartet eine Datei, die diese Aufnahme nicht enthält: {file.get('path')}",
                                    code="asset_unexpected")
                 what = "Modell übertragen" if asset["role"] == mf.MODEL_ROLE else f"Bild übertragen: {asset['role']}"
                 self.progress(what, 10 + (70 * index) // outstanding)
@@ -554,7 +561,7 @@ class Transfer:
         # -- Manifest und Abschluss -----------------------------------------
         self._check_cancel()
         if (session.get("manifest") or {}).get("state") != "accepted":
-            self.progress("Manifest übertragen", 85)
+            self.progress("Aufnahme beschreiben", 85)
             session = self.api.submit_manifest(capture_id, key, manifest_bytes)
             if session.get("state") == "rejected":
                 raise _first_problem(session)

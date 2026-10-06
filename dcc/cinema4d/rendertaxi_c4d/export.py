@@ -234,10 +234,10 @@ def exporter_scale(scene_low, scene_high, glb_low, glb_high) -> float:
     if _fits(*mirrored_bounds(scene_low, scene_high), factor, glb_low, glb_high, tolerance):
         return factor
     if _fits(scene_low, scene_high, factor, glb_low, glb_high, tolerance):
-        raise ExportError("Der glTF-Export hat nicht an der Z-Achse gespiegelt („Flip Z“); die Datei wäre "
-                          "seitenverkehrt (QC-01). Das Modell wird nicht gesendet.")
-    raise ExportError("Die GLB-Datei liegt nicht dort, wo die Szene liegt (verschoben oder verzerrt); "
-                      "Maßstab und Achsen des Exports sind nicht belegt (QC-01, QC-02).")
+        raise ExportError("Der glTF-Export liefert das Modell seitenverkehrt („Flip Z“ fehlt). "
+                          "Das Bild lässt sich ohne „Modell mitsenden“ übernehmen.")
+    raise ExportError("Der glTF-Export hat das Modell verschoben oder verzerrt. "
+                      "Das Bild lässt sich ohne „Modell mitsenden“ übernehmen.")
 
 
 # --------------------------------------------------------------------------
@@ -251,11 +251,11 @@ def meters_per_unit(doc) -> float:
     try:
         scale, unit = data.GetUnitScale()
     except (AttributeError, TypeError, ValueError):
-        raise ExportError("Der Projektmaßstab des Dokuments ist nicht lesbar (QC-02). "
-                          "Das Modell wird nicht gesendet.") from None
+        raise ExportError("Der Projektmaßstab des Dokuments ist nicht lesbar. In "
+                          "Projekteinstellungen › Projektmaßstab eine Längeneinheit wählen.") from None
     meters = UNIT_METERS.get(unit)
     if meters is None or not (float(scale) > 0 and math.isfinite(float(scale))):
-        raise ExportError("Der Projektmaßstab hat keine Einheit mit Bezug zu Metern (QC-02). In "
+        raise ExportError("Der Projektmaßstab hat keine Längeneinheit. In "
                           "Projekteinstellungen › Projektmaßstab eine Längeneinheit wählen.")
     return float(scale) * meters
 
