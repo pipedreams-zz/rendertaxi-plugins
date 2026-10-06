@@ -148,6 +148,10 @@ def _pump():
         if current.done and current in _FINISHING:
             _FINISHING.remove(current)
     if handled:
+        try:
+            _drop_vanished_selection()
+        except (AttributeError, TypeError, ReferenceError) as error:
+            log_exception("Auswahl nicht prüfbar", error)
         _redraw()
     if STATE.job is None and not _FINISHING:
         return None
@@ -291,19 +295,63 @@ def _stable(identifier: str) -> int:
     Blender merkt sich bei dynamischen Aufzählungen den **Zahlenwert** der
     Auswahl. Ohne festen Wert wäre das die Listenposition — ein neues Projekt
     vorn in der Liste verschöbe die Auswahl still auf ein anderes Projekt.
+
+    **Höchstens 24 Bit.** Ein Klick in der Liste trägt den Wert als ``float``
+    (``uiBut::hardmax``); größere Zahlen kamen gerundet an, passten zu keinem
+    Eintrag mehr, und die Auswahl sprang auf leer — gemessen am 05.10.2026 in
+    4.5.14, 5.1.2 und 5.2.2 (#227). Gesetzt aus Python trat das nie auf.
     """
-    return 1 + (zlib.crc32(identifier.encode("utf-8")) & 0x3FFFFFFF)
+    return 1 + (zlib.crc32(identifier.encode("utf-8")) & 0xFFFFFE)
+
+
+# Kennung → Wert, solange Blender läuft. Einmal vergeben, bleibt ein Wert bei
+# seiner Kennung und wird nie an eine andere weitergegeben — auch nicht, wenn
+# die Kennung aus der Liste verschwindet.
+_ENUM_VALUES: dict[str, int] = {}
+_ENUM_TAKEN: set[int] = {0}
+
+
+def _value(identifier: str) -> int:
+    """Der Wert einer Kennung; trifft ``_stable`` einen vergebenen Wert, weicht die neue Kennung aus.
+
+    Aus der jeweiligen Liste neu berechnet, hinge der Ausweichwert davon ab,
+    welche Kennungen gerade daneben stehen: kommt eine kollidierende Kennung
+    hinzu, erbte sie den Wert der gewählten, und die Auswahl wechselte still
+    das Ziel (F-01 in #260).
+    """
+    value = _ENUM_VALUES.get(identifier)
+    if value is None:
+        value = _stable(identifier)
+        while value in _ENUM_TAKEN:
+            value = value % 0xFFFFFF + 1
+        _ENUM_VALUES[identifier] = value
+        _ENUM_TAKEN.add(value)
+    return value
+
+
+def _with_values(pairs) -> list:
+    return [(i, name[:60], "", "NONE", _value(i)) for i, name in pairs]
+
+
+def _drop_vanished_selection() -> None:
+    """Ist das gewählte Projekt oder der gewählte Blickpunkt aus der Liste verschwunden: zurück auf „wählen"."""
+    props = _props()
+    if props.project not in {"NONE"} | {pid for pid, _ in STATE.projects}:
+        props.project = "NONE"
+    # Ohne geladene Liste (noch nicht gelesen, nach einer Übernahme geleert) bleibt der Blickpunkt.
+    viewpoints = STATE.viewpoints.get(props.project)
+    if viewpoints is not None and props.viewpoint not in {"NONE"} | {vid for vid, _ in viewpoints}:
+        props.viewpoint = "NONE"
 
 
 def _project_items(_self, _context):
-    items = [_CHOOSE_PROJECT] + [(pid, name[:60], "", "NONE", _stable(pid)) for pid, name in STATE.projects]
+    items = [_CHOOSE_PROJECT] + _with_values(STATE.projects)
     _ENUM_CACHE["projects"] = items
     return items
 
 
 def _viewpoint_items(self, _context):
-    items = [_CHOOSE_VIEWPOINT] + [(vid, name[:60], "", "NONE", _stable(vid))
-                                   for vid, name in STATE.viewpoints.get(self.project, [])]
+    items = [_CHOOSE_VIEWPOINT] + _with_values(STATE.viewpoints.get(self.project, []))
     _ENUM_CACHE["viewpoints"] = items
     return items
 
