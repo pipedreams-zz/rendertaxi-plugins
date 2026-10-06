@@ -11,6 +11,7 @@ Module:
 * ``transport`` Plugin API v1 über HTTP, Zustandsautomat der Übernahme
 * ``manifest``  Capture-Manifest, ``contentHash``, Schemaprüfung, Grenzen, PNG-Kopf
 * ``frame``     Ziel der Übernahme, Rahmengröße und Seitenverhältnis (ADR 0024)
+* ``ways``      Bildweg und Modellweg: was gesendet wird, Rückfall, Schritte und Ergebnis je Weg
 * ``store``     Anmeldung (0600), angefangene Übernahmen, Einstellungen
 * ``log``       Protokoll ohne Token, Pfade und Namen
 * ``glb``       exportierte GLB lesen: Dreiecke wie der Server, Hülle, Maßstab auf Meter setzen

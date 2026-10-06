@@ -1,10 +1,18 @@
-"""N-Panel „rendertaxi" — Verbinden, Ziel wählen, Aufnehmen, Übernehmen.
+"""N-Panel „rendertaxi" — Verbinden, Ziel wählen, Bild und Modell senden, Übernehmen.
 
-Vier Bereiche, wie die Palette des Archicad-Add-ons: **Verbindung**,
-**Projekt und Blickpunkt** (mit „Neues Projekt …" und dem Kameranamen als
-Vorschlag für einen neuen Blickpunkt, RTX-P-013), **Bild übernehmen** (mit
-„Modell mitsenden", RTX-B-003), **Im Browser öffnen**. Generierung und Ergebnisbearbeitung
-bleiben in der Webanwendung.
+**Bildweg und Modellweg sind zwei Wege** (RTX-P-014, Nutzervorgabe vom 05.10.2026): sie laufen einzeln
+oder zusammen, und das Panel zeigt es so. Fünf aufklappbare Bereiche — **Verbindung**, **Projekt** (mit
+„Neues Projekt …", RTX-P-013), **Blickpunkt** (Ziel, Rahmen, Kameraname als Vorschlag), **Bild**
+(Ansicht oder Rendering, Datenpässe) und **Modell** (GLB und Kamera) —, Bild und Modell je mit einem
+Schalter im Kopf. Darunter steht fest der Bereich **Übernehmen**: was gesendet wird (Bild, Modell oder
+beides), der Knopf, Fortschritt, Ergebnis und „Im Browser öffnen". „Nur Modell" rendert nicht.
+Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
+
+Was gesendet wird, entscheidet ``rendertaxi_client.ways.plan`` — **eine** Stelle für Panel und
+Operator. Eine gewählte Aufnahme nur mit Modell gegen einen Server unter Capture-Manifest 1.6.0 fällt mit
+einem Hinweis auf „Bild und Modell" zurück (Regel 3: eine gemerkte Wahl bricht nichts ab). Die
+aufgeklappten Bereiche merkt sich Blender selbst (``UILayout.panel``, ab 4.1); ein unbekannter Zustand
+klappt einen Bereich nur auf oder zu.
 
 **Faden-Regel.** Netzaufrufe laufen in einem Hintergrundfaden (``Job``), damit
 Blender bedienbar bleibt. Der Faden fasst ``bpy`` nie an: was er an
@@ -30,7 +38,7 @@ from bpy.props import BoolProperty, EnumProperty, PointerProperty, StringPropert
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import capture, export, settings
-from .rendertaxi_client import auth, frame
+from .rendertaxi_client import auth, frame, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.transport import (PROJECT_NAME_MAX_LENGTH, ApiClient, ApiError, Cancelled, NewProject,
                                           Transfer, Unauthorized, handshake_problem, normalize_server_url, prepare,
@@ -393,7 +401,8 @@ class RTX_Props(PropertyGroup):
     target_mode: EnumProperty(
         name="Ziel",
         items=[("CREATE", "Neuer Blickpunkt", "Legt einen neuen Blickpunkt an"),
-               ("UPDATE", "Bestehenden aktualisieren", "Neue Basisbildfassung für einen bestehenden Blickpunkt")],
+               ("UPDATE", "Bestehenden aktualisieren",
+                "Bild und/oder Modell eines bestehenden Blickpunkts erneuern; was nicht gesendet wird, bleibt")],
         default="CREATE",
     )
     viewpoint_name: StringProperty(name="Name", default="", maxlen=200)
@@ -428,11 +437,24 @@ class RTX_Props(PropertyGroup):
     pass_albedo: BoolProperty(name="Albedo", default=False)
     pass_object_id: BoolProperty(name="Objekt-ID", default=False)
     pass_material_id: BoolProperty(name="Material-ID", default=False)
+    send_image: BoolProperty(
+        name="Bild senden",
+        description="Die Ansicht oder ein Rendering als Bild senden — mit den gewählten Datenpässen",
+        default=True,
+    )
     send_model: BoolProperty(
-        name="Modell mitsenden",
-        description="Die sichtbaren Objekte als GLB und die Kamera der Aufnahme mitsenden",
+        name="Modell senden",
+        description=("Die sichtbaren Objekte als GLB und die Kamera senden — mit einem Bild oder allein, "
+                     "dann ohne Rendern"),
         default=False,
         update=_send_model_changed,
+    )
+    model_view: EnumProperty(
+        name="Kamera",
+        description="Woher die Kamera kommt, wenn nur das Modell gesendet wird",
+        items=[("VIEW", "3D-Ansicht", "Die Ansicht der 3D-Ansicht — die Szenenkamera, wenn sie durch sie blickt"),
+               ("CAMERA", "Szenenkamera", "Die aktive Kamera der Szene")],
+        default="VIEW",
     )
     model_materials: BoolProperty(
         name="Materialien und Texturen",
@@ -720,10 +742,15 @@ class RTX_OT_create_project(Operator):
 def viewpoint_name_suggestion(context, props: RTX_Props) -> str | None:
     """Der Kameraname als Vorschlag für einen neuen Blickpunkt — ``None`` ohne Kameraobjekt (RTX-P-013).
 
-    Das Panel zeigt ihn als Platzhalter im leeren Namensfeld; was der Nutzer eingibt, gilt.
+    Das Panel zeigt ihn als Platzhalter im leeren Namensfeld; was der Nutzer eingibt, gilt. Die Kamera ist
+    die des Bildes, nur mit Modell die im Bereich Modell gewählte (``camera_kind``).
     """
     try:
-        return export.capture_camera_name(context, props.capture_kind)
+        chosen = chosen_ways(props, STATE.handshake)
+    except ValueError:
+        chosen = ways.Plan(image=True, model=False)
+    try:
+        return export.capture_camera_name(context, camera_kind(props, chosen))
     except (AttributeError, ReferenceError, RuntimeError):
         return None
 
@@ -750,6 +777,29 @@ def capture_size(context, props: RTX_Props) -> tuple[int, int] | None:
     return capture.viewpoint_size(STATE.desired.get(props.viewpoint), capture.scene_size(context.scene))
 
 
+def chosen_ways(props: RTX_Props, handshake: dict | None) -> ways.Plan:
+    """Was gesendet wird — die eine Stelle für Panel und Operator (``ways.plan``); ``ValueError`` ohne Wahl."""
+    return ways.plan(props.send_image, props.send_model, handshake)
+
+
+def camera_kind(props: RTX_Props, chosen: ways.Plan) -> str:
+    """Woher die Kamera kommt: mit Bild die Ansicht des Bildes, nur mit Modell die Wahl im Bereich Modell.
+
+    ``VIEWPORT`` ist die 3D-Ansicht (die Szenenkamera, wenn sie durch sie blickt), ``BEAUTY`` die Szenenkamera.
+    """
+    if chosen.image:
+        return props.capture_kind
+    return "BEAUTY" if props.model_view == "CAMERA" else "VIEWPORT"
+
+
+def frame_size(context, props: RTX_Props, chosen: ways.Plan) -> tuple[int, int]:
+    """Die Maße der Aufnahme: mit Bild die des Bildes (Szene oder Blickpunkt-Rahmen), nur mit Modell die
+    Ausgabegröße der Szene — die Bildgröße der Kamera (``camera.resolution``, Capture-Manifest 1.6.0)."""
+    if chosen.image:
+        return capture_size(context, props) or capture.scene_size(context.scene)
+    return capture.scene_size(context.scene)
+
+
 def selected_roles(props: RTX_Props) -> list[str]:
     if props.capture_kind != "BEAUTY":
         return []
@@ -757,9 +807,9 @@ def selected_roles(props: RTX_Props) -> list[str]:
 
 
 def model_problem(context, props: RTX_Props, handshake: dict | None) -> str | None:
-    """Warum „Modell mitsenden" nicht geht — im Panel **vor** dem Senden, im Operator als Fehler."""
+    """Warum „Modell senden" nicht geht — im Panel **vor** dem Senden, im Operator als Fehler."""
     if handshake is not None and not supports_model(handshake):
-        return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne „Modell mitsenden“ übernehmen."
+        return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne „Modell senden“ übernehmen."
     problem = export.unit_problem(context.scene)
     if problem:
         return problem
@@ -769,6 +819,11 @@ def model_problem(context, props: RTX_Props, handshake: dict | None) -> str | No
 def build_capture(context, props: RTX_Props, directory: str, handshake: dict | None) -> bytes:
     """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
 
+    **Drei Fälle** (RTX-P-014, ``ways.plan``): nur Bild, nur Modell, Bild und Modell. Nur mit Modell wird
+    **nicht gerendert**: es gehen die GLB und die Kamera, deren Bildgröße die Ausgabegröße der Szene ist
+    (``camera.resolution``, ab Capture-Manifest 1.6.0). Gegen einen Server unter 1.6.0 fällt „nur Modell"
+    auf „Bild und Modell" zurück.
+
     Die Vertragsfassung kommt aus dem Handshake: 1.3.0, wenn der Server sie
     umsetzt (PNG-Datenpässe, RTX-P-012), sonst ohne Modell 1.1.0 und mit Modell
     1.2.0. Ohne Modell sind ``camera`` und ``geometry`` ``null``; mit Modell
@@ -777,27 +832,37 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
     geht der Name der gespeicherten ``.blend`` als ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
     """
     scene = context.scene
+    chosen = chosen_ways(props, handshake)
     size = capture_size(context, props)
     limits = (handshake or {}).get("limits") or {}
     contract_version = mf.image_contract_version(handshake)
-    if props.send_model:
+    if chosen.model:
         problem = model_problem(context, props, handshake)
         if problem:
             raise ValueError(problem)
+    kind = camera_kind(props, chosen)
+    if chosen.model_only:
+        # Ohne Bild ist die Kamera die Aufnahme: ohne sie geht kein Modell allein (Pflicht ab 1.6.0).
+        why = export.camera_problem(context, kind, mf.camera_lens_allowed(mf.model_contract_version(handshake)))
+        if why:
+            raise ValueError(f"Ohne Kamera geht das Modell nicht allein: {why}")
     capabilities = capture.probe(context)
-    if props.capture_kind == "VIEWPORT":
+    files: list[mf.CaptureFile] = []
+    planned: list[mf.PlannedRole] = []
+    view_name = None
+    if chosen.image and props.capture_kind == "VIEWPORT":
         files = [capture.capture_viewport(context, directory, size, props.hide_overlays)]
-        planned: list[mf.PlannedRole] = []
         view_name = "3D-Ansicht"
-    else:
+    elif chosen.image:
         beauty, passes, planned = capture.capture_beauty(
             context, directory, size, selected_roles(props), limits.get("allowedMediaTypes"),
             settings.data_pass_bit_depth())
         files = [beauty, *passes]
         view_name = scene.camera.name if scene.camera else None
     camera = geometry = None
-    if props.send_model:
-        image = files[0].image
+    if chosen.model:
+        width, height = ((files[0].image["width"], files[0].image["height"]) if chosen.image
+                         else frame_size(context, props, chosen))
         wm = context.window_manager
         wm.progress_begin(0, 100)
         try:
@@ -807,9 +872,13 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
         finally:
             wm.progress_end()
         contract_version = mf.model_contract_version(handshake)
-        camera = export.camera_block(context, props.capture_kind, (image["width"], image["height"]),
-                                     mf.camera_lens_allowed(contract_version))
+        camera = export.camera_block(context, kind, (width, height), mf.camera_lens_allowed(contract_version))
+        if camera is not None:
+            # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.
+            camera["resolution"] = {"width": int(width), "height": int(height)}
         geometry = export.geometry_block(context, directory)
+        if chosen.model_only:
+            view_name = export.capture_camera_name(context, kind) or "3D-Ansicht"
     stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else None
     data = mf.ManifestInput(
         capture_id=mf.uuid_v7(),
@@ -857,7 +926,9 @@ def _transfer_work(server: str, token: str, document_key: str, pending: dict):
                 "openUrl": outcome["result"].get("openUrl"),
                 "viewpointId": outcome["result"].get("viewpointId"),
             }
-            STATE.message = "Übernahme abgeschlossen."
+            # Was angekommen ist, aus dem Abschlussbeleg je Weg — und was am Blickpunkt stehen blieb.
+            update = (pending["target"].get("viewpoint") or {}).get("mode") == frame.UPDATE
+            STATE.message = ways.result_text(outcome["result"], update)
             project_id = pending["target"]["projectId"]
             STATE.viewpoints.pop(project_id, None)
 
@@ -878,8 +949,9 @@ def _transfer_work(server: str, token: str, document_key: str, pending: dict):
 
 class RTX_OT_capture(Operator):
     bl_idname = "rendertaxi.capture"
-    bl_label = "Aufnehmen und übernehmen"
-    bl_description = "Die Ansicht aufnehmen und an den gewählten Blickpunkt übergeben"
+    bl_label = "Übernehmen"
+    bl_description = ("Bild, Modell oder beides an den gewählten Blickpunkt übergeben — was gesendet wird, "
+                      "steht darüber; nur mit Modell wird nicht gerendert")
 
     def execute(self, context):
         if STATE.job is not None:
@@ -895,9 +967,10 @@ class RTX_OT_capture(Operator):
             key = capture.document_key(context.scene, create=True)
             if transfers.pending(key):
                 raise ValueError("Hier läuft schon eine Übernahme. Fortsetzen oder verwerfen.")
+            chosen = chosen_ways(props, STATE.handshake)
             directory = transfers.capture_dir(mf.uuid_v7())
             os.makedirs(directory, mode=0o700, exist_ok=True)
-            STATE.progress = ("Aufnehmen …", 0)
+            STATE.progress = (f"{ways.steps(chosen)[0]} …", 0)
             STATE.result = None
             raw = build_capture(context, props, directory, STATE.handshake)
             pending = prepare(transfers, key, STATE.server, target, raw, directory)
@@ -909,6 +982,7 @@ class RTX_OT_capture(Operator):
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
         token = credentials.token(STATE.server)
+        STATE.message = chosen.hint or ""
         start_job("transfer", _transfer_work(STATE.server, token, key, pending))
         return {"FINISHED"}
 
@@ -1011,14 +1085,48 @@ def _aspect_hint(context, props: RTX_Props) -> str | None:
     """Weicht bei „Rahmen behalten" das Ausgabeziel ab, sagt das Panel es — es löst es nicht still auf."""
     if props.target_mode != "UPDATE" or props.fit_to_capture:
         return None
+    chosen = _chosen_or_none(props)
+    if chosen is None:
+        return None
     viewpoint_frame = capture.viewpoint_size(STATE.desired.get(props.viewpoint), capture.scene_size(context.scene))
-    size = capture_size(context, props) or capture.scene_size(context.scene)
-    return frame.aspect_hint(viewpoint_frame, size, frame_option="Rahmen an Aufnahme anpassen",
-                             size_option="Blickpunkt-Rahmen")
+    return frame.aspect_hint(viewpoint_frame, frame_size(context, props, chosen),
+                             frame_option="Rahmen an Aufnahme anpassen",
+                             size_option="Blickpunkt-Rahmen" if chosen.image else None)
 
 
 def _size_text(props: RTX_Props) -> str:
     return frame.size_text(props.target_mode == "CREATE", props.fit_to_capture, props.size_mode)
+
+
+def _chosen_or_none(props: RTX_Props) -> ways.Plan | None:
+    """Was gesendet wird — ``None``, wenn weder Bild noch Modell gewählt ist (das Panel sagt es)."""
+    try:
+        return chosen_ways(props, STATE.handshake)
+    except ValueError:
+        return None
+
+
+# Die Bereiche des Panels: Kennung (Blender merkt sich darunter, ob er aufgeklappt ist) und Vorgabe.
+SECTIONS = (
+    ("RTX_section_connection", "Verbindung", False),
+    ("RTX_section_project", "Projekt", False),
+    ("RTX_section_viewpoint", "Blickpunkt", False),
+    ("RTX_section_image", "Bild", False),
+    ("RTX_section_model", "Modell", False),
+)
+
+
+def _section(layout, index: int, toggle: tuple | None = None, icon: str = "NONE"):
+    """Ein aufklappbarer Bereich (``UILayout.panel``, ab Blender 4.1) — der Inhalt oder ``None``, wenn zu.
+
+    ``toggle`` ist ``(props, "send_image")``: der Schalter steht im Kopf und ist auch zugeklappt bedienbar.
+    """
+    idname, title, closed = SECTIONS[index]
+    header, body = layout.panel(idname, default_closed=closed)
+    if toggle is not None:
+        header.prop(toggle[0], toggle[1], text="")
+    header.label(text=title, icon=icon)
+    return body
 
 
 class RTX_PT_panel(Panel):
@@ -1035,106 +1143,91 @@ class RTX_PT_panel(Panel):
         _measure(context)
 
         # -- Verbindung ------------------------------------------------------
-        box = layout.box()
-        box.label(text="Verbindung", icon="URL")
+        body = _section(layout, 0, icon="URL")
         problem = _online_problem()
-        if problem:
-            _wrapped(box, problem, "ERROR")
-        if STATE.code:
-            box.label(text=f"Code: {STATE.code['userCode']}", icon="KEY_HLT")
-            _wrapped(box, f"Im Browser bestätigen: {STATE.code['verificationUri']}")
-            row = box.row()
-            row.operator(RTX_OT_open_login.bl_idname, icon="URL")
-            row.operator(RTX_OT_cancel.bl_idname, icon="CANCEL")
-        elif STATE.connected and STATE.identity:
-            who = STATE.identity.get("user") or STATE.identity.get("email")
-            org = STATE.identity.get("organization")
-            _wrapped(box, f"Angemeldet als {who}", "CHECKMARK")
-            if org:
-                _wrapped(box, org, "COMMUNITY")
-            row = box.row()
-            row.enabled = not busy
-            row.operator(RTX_OT_sign_out.bl_idname, icon="UNLINKED")
-        else:
-            box.label(text="Nicht verbunden", icon="UNLINKED")
-            row = box.row()
-            row.enabled = not busy and problem is None
-            row.operator(RTX_OT_connect.bl_idname, icon="LINKED")
-        server = STATE.server
-        if server:
-            box.label(text=server, icon="WORLD")
+        if body is not None:
+            if problem:
+                _wrapped(body, problem, "ERROR")
+            if STATE.code:
+                body.label(text=f"Code: {STATE.code['userCode']}", icon="KEY_HLT")
+                _wrapped(body, f"Im Browser bestätigen: {STATE.code['verificationUri']}")
+                row = body.row()
+                row.operator(RTX_OT_open_login.bl_idname, icon="URL")
+                row.operator(RTX_OT_cancel.bl_idname, icon="CANCEL")
+            elif STATE.connected and STATE.identity:
+                who = STATE.identity.get("user") or STATE.identity.get("email")
+                org = STATE.identity.get("organization")
+                _wrapped(body, f"Angemeldet als {who}", "CHECKMARK")
+                if org:
+                    _wrapped(body, org, "COMMUNITY")
+                row = body.row()
+                row.enabled = not busy
+                row.operator(RTX_OT_sign_out.bl_idname, icon="UNLINKED")
+            else:
+                body.label(text="Nicht verbunden", icon="UNLINKED")
+                row = body.row()
+                row.enabled = not busy and problem is None
+                row.operator(RTX_OT_connect.bl_idname, icon="LINKED")
+            if STATE.server:
+                body.label(text=STATE.server, icon="WORLD")
 
         if not STATE.connected:
             self._status(layout)
             return
 
-        # -- Projekt und Blickpunkt -----------------------------------------
-        box = layout.box()
-        row = box.row()
-        row.label(text="Projekt und Blickpunkt", icon="OUTLINER_COLLECTION")
-        row.operator(RTX_OT_refresh.bl_idname, text="", icon="FILE_REFRESH")
-        row = box.row(align=True)
-        row.prop(props, "project", text="")
-        row = box.row()
-        row.enabled = not busy
-        row.operator(RTX_OT_create_project.bl_idname, icon="ADD")
-        box.prop(props, "target_mode", expand=True)
-        if props.target_mode == "CREATE":
-            # Der Kameraname als Vorschlag im leeren Feld; ohne Kameraobjekt bleibt es leer.
-            box.prop(props, "viewpoint_name", placeholder=viewpoint_name_suggestion(context, props) or "")
-        else:
-            box.prop(props, "viewpoint", text="")
-            box.prop(props, "fit_to_capture")
-        box.label(text="Rahmengröße")
-        box.prop(props, "size_mode", text="")
-        _wrapped(box, _size_text(props), "INFO")
-        hint = _aspect_hint(context, props)
-        if hint:
-            _wrapped(box, hint, "ERROR")
-
-        # -- Bild übernehmen ------------------------------------------------
-        box = layout.box()
-        box.label(text="Bild übernehmen", icon="IMAGE_DATA")
-        box.prop(props, "capture_kind", expand=True)
-        if props.capture_kind == "VIEWPORT":
-            box.prop(props, "hide_overlays")
-        if props.target_mode == "UPDATE":
-            box.prop(props, "resolution_source")
-        size = capture_size(context, props) or capture.scene_size(context.scene)
-        box.label(text=f"Ausschnitt {size[0]} × {size[1]}")
-        if props.capture_kind == "BEAUTY":
-            if context.scene.camera is None:
-                _wrapped(box, "Die Szene hat keine aktive Kamera.", "ERROR")
-            self._passes(box.box(), context, props)
-        self._model(box.box(), context, props)
-
-        key = capture.document_key(context.scene, create=False)
-        pending = None
-        try:
-            pending = TransferStore(settings.user_dir()).pending(key) if key else None
-        except OSError:
-            pending = None
-        if pending:
-            _wrapped(box, f"Offene Übernahme vom {pending.get('createdAt', '')[:16].replace('T', ' ')} UTC", "TIME")
-            row = box.row()
+        # -- Projekt --------------------------------------------------------
+        body = _section(layout, 1, icon="OUTLINER_COLLECTION")
+        if body is not None:
+            row = body.row(align=True)
+            row.prop(props, "project", text="")
+            row.operator(RTX_OT_refresh.bl_idname, text="", icon="FILE_REFRESH")
+            row = body.row()
             row.enabled = not busy
-            row.operator(RTX_OT_resume.bl_idname, icon="PLAY")
-            row = box.row()
-            row.enabled = not busy
-            row.operator(RTX_OT_discard.bl_idname, icon="TRASH")
-        else:
-            row = box.row()
-            row.scale_y = 1.4
-            row.enabled = not busy
-            row.operator(RTX_OT_capture.bl_idname, icon="RENDER_STILL")
+            row.operator(RTX_OT_create_project.bl_idname, icon="ADD")
 
-        self._status(layout)
+        # -- Blickpunkt -----------------------------------------------------
+        body = _section(layout, 2, icon="RESTRICT_VIEW_OFF")
+        if body is not None:
+            body.prop(props, "target_mode", expand=True)
+            if props.target_mode == "CREATE":
+                # Der Kameraname als Vorschlag im leeren Feld; ohne Kameraobjekt bleibt es leer.
+                body.prop(props, "viewpoint_name", placeholder=viewpoint_name_suggestion(context, props) or "")
+            else:
+                body.prop(props, "viewpoint", text="")
+                body.prop(props, "fit_to_capture")
+            body.label(text="Rahmengröße")
+            body.prop(props, "size_mode", text="")
+            _wrapped(body, _size_text(props), "INFO")
+            hint = _aspect_hint(context, props)
+            if hint:
+                _wrapped(body, hint, "ERROR")
 
-        # -- Im Browser öffnen ------------------------------------------------
-        if STATE.result and STATE.result.get("openUrl"):
-            box = layout.box()
-            box.operator(RTX_OT_open_result.bl_idname, icon="URL")
-            box.label(text="Aufnahme übernommen.")
+        # -- Bild -----------------------------------------------------------
+        body = _section(layout, 3, toggle=(props, "send_image"), icon="IMAGE_DATA")
+        if body is not None:
+            column = body.column()
+            column.active = props.send_image
+            column.prop(props, "capture_kind", expand=True)
+            if props.capture_kind == "VIEWPORT":
+                column.prop(props, "hide_overlays")
+            if props.target_mode == "UPDATE":
+                column.prop(props, "resolution_source")
+            size = capture_size(context, props) or capture.scene_size(context.scene)
+            column.label(text=f"Ausschnitt {size[0]} × {size[1]}")
+            if props.capture_kind == "BEAUTY":
+                if context.scene.camera is None:
+                    _wrapped(column, "Die Szene hat keine aktive Kamera.", "ERROR")
+                self._passes(column.box(), context, props)
+
+        # -- Modell ---------------------------------------------------------
+        body = _section(layout, 4, toggle=(props, "send_model"), icon="MESH_DATA")
+        if body is not None:
+            column = body.column()
+            column.active = props.send_model
+            self._model(column, context, props)
+
+        # -- Übernehmen (fest) ----------------------------------------------
+        self._transfer(layout.box(), context, props, busy)
 
     def _passes(self, layout, context, props):
         layout.label(text="Pässe (optional)")
@@ -1162,18 +1255,16 @@ class RTX_PT_panel(Panel):
                     _wrapped(layout, f"Nicht übertragbar: {problem}", "INFO")
 
     def _model(self, layout, context, props):
-        """„Modell mitsenden": Größe und Grenzen vor dem Senden, und was nicht mitgeht."""
+        """Modell senden: Größe und Grenzen vor dem Senden, die Kamera, und was nicht mitgeht."""
         row = layout.row()
-        row.prop(props, "send_model")
-        if props.send_model:
-            row.operator(RTX_OT_count_model.bl_idname, text="", icon="FILE_REFRESH")
+        row.prop(props, "model_materials")
+        row.operator(RTX_OT_count_model.bl_idname, text="", icon="FILE_REFRESH")
         if not props.send_model:
             return
         problem = model_problem(context, props, STATE.handshake)
         if problem:
             _wrapped(layout, problem, "ERROR")
             return
-        layout.prop(props, "model_materials")
         estimate = STATE.model_estimate
         if estimate is not None:
             text = (f"≈ {estimate.triangles:,} Dreiecke in {estimate.objects} sichtbaren Objekten "
@@ -1182,10 +1273,58 @@ class RTX_PT_panel(Panel):
         cap = ((STATE.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
         if cap:
             _wrapped(layout, f"Modelldatei höchstens {cap / 1048576:.0f} MB", "INFO")
-        why = export.camera_problem(context, props.capture_kind,
+        chosen = _chosen_or_none(props) or ways.Plan(image=False, model=True)
+        if chosen.model_only:
+            layout.prop(props, "model_view")
+            size = frame_size(context, props, chosen)
+            _wrapped(layout, f"Ohne Bild, ohne Rendern — die Kamera gibt das Format ({size[0]} × {size[1]}).",
+                     "INFO")
+        else:
+            _wrapped(layout, "Kamera: die des Bildes.", "CAMERA_DATA")
+        why = export.camera_problem(context, camera_kind(props, chosen),
                                     mf.camera_lens_allowed(mf.model_contract_version(STATE.handshake)))
         if why:
-            _wrapped(layout, f"Ohne Kamera: {why}", "INFO")
+            _wrapped(layout, f"Ohne Kamera: {why}", "ERROR" if chosen.model_only else "INFO")
+
+    def _transfer(self, layout, context, props, busy):
+        """Der feste Bereich „Übernehmen": was gesendet wird, der Knopf, Fortschritt und Ergebnis."""
+        layout.label(text="Übernehmen", icon="EXPORT")
+        try:
+            chosen = chosen_ways(props, STATE.handshake)
+        except ValueError as error:
+            chosen = None
+            _wrapped(layout, str(error), "ERROR")
+        if chosen is not None:
+            _wrapped(layout, ways.summary(chosen), "CHECKMARK")
+            if chosen.hint:
+                _wrapped(layout, chosen.hint, "INFO")
+        key = capture.document_key(context.scene, create=False)
+        pending = None
+        try:
+            pending = TransferStore(settings.user_dir()).pending(key) if key else None
+        except OSError:
+            pending = None
+        if pending:
+            _wrapped(layout, f"Offene Übernahme vom {pending.get('createdAt', '')[:16].replace('T', ' ')} UTC", "TIME")
+            row = layout.row()
+            row.enabled = not busy
+            row.operator(RTX_OT_resume.bl_idname, icon="PLAY")
+            row = layout.row()
+            row.enabled = not busy
+            row.operator(RTX_OT_discard.bl_idname, icon="TRASH")
+        else:
+            row = layout.row()
+            row.scale_y = 1.4
+            row.enabled = not busy and chosen is not None
+            label = f"{ways.label(chosen)} übernehmen" if chosen is not None else RTX_OT_capture.bl_label
+            row.operator(RTX_OT_capture.bl_idname, text=label, icon="RENDER_STILL" if chosen and chosen.image
+                         else "EXPORT")
+
+        self._status(layout)
+
+        if STATE.result and STATE.result.get("openUrl"):
+            layout.operator(RTX_OT_open_result.bl_idname, icon="URL")
+            layout.label(text="Aufnahme übernommen.")
 
     def _status(self, layout):
         if STATE.progress:

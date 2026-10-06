@@ -50,17 +50,23 @@ und legt es in ihrem Nutzerordner ab, nur für dich lesbar — nie in der
 **Verbundene Geräte** (`/geraete`) und lassen sich dort abmelden. Ein
 Gerätename (dieselben Einstellungen) hilft, Blender dort wiederzuerkennen.
 
-## Bild übernehmen
+## Bild, Modell oder beides übernehmen
 
-1. Unter **Projekt und Blickpunkt** das Projekt wählen — oder mit **Neues
-   Projekt …** eines anlegen (mit den Rechten deiner Rolle im Büro); es ist
-   danach gewählt. **Aktualisieren** zeigt umbenannte Projekte mit ihrem
-   neuen Namen.
-2. Entweder **Neuer Blickpunkt** mit Namen oder **Bestehenden aktualisieren**
-   und den Blickpunkt wählen. Ein Update legt keinen zweiten Blickpunkt an.
-   Bleibt der Name leer, gilt der Name der Kamera (er steht grau im Feld);
-   ohne Kamera ist ein Name Pflicht.
-3. Unter **Bild übernehmen** die Aufnahmeart wählen:
+Das Panel hat fünf aufklappbare Bereiche — **Verbindung**, **Projekt**,
+**Blickpunkt**, **Bild**, **Modell** — und darunter fest **Übernehmen**. Bild
+und Modell sind zwei Wege: jeder hat seinen Schalter im Kopf seines Bereichs,
+und sie laufen einzeln oder zusammen. **Übernehmen** sagt, was gesendet wird.
+
+1. Unter **Projekt** das Projekt wählen — oder mit **Neues Projekt …** eines
+   anlegen (mit den Rechten deiner Rolle im Büro); es ist danach gewählt.
+   **Aktualisieren** zeigt umbenannte Projekte mit ihrem neuen Namen.
+2. Unter **Blickpunkt** entweder **Neuer Blickpunkt** mit Namen oder
+   **Bestehenden aktualisieren** und den Blickpunkt wählen. Ein Update legt
+   keinen zweiten Blickpunkt an und ändert nur, was du sendest: ein Update nur
+   mit Modell lässt das Bild des Blickpunkts stehen, eines nur mit Bild das
+   Modell. Bleibt der Name leer, gilt der Name der Kamera (er steht grau im
+   Feld); ohne Kamera ist ein Name Pflicht.
+3. Unter **Bild** (Schalter an) die Aufnahmeart wählen:
    - **Viewport** — die aktuelle 3D-Ansicht, so wie sie zu sehen ist.
      **Overlays ausblenden** (Vorgabe) lässt Gitter, Gizmos und Auswahlumrisse
      weg.
@@ -70,11 +76,15 @@ Gerätename (dieselben Einstellungen) hilft, Blender dort wiederzuerkennen.
    Die Größe kommt aus **Output Properties › Format** (Auflösung × Prozent); das Panel
    nennt sie als „Ausschnitt". Beim Aktualisieren lässt sich stattdessen die
    Größe des Blickpunkt-Rahmens wählen.
-4. **Aufnehmen und übernehmen.** Der Fortschritt steht im Panel;
+4. Unter **Modell** (Schalter an) geht das Modell mit — siehe unten. **Nur
+   Modell** (Bild aus, Modell an) rendert nicht: es gehen das Modell und die
+   Kamera; der Rahmen bekommt das Seitenverhältnis der Kamera.
+5. **Übernehmen** — der Knopf heißt „Bild übernehmen", „Modell übernehmen"
+   oder „Bild und Modell übernehmen". Der Fortschritt steht darunter;
    **Abbrechen** hält eine laufende Übertragung an. Eine unterbrochene
    Übernahme wird mit **Übernahme fortsetzen** zu Ende geführt oder mit
    **Angefangene Übernahme verwerfen** verworfen.
-5. **Blickpunkt im Browser öffnen** springt zum Ergebnis.
+6. **Blickpunkt im Browser öffnen** springt zum Ergebnis.
 
 ### Pässe (Beauty)
 
@@ -102,11 +112,11 @@ rendertaxi.ai**). 16 Bit ist genauer und doppelt so groß.
   Schreiben jeder Pass-Datei selbst eine Zeile „Saved: …" in der
   Systemkonsole.
 
-## Modell mitsenden
+## Modell senden
 
-Unter **Bild übernehmen** schaltet **Modell mitsenden** (Standard aus) die
-sichtbaren Objekte als eine GLB-Datei (glTF 2.0) und die Kamera der Aufnahme
-dazu. In der Webanwendung erscheint das Modell als Asset am Blickpunkt; auf
+Der Schalter im Kopf von **Modell** (Standard aus) sendet die sichtbaren
+Objekte als eine GLB-Datei (glTF 2.0) und die Kamera der Aufnahme — mit einem
+Bild oder allein. In der Webanwendung erscheint das Modell als Asset am Blickpunkt; auf
 einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
 
 - **Was exportiert wird:** alle in der 3D-Ansicht sichtbaren Objekte der
@@ -121,8 +131,10 @@ einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
   Objekte (**Modell neu zählen** zählt nach Änderungen neu) und die größte
   Modelldatei, die der Server annimmt. Liegt das Modell darüber, wird nichts
   gesendet.
-- **Kamera:** bei **Beauty** die aktive Kamera, bei **Viewport** die
+- **Kamera:** mit Bild bei **Beauty** die aktive Kamera, bei **Viewport** die
   3D-Ansicht (perspektivisch oder parallel; in der Kameraansicht die Kamera).
+  Nur mit Modell wählst du unter **Kamera** zwischen 3D-Ansicht und
+  Szenenkamera; ohne Kamera geht das Modell nicht allein.
   Brennweite, Sensor und **Shift** gehen mit, wenn der Server
   Capture-Manifest 1.4 kennt; gegen einen älteren Server geht eine Kamera mit
   Shift nicht mit. Eine Panoramakamera oder ein Pixel Aspect ungleich 1:1
@@ -133,10 +145,12 @@ einen Rahmen gezogen, zeigt **Modell im Rahmen** es aus genau dieser Kamera.
   eine Einheit als einen Meter, unabhängig von Unit Scale; mit einem anderen
   Wert wäre der Maßstab nicht eindeutig. Das Panel nennt den Grund, statt zu
   raten.
-- Ohne **Modell mitsenden** bleibt alles wie bisher: nur das Bild.
+- Ohne **Modell** bleibt alles wie bisher: nur das Bild.
 
 Der Server muss den Modellweg kennen; tut er es nicht, sagt das Panel es, und
-übernommen wird nur ohne Modell.
+übernommen wird nur ohne Modell. Ein Modell **allein** nimmt der Server ab
+Capture-Manifest 1.6 an; ein älterer Server bekommt stattdessen Bild und
+Modell, und das Panel sagt es vorher.
 
 ## Rahmengröße
 

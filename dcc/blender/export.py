@@ -281,6 +281,10 @@ def _region(context):
     if found is None:
         return None
     _window, area, region = found
+    # Ohne Fenster (``blender -b``) hat eine 3D-Ansicht keinen Ansichtszustand (gemessen am 06.10.2026,
+    # erstmals erreicht über „nur Modell" mit der Kamera der 3D-Ansicht): dann gibt es keine.
+    if region.data is None:
+        return None
     return area.spaces.active, region.data
 
 

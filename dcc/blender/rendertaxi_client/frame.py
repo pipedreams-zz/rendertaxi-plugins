@@ -75,16 +75,18 @@ def size_text(creating: bool, fit_to_capture: bool, size: str) -> str:
 
 
 def aspect_hint(frame: tuple[int, int] | None, size: tuple[int, int], *, frame_option: str,
-                size_option: str) -> str | None:
+                size_option: str | None) -> str | None:
     """Der Hinweis bei „Rahmen behalten", wenn der Rahmen ein anderes Seitenverhältnis hat als die Aufnahme.
 
     ``frame_option`` und ``size_option`` sind die Beschriftungen der beiden
     Auswege im Plugin („Rahmen an Aufnahme anpassen", „Blickpunkt-Rahmen").
+    ``size_option`` ``None``: es gibt nur den ersten — eine Aufnahme nur mit
+    Modell hat kein Bild, das in Rahmengröße aufgenommen würde (RTX-P-014).
     """
     if frame is None:
         return None
     if abs(frame[0] / frame[1] - size[0] / size[1]) <= ASPECT_TOLERANCE:
         return None
+    ways_out = f"„{frame_option}“ oder Größe „{size_option}“ wählen." if size_option else f"„{frame_option}“ wählen."
     return (f"Der Rahmen des Blickpunkts ({frame[0]} × {frame[1]}) hat ein anderes Seitenverhältnis "
-            f"als die Aufnahme ({size[0]} × {size[1]}). „{frame_option}“ oder "
-            f"Größe „{size_option}“ wählen.")
+            f"als die Aufnahme ({size[0]} × {size[1]}). {ways_out}")

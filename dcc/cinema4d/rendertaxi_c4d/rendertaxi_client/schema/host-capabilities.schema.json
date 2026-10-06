@@ -5,7 +5,7 @@
   "description": "Host-Capabilities: was ein Host nach Auskunft seines Plugins liefern kann (RTX-P-003, ADR 0031). Diese Datei definiert kein eigenständiges Dokument, sondern referenzierbare Definitionen; das Capture-Manifest führt sie ab Version 1.1.0 optional unter source.host.capabilities. Nicht zu verwechseln mit der generation-capability des Servers (Fähigkeit eines Bildmodells). Der Server glaubt der Selbstauskunft nicht: Capabilities steuern die Oberfläche des Plugins und die Vorauswahl von Presets. Die Planung eines Jobs erfolgt ausschließlich nach den Dateien, die tatsächlich mit status: present angekommen und serverseitig verifiziert sind.",
   "$defs": {
     "capabilityKey": {
-      "description": "Geschlossene Aufzählung der Host-Capabilities. Ein neuer Wert ist eine MINOR-Änderung und darf erst geschrieben werden, wenn die Gegenseite ihn umsetzt.",
+      "description": "Geschlossene Aufzählung der Host-Capabilities. Ein neuer Wert ist eine MINOR-Änderung und darf erst geschrieben werden, wenn die Gegenseite ihn umsetzt. modelOnlyCapture (eine Aufnahme nur mit Modell, ohne Bild) kam mit Capture-Manifest 1.6.0; in einem älteren Dokument ist der Schlüssel unzulässig.",
       "enum": [
         "viewportCapture",
         "beautyRender",
@@ -17,6 +17,7 @@
         "maskPass",
         "cameraExport",
         "geometryExport",
+        "modelOnlyCapture",
         "bimMetadata",
         "backgroundRender",
         "resultReimport"
@@ -77,6 +78,7 @@
         "maskPass": { "$ref": "#/$defs/capabilityEntry" },
         "cameraExport": { "$ref": "#/$defs/capabilityEntry" },
         "geometryExport": { "$ref": "#/$defs/capabilityEntry" },
+        "modelOnlyCapture": { "$ref": "#/$defs/capabilityEntry" },
         "bimMetadata": { "$ref": "#/$defs/capabilityEntry" },
         "backgroundRender": { "$ref": "#/$defs/capabilityEntry" },
         "resultReimport": { "$ref": "#/$defs/capabilityEntry" }

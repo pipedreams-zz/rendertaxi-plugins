@@ -31,6 +31,7 @@ import urllib.request
 
 from . import current
 from . import manifest as mf
+from . import ways
 from .log import log
 from .store import TransferStore
 
@@ -483,7 +484,7 @@ class Transfer:
             log(f"Handshake: Capture-Manifest {version} → {result}")
             if result != "supported":
                 raise ApiError(VERSION_MISMATCH, code=str(result or "negotiation"))
-        self.progress("Übernahme anmelden", 5)
+        self.progress(f"Übernahme anmelden ({ways.label(ways.ways_of_manifest(manifest))})", 5)
         log(f"Vorgang {'fortgesetzt' if pending.get('captureId') else 'begonnen'}, Schlüssel {pending['idempotencyKey']}")
         session = self.api.create_capture(pending["idempotencyKey"], body)
         rotation = 0
@@ -528,8 +529,7 @@ class Transfer:
                 if asset is None:
                     raise ApiError(f"Der Server erwartet eine Datei, die diese Aufnahme nicht enthält: {file.get('path')}",
                                    code="asset_unexpected")
-                what = "Modell übertragen" if asset["role"] == mf.MODEL_ROLE else f"Bild übertragen: {asset['role']}"
-                self.progress(what, 10 + (70 * index) // outstanding)
+                self.progress(ways.transfer_step(asset["role"]), 10 + (70 * index) // outstanding)
                 attempt = file.get("attempt", 0) if state == "uploading" else file.get("attempt", 0) + 1
                 begun = self.api.file_action(capture_id, key, "begin", asset["path"], attempt)
                 if _settled(begun.get("file") or {}):

@@ -186,6 +186,9 @@ def probe(context=None) -> dict:
     capabilities["cameraExport"] = {"state": "available" if has_camera else "requires-user-action"}
     gltf = hasattr(bpy.ops, "export_scene") and hasattr(bpy.ops.export_scene, "gltf")
     capabilities["geometryExport"] = {"state": "available" if gltf else "unavailable"}
+    # Seit Extension 0.7.0 (RTX-P-014): GLB und Kamera ohne Bild, ohne Rendern. Geschrieben wird der
+    # Schlüssel erst in ein Manifest ab 1.6.0 (``manifest.build_manifest``).
+    capabilities["modelOnlyCapture"] = {"state": "available" if gltf else "unavailable"}
     return capabilities
 
 

@@ -1,4 +1,4 @@
-"""Capture-Manifest 1.1.0 bis 1.5.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
+"""Capture-Manifest 1.1.0 bis 1.6.0 — erzeugen, hashen und **vor** dem Hochladen prüfen.
 
 Kein Hostmodul. Die Python-Fassung dessen, was der Referenzclient
 (``integrations/_shared/tools/capture-client.mjs``) und das Archicad-Add-on
@@ -50,13 +50,19 @@ CAMERA_CONTRACT_VERSION = "1.4.0"
 # 1.5.0: ``source.fileName``, der Name der Ursprungsdatei ohne Pfad (RTX-P-013,
 # capture-manifest.md Abschnitt 13). Bildweg und Modellweg schreiben 1.5.0, sobald der Server sie umsetzt.
 SOURCE_FILE_CONTRACT_VERSION = "1.5.0"
+# 1.6.0: Bildweg und Modellweg sind zwei Wege — eine Aufnahme nur mit Modell, die Bildgröße der
+# Kamera (``camera.resolution``) und die Capability ``modelOnlyCapture`` (RTX-P-014,
+# capture-manifest.md Abschnitt 14).
+MODEL_ONLY_CONTRACT_VERSION = "1.6.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 PNG_MEDIA_TYPE = "image/png"
-IMPLEMENTED_MINOR = 5
+IMPLEMENTED_MINOR = 6
 PNG_SINCE_MINOR = 3
 CAMERA_LENS_SINCE_MINOR = 4
 SOURCE_FILE_NAME_SINCE_MINOR = 5
+MODEL_ONLY_SINCE_MINOR = 6
+MODEL_ONLY_CAPABILITY = "modelOnlyCapture"
 SOURCE_FILE_NAME_MAX_LENGTH = 255
 
 # Bittiefe der Datenpässe — der Nutzer wählt im Plugin, Standard 8 Bit (Nutzerentscheidung
@@ -86,12 +92,15 @@ def _highest_minor(handshake: dict | None) -> int | None:
 
 
 def image_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung des Bildwegs (§3, Regel 2): 1.5.0 (Name der Ursprungsdatei) oder 1.3.0 (PNG),
-    wenn der Server sie umsetzt, sonst 1.1.0; gegen einen Server mit höchstens 1.0 dann 1.0.0. Ohne
-    Angabe 1.1.0. Ein Bild-Capture braucht 1.4.0 nicht: Objektiv und Shift gehören zur Kamera des Modells."""
+    """Vertragsfassung des Bildwegs (§3, Regel 2): 1.6.0 (Bildweg und Modellweg), 1.5.0 (Name der
+    Ursprungsdatei) oder 1.3.0 (PNG), wenn der Server sie umsetzt, sonst 1.1.0; gegen einen Server mit
+    höchstens 1.0 dann 1.0.0. Ohne Angabe 1.1.0. Ein Bild-Capture braucht 1.4.0 nicht: Objektiv und
+    Shift gehören zur Kamera des Modells."""
     minor = _highest_minor(handshake)
     if minor is None:
         return CONTRACT_VERSION
+    if minor >= MODEL_ONLY_SINCE_MINOR:
+        return MODEL_ONLY_CONTRACT_VERSION
     if minor >= SOURCE_FILE_NAME_SINCE_MINOR:
         return SOURCE_FILE_CONTRACT_VERSION
     if minor >= PNG_SINCE_MINOR:
@@ -100,9 +109,12 @@ def image_contract_version(handshake: dict | None) -> str:
 
 
 def model_contract_version(handshake: dict | None) -> str:
-    """Vertragsfassung mit Modell: die höchste, die der Server umsetzt — 1.5.0 (Name der
-    Ursprungsdatei), 1.4.0 (Objektiv und Shift der Kamera), 1.3.0 (PNG) oder 1.2.0 (ADR 0032)."""
+    """Vertragsfassung mit Modell: die höchste, die der Server umsetzt — 1.6.0 (auch ohne Bild),
+    1.5.0 (Name der Ursprungsdatei), 1.4.0 (Objektiv und Shift der Kamera), 1.3.0 (PNG) oder 1.2.0
+    (ADR 0032)."""
     minor = _highest_minor(handshake)
+    if minor is not None and minor >= MODEL_ONLY_SINCE_MINOR:
+        return MODEL_ONLY_CONTRACT_VERSION
     if minor is not None and minor >= SOURCE_FILE_NAME_SINCE_MINOR:
         return SOURCE_FILE_CONTRACT_VERSION
     if minor is not None and minor >= CAMERA_LENS_SINCE_MINOR:
@@ -114,6 +126,18 @@ def camera_lens_allowed(contract_version: str) -> bool:
     """Ob ein Dokument dieser Fassung ``camera.lens`` und ``camera.shift`` tragen darf (ab 1.4.0)."""
     match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
     return match is not None and int(match.group(1)) >= CAMERA_LENS_SINCE_MINOR
+
+
+def model_only_allowed(handshake: dict | None) -> bool:
+    """Ob der Server eine Aufnahme **nur mit Modell** annimmt — Capture-Manifest 1.6.0 (RTX-P-014)."""
+    minor = _highest_minor(handshake)
+    return minor is not None and minor >= MODEL_ONLY_SINCE_MINOR
+
+
+def model_only_fields_allowed(contract_version: str) -> bool:
+    """Ob ein Dokument dieser Fassung ``camera.resolution`` und ``modelOnlyCapture`` tragen darf (ab 1.6.0)."""
+    match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
+    return match is not None and int(match.group(1)) >= MODEL_ONLY_SINCE_MINOR
 
 
 def source_file_name_allowed(contract_version: str) -> bool:
@@ -437,7 +461,8 @@ def validate_manifest(document: dict) -> list[str]:
 
     Dieselben Zusatzregeln wie ``validate.mjs`` und der Prüfer des Servers:
     je Rolle und je Pfad höchstens ein Eintrag, mindestens ein vorhandenes
-    **Bild**, ``contentHash`` passt zum Inhalt, eine Rolle aus
+    **Bild** — seit 1.6.0 ein Bild oder das Modell mit Kamera samt Bildgröße
+    (``_content_problems``) —, ``contentHash`` passt zum Inhalt, eine Rolle aus
     ``Host.never_present`` nie ``present`` (Blender: ``depth``, QB-01); seit 1.2.0
     ``geometry`` genau dann, wenn eine Datei der Rolle ``model`` vorhanden ist,
     und die Kamera mit normierten, nicht parallelen Vektoren; seit 1.4.0 ein
@@ -477,6 +502,12 @@ def validate_manifest(document: dict) -> list[str]:
         for key in ("lens", "shift"):
             if key in camera:
                 problems.append(f"/camera/{key}: erst ab contractVersion 1.4.0 zulässig")
+    before_model_only = re.fullmatch(r"1\.[0-5]\.[0-9]+", version) is not None
+    if before_model_only and isinstance(camera, dict) and "resolution" in camera:
+        problems.append("/camera/resolution: erst ab contractVersion 1.6.0 zulässig")
+    declared = ((source or {}).get("host") or {}).get("capabilities") if isinstance(source, dict) else None
+    if before_model_only and isinstance(declared, dict) and MODEL_ONLY_CAPABILITY in declared:
+        problems.append(f"/source/host/capabilities/{MODEL_ONLY_CAPABILITY}: erst ab contractVersion 1.6.0 zulässig")
     if isinstance(assets, list):
         roles = [a.get("role") for a in assets if isinstance(a, dict)]
         paths = [a.get("path") for a in assets if isinstance(a, dict)]
@@ -485,8 +516,7 @@ def validate_manifest(document: dict) -> list[str]:
         if len(set(paths)) != len(paths):
             problems.append("/assets: ein Pfad steht mehr als einmal")
         present = [a for a in assets if isinstance(a, dict) and a.get("status") == "present"]
-        if not any(a.get("role") != MODEL_ROLE for a in present):
-            problems.append("/assets: kein Bild mit status present — das Modell allein ist kein Capture")
+        problems.extend(_content_problems(present, camera, model_only_fields_allowed(version)))
         for index, asset in enumerate(assets):
             depth = asset.get("depth") if isinstance(asset, dict) else None
             near, far = (depth.get("near"), depth.get("far")) if isinstance(depth, dict) else (None, None)
@@ -509,6 +539,27 @@ def validate_manifest(document: dict) -> list[str]:
         if isinstance(georeference, dict):
             problems.extend(_transform_chain_problems(georeference.get("transformChain")))
     return problems
+
+
+def _content_problems(present: list, camera, model_only: bool) -> list[str]:
+    """Was ein Capture mindestens trägt — wortgleich zu ``checkCaptureContent`` in ``validate.mjs``.
+
+    Bis 1.5.x ein vorhandenes Bild. Ab 1.6.0 ein Bild **oder** das Modell; ohne Bild dann die Kamera mit
+    ihrer Bildgröße (``camera.resolution``). Leer ist ein Capture in keiner Version.
+    """
+    image = any(a.get("role") != MODEL_ROLE for a in present)
+    model = any(a.get("role") == MODEL_ROLE for a in present)
+    if image:
+        return []
+    if not model_only:
+        return ["/assets: kein Bild mit status present — das Modell allein ist erst ab 1.6.0 ein Capture"]
+    if not model:
+        return ["/assets: kein Bild und kein Modell mit status present — ein leerer Capture ist keiner"]
+    if not isinstance(camera, dict):
+        return ["/camera: ein Capture nur mit Modell verlangt den Kamerablock"]
+    if "resolution" not in camera:
+        return ["/camera/resolution: ein Capture nur mit Modell nennt die Bildgröße der Kamera"]
+    return []
 
 
 def _transform_chain_problems(chain) -> list[str]:
@@ -677,8 +728,12 @@ def build_manifest(data: ManifestInput) -> dict:
     assets = asset_entries(data)
     plugin = current()
     host: dict = {"key": plugin.key, "version": data.host_version}
-    if data.capabilities and data.contract_version != "1.0.0":
-        host["capabilities"] = data.capabilities
+    capabilities = dict(data.capabilities or {})
+    if not model_only_fields_allowed(data.contract_version):
+        # Ein MINOR-Feld erst schreiben, wenn die Gegenseite die MINOR umsetzt (§3, Regel 2).
+        capabilities.pop(MODEL_ONLY_CAPABILITY, None)
+    if capabilities and data.contract_version != "1.0.0":
+        host["capabilities"] = capabilities
     project: dict = {
         "platformProjectId": data.platform_project_id,
         "sourceProjectKey": data.source_project_key,
@@ -696,6 +751,10 @@ def build_manifest(data: ManifestInput) -> dict:
     file_name = source_file_name(data.source_file_name)
     if file_name and source_file_name_allowed(data.contract_version):
         source["fileName"] = file_name
+    camera = data.camera
+    if isinstance(camera, dict) and "resolution" in camera and not model_only_fields_allowed(data.contract_version):
+        # Die Bildgröße der Kamera (1.6.0) — der Host nennt sie immer, geschrieben wird sie erst ab 1.6.0.
+        camera = {key: value for key, value in camera.items() if key != "resolution"}
     return {
         "contract": CONTRACT,
         "contractVersion": data.contract_version,
@@ -707,7 +766,7 @@ def build_manifest(data: ManifestInput) -> dict:
         "intent": {},
         # Seit 1.2.0 aus dem Modellweg des Hosts (Blender: export.py, RTX-B-003; Cinema 4D:
         # rendertaxi_c4d/export.py, RTX-C4D-003); ohne Modell null.
-        "camera": data.camera,
+        "camera": camera,
         "geometry": data.geometry,
         "contentHash": content_hash(assets),
         "assets": assets,

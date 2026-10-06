@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rendertaxi.ai/contracts/plugin/v1/capture-manifest.schema.json",
   "title": "Plugin capture manifest v1",
-  "description": "Host-neutrales Manifest eines Captures: die Bilder, die ein Plugin aus einer Ansicht seines Hosts erzeugt hat, seit 1.2.0 optional das Modell als GLB-Datei mit Kamera. Archicad, Blender, Cinema 4D und Rhino beschreiben ihre Daten danach identisch. Das Manifest bettet keine Binärdaten ein und kennt kein Feld des Modellwegs: keine Modellversion, keinen Vorgänger, keinen Diff, keine Aktivierung (ADR 0009, Entscheidung 3; ADR 0032).",
+  "description": "Host-neutrales Manifest eines Captures: die Bilder, die ein Plugin aus einer Ansicht seines Hosts erzeugt hat, seit 1.2.0 optional das Modell als GLB-Datei mit Kamera, seit 1.6.0 auch das Modell mit Kamera allein. Archicad, Blender, Cinema 4D und Rhino beschreiben ihre Daten danach identisch. Das Manifest bettet keine Binärdaten ein und kennt kein Feld des Modellwegs: keine Modellversion, keinen Vorgänger, keinen Diff, keine Aktivierung (ADR 0009, Entscheidung 3; ADR 0032).",
   "type": "object",
   "properties": {
     "contract": {
@@ -31,7 +31,7 @@
       "$ref": "#/$defs/intent"
     },
     "camera": {
-      "description": "Kamerablock. Seit 1.2.0 null oder die Kamera der Ansicht im Exportraum (Meter, rechtshändig, +Y oben — der Raum von glTF 2.0); seit 1.4.0 optional mit Objektiv (lens) und Shift. In einem Dokument unter 1.2.0 immer null; erzwingt tools/validate.mjs.",
+      "description": "Kamerablock. Seit 1.2.0 null oder die Kamera der Ansicht im Exportraum (Meter, rechtshändig, +Y oben — der Raum von glTF 2.0); seit 1.4.0 optional mit Objektiv (lens) und Shift, seit 1.6.0 mit der Bildgröße (resolution). In einem Capture nur mit Modell (seit 1.6.0) Pflicht, in einem Dokument unter 1.2.0 immer null; erzwingt tools/validate.mjs.",
       "if": {
         "type": "null"
       },
@@ -54,7 +54,7 @@
     },
     "assets": {
       "type": "array",
-      "description": "Je Rolle höchstens ein Eintrag; mindestens ein Bild (jede Rolle außer model) trägt status present. Beides erzwingt tools/validate.mjs.",
+      "description": "Je Rolle höchstens ein Eintrag; mindestens ein Bild (jede Rolle außer model) trägt status present — seit 1.6.0 mindestens ein Bild oder das Modell; ein Capture nur mit Modell nennt dann die Kamera mit resolution. Beides erzwingt tools/validate.mjs.",
       "items": {
         "$ref": "#/$defs/asset"
       },
@@ -955,6 +955,24 @@
             }
           },
           "required": ["x", "y"],
+          "additionalProperties": false
+        },
+        "resolution": {
+          "type": "object",
+          "description": "Seit 1.6.0: die Bildgröße der Kamera in quadratischen Pixeln — die Ausgabegröße, die der Host für diese Ansicht eingestellt hat (Blender: Auflösung der Szene samt Prozentsatz). Sie sagt das Seitenverhältnis der Kamera, das fieldOfView allein nicht sagt. Pflicht in einem Capture ohne vorhandenes Bild (nur Modell), sonst optional; in einem Dokument unter 1.6.0 unzulässig. Beides erzwingt tools/validate.mjs.",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "required": ["width", "height"],
           "additionalProperties": false
         }
       },
