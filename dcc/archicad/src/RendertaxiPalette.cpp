@@ -943,6 +943,8 @@ void RendertaxiPalette::OnViewChosen (std::size_t index)
 		nameEditedByUser = false;
 		shownSuggestion.clear ();
 		lastSourceViewKey.clear ();
+		// Ein Vorschlag aus der gespeicherten Ansicht gilt hier nicht mehr.
+		ProposeUpdateForSelectedView ();
 		return;
 	}
 	selectedViewGuid = viewChoices[index].guid;
@@ -976,11 +978,14 @@ void RendertaxiPalette::ProposeUpdateForSelectedView ()
 	// beim Wechsel der Auswahl; dieselbe Ansicht erneut zu wählen meldet DG
 	// nicht. Das ist eine Folge der ausdrücklichen Wahl der Ansicht, kein
 	// stilles Anwenden (Festlegung 5): der Wechsel steht in der Palette.
-	if (selectedViewGuid.empty () || workerRunning.load ()) return;
-	RefreshProjectCache ();
-	const rtx::LastAssignment remembered =
-		store->FindAssignment (cachedLocalProjectKey, ViewKeyForGuid (selectedViewGuid));
-	if (remembered.viewpointId.empty ()) return;
+	if (workerRunning.load ()) return;
+	// Auch ohne gewählte Ansicht durchlaufen: „Aktuelle Modellansicht" hat
+	// keine Zuordnung, und ein eigener Vorschlag von vorher muss dann zurück.
+	rtx::LastAssignment remembered;
+	if (!selectedViewGuid.empty ()) {
+		RefreshProjectCache ();
+		remembered = store->FindAssignment (cachedLocalProjectKey, ViewKeyForGuid (selectedViewGuid));
+	}
 
 	// **Erst auflösen, dann umschalten** (F-01 an PR #259). Der Update-Modus
 	// gilt dem Blickpunkt, der in der Auswahl steht. Gehört die Zuordnung zu
@@ -1000,18 +1005,26 @@ void RendertaxiPalette::ProposeUpdateForSelectedView ()
 	}
 	const std::string marker =
 		selectedViewGuid + "|" + selectedProjectId + "|" + remembered.viewpointId;
-	if (marker == proposedUpdateFor) return;
 	const rtx::UpdateProposal proposal = rtx::ProposeUpdate (
 		remembered.projectId, remembered.viewpointId, selectedProjectId, listProjectId, listIds);
-	// `Wait` und `None` lassen den Modus, wie er ist; der Leerlauf fragt erneut.
-	if (proposal.action != rtx::UpdateProposal::Action::Select) return;
-	const short item = static_cast<short> (proposal.index + 1);
-	if (viewpointPopUp.GetItemCount () < item) return;
-	viewpointPopUp.SelectItem (item);
-	proposedUpdateFor = marker;
-	updateRadio.Select ();
-	proposedViewpointId = remembered.viewpointId;
-	proposedViewpointPending = false;
+	// **Und zurücknehmen** (Hostprobe 07.10.2026): passt der eigene Vorschlag
+	// nicht mehr, geht die Palette auf „Neuer Blickpunkt" zurück.
+	const rtx::ProposalStep step = rtx::StepProposal (proposedUpdateFor, marker, proposal);
+	if (step.mode == rtx::ProposalStep::Mode::Update) {
+		const short item = static_cast<short> (step.index + 1);
+		if (viewpointPopUp.GetItemCount () < item) return;
+		viewpointPopUp.SelectItem (item);
+		updateRadio.Select ();
+		proposedViewpointId = remembered.viewpointId;
+		proposedViewpointPending = false;
+		rtx::LogLine ("Vorschlag: Blickpunkt der Ansicht aktualisieren.");
+	} else if (step.mode == rtx::ProposalStep::Mode::Create) {
+		createRadio.Select ();
+		proposedViewpointId.clear ();
+		proposedViewpointPending = false;
+		rtx::LogLine ("Vorschlag zurückgenommen: Zuordnung passt nicht zu Projekt oder Liste.");
+	}
+	proposedUpdateFor = step.active;
 }
 
 void RendertaxiPalette::CancelRunningJob ()

@@ -67,6 +67,45 @@ RTX_TEST (ARenamedViewStaysSelectedAndADeletedOneFallsBackWithAHint)
 	RTX_CHECK (none.index == 0 && none.hint.empty ());
 }
 
+RTX_TEST (SwitchingFromProjectAToBWithdrawsTheProposal)
+{
+	// Hostprobe 07.10.2026: in B blieb „aktualisieren" stehen, Ziel war der erste Blickpunkt von B.
+	using M = ProposalStep::Mode;
+	const ProposalStep inA = StepProposal ("", "v|p-a|vp-x", ProposeUpdate ("p-a", "vp-x", "p-a", "p-a", {"vp-w", "vp-x"}));
+	RTX_CHECK (inA.mode == M::Update && inA.index == 1 && inA.active == "v|p-a|vp-x");
+	const ProposalStep inB = StepProposal (inA.active, "v|p-b|vp-x", ProposeUpdate ("p-a", "vp-x", "p-b", "p-b", {"vp-b1"}));
+	RTX_CHECK (inB.mode == M::Create && inB.active.empty ());
+	// Zurück nach A: der Vorschlag kommt wieder.
+	const ProposalStep back = StepProposal (inB.active, "v|p-a|vp-x", ProposeUpdate ("p-a", "vp-x", "p-a", "p-a", {"vp-x"}));
+	RTX_CHECK (back.mode == M::Update && back.index == 0);
+}
+
+RTX_TEST (ADeletedViewpointWithdrawsTheProposal)
+{
+	using M = ProposalStep::Mode;
+	const std::string marker = "v|p-a|vp-x";
+	// Gleicher Merker, aber X fehlt nach dem Neuladen in der Liste.
+	const ProposalStep gone = StepProposal (marker, marker, ProposeUpdate ("p-a", "vp-x", "p-a", "p-a", {"vp-w"}));
+	RTX_CHECK (gone.mode == M::Create && gone.active.empty ());
+	// „Aktuelle Modellansicht": keine Zuordnung mehr — ebenfalls zurück.
+	const ProposalStep none = StepProposal (marker, "|p-a|", ProposeUpdate ("", "", "p-a", "p-a", {"vp-w"}));
+	RTX_CHECK (none.mode == M::Create);
+}
+
+RTX_TEST (TheUsersOwnChoiceStays)
+{
+	using M = ProposalStep::Mode;
+	// Kein eigener Vorschlag aktiv: nichts zurücknehmen, auch wenn der Nutzer „aktualisieren" gewählt hat.
+	RTX_CHECK (StepProposal ("", "v|p-b|vp-x", ProposeUpdate ("p-a", "vp-x", "p-b", "p-b", {"vp-b1"})).mode == M::Keep);
+	// Vorschlag gilt noch: nicht erneut setzen — hat der Nutzer umgeschaltet, bleibt das.
+	const std::string marker = "v|p-a|vp-x";
+	const ProposalStep again = StepProposal (marker, marker, ProposeUpdate ("p-a", "vp-x", "p-a", "p-a", {"vp-x"}));
+	RTX_CHECK (again.mode == M::Keep && again.active == marker);
+	// Liste lädt noch: abwarten, Merker bleibt.
+	const ProposalStep loading = StepProposal (marker, "v|p-b|vp-x", ProposeUpdate ("p-b", "vp-x", "p-b", "p-a", {"vp-x"}));
+	RTX_CHECK (loading.mode == M::Keep && loading.active == marker);
+}
+
 RTX_TEST (AnAssignmentOnlyProposesAnUpdateForExactlyItsViewpointInTheSelectedProject)
 {
 	using A = UpdateProposal::Action;

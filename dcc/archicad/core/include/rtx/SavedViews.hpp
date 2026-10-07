@@ -80,4 +80,30 @@ UpdateProposal ProposeUpdate (const std::string& assignedProjectId,
 							  const std::string& listProjectId,
 							  const std::vector<std::string>& listViewpointIds);
 
+/**
+ * Was die Palette mit dem Modus tun soll, nachdem `ProposeUpdate` entschieden
+ * hat — **auch zurücknehmen** (F-01, Hostprobe am 07.10.2026).
+ *
+ * `active` ist der Merker des Vorschlags, den die Palette selbst gesetzt hat
+ * (leer, wenn keiner gilt), `marker` der für Ansicht, Projekt und Blickpunkt
+ * von jetzt. Galt ein eigener Vorschlag und passt er nicht mehr — anderes
+ * Projekt, Blickpunkt gelöscht, keine Ansicht mehr gewählt —, geht die
+ * Palette zurück auf „Neuer Blickpunkt". Sonst bliebe „aktualisieren" stehen,
+ * und die neu gefüllte Liste machte ihren ersten Eintrag still zum Ziel.
+ *
+ * Eine eigene Wahl des Nutzers bleibt unberührt: Hat er nach dem Vorschlag
+ * selbst umgeschaltet, gilt derselbe Merker weiter (`Keep`); hat die Palette
+ * keinen Vorschlag gesetzt, nimmt sie auch nichts zurück.
+ */
+struct ProposalStep {
+	enum class Mode { Keep, Update, Create };
+	Mode mode = Mode::Keep;
+	/** Index des Blickpunkts in der Liste, nur bei `Update`. */
+	std::size_t index = 0;
+	/** Der Merker danach; leer, wenn kein eigener Vorschlag mehr gilt. */
+	std::string active;
+};
+
+ProposalStep StepProposal (const std::string& active, const std::string& marker, const UpdateProposal& proposal);
+
 } // namespace rtx

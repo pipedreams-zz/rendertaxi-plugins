@@ -96,4 +96,28 @@ UpdateProposal ProposeUpdate (const std::string& assignedProjectId,
 	return result;
 }
 
+ProposalStep StepProposal (const std::string& active, const std::string& marker, const UpdateProposal& proposal)
+{
+	ProposalStep step;
+	step.active = active;
+	switch (proposal.action) {
+		case UpdateProposal::Action::Select:
+			// Schon gesetzt: nicht noch einmal — der Nutzer darf danach umschalten.
+			if (marker == active) return step;
+			step.mode = ProposalStep::Mode::Update;
+			step.index = proposal.index;
+			step.active = marker;
+			return step;
+		case UpdateProposal::Action::Wait:
+			// Die Liste des Projekts lädt noch: weder setzen noch zurücknehmen.
+			return step;
+		case UpdateProposal::Action::None:
+			if (active.empty ()) return step;
+			step.mode = ProposalStep::Mode::Create;
+			step.active.clear ();
+			return step;
+	}
+	return step;
+}
+
 } // namespace rtx
