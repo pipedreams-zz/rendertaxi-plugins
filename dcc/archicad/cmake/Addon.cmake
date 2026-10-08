@@ -121,6 +121,15 @@ else ()
 endif ()
 
 target_compile_features (AddOn PUBLIC cxx_std_17)
+# Der Git-Stand für „Über" und den Fuß der Palette (#281). Leer heißt
+# Entwicklungsbuild; `Version.hpp` setzt dann den Vorgabewert.
+set (RTX_BUILD_COMMIT "" CACHE STRING "Git-Stand des Builds (CI und scripts/build.sh).")
+if (RTX_BUILD_COMMIT MATCHES "^[0-9a-f]+(-dirty)?$")
+	target_compile_definitions (AddOn PRIVATE RTX_BUILD_COMMIT="${RTX_BUILD_COMMIT}")
+	message (STATUS "Build-Kennung: ${RTX_BUILD_COMMIT}")
+elseif (NOT RTX_BUILD_COMMIT STREQUAL "")
+	message (WARNING "RTX_BUILD_COMMIT ist kein Git-Hash und wird nicht übernommen: ${RTX_BUILD_COMMIT}")
+endif ()
 target_compile_options (AddOn PUBLIC "$<$<CONFIG:Debug>:-DDEBUG>")
 if (WIN32)
 	# Warnungssatz des DevKit-Beispiels für MSVC; `/Zc:wchar_t-` verlangen die

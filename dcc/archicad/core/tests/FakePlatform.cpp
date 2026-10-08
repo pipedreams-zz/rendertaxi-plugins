@@ -176,6 +176,49 @@ void FakePlatform::RateLimitNext (int count)
 	rateLimitRemaining = count;
 }
 
+void FakePlatform::LoseNextProjectResponse ()
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	loseNextProjectResponse = true;
+}
+
+void FakePlatform::SetRole (std::string value)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	role = std::move (value);
+}
+
+void FakePlatform::AddProject (const std::string& id, const std::string& name)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	projects.insert (projects.begin (), Project {id, name});
+}
+
+void FakePlatform::RemoveProject (const std::string& id)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	for (auto it = projects.begin (); it != projects.end (); ++it) {
+		if (it->id != id) continue;
+		projects.erase (it);
+		break;
+	}
+}
+
+int FakePlatform::ProjectsNamed (const std::string& name) const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	int count = 0;
+	for (const Project& project : projects)
+		if (project.name == name) ++count;
+	return count;
+}
+
+std::vector<std::string> FakePlatform::ProjectCreateKeys () const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	return projectCreateKeys;
+}
+
 int FakePlatform::AssetsCreated () const
 {
 	std::lock_guard<std::mutex> guard (mutex);
@@ -823,11 +866,61 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 	}
 
 	// --- Lesewege --------------------------------------------------------------
-	if (request.path == "/api/v1/projects")
-		return Json200 (200,
-						R"({"items":[{"id":"0199a000-0000-7000-8000-00000000000a","name":"Testprojekt",)"
-						R"("status":"active","viewpointCount":2,"lastChangedAt":null,)"
-						R"("createdAt":"2026-09-01T00:00:00.000Z","regionPolicy":"eu"}],"nextCursor":null})");
+	const auto projectJson = [] (const Project& project) {
+		JsonPtr item = Json::MakeObject ();
+		item->Set ("id", Json::MakeString (project.id));
+		item->Set ("name", Json::MakeString (project.name));
+		item->Set ("status", Json::MakeString ("active"));
+		item->Set ("viewpointCount", Json::MakeInt (2));
+		item->Set ("lastChangedAt", Json::MakeNull ());
+		item->Set ("createdAt", Json::MakeString ("2026-09-01T00:00:00.000Z"));
+		item->Set ("regionPolicy", Json::MakeString ("eu"));
+		return item;
+	};
+	// `POST /projects` wie auf der Plattform: Rolle, Name, Idempotenz
+	// (derselbe Schlüssel mit demselben Namen liefert dasselbe Projekt, mit
+	// anderem Namen `409`).
+	if (request.path == "/api/v1/projects" && request.method == "POST") {
+		const std::string key = request.Header ("Idempotency-Key");
+		projectCreateKeys.push_back (key);
+		if (!IsUuidV7Key (key))
+			return ApiError (400, "validation_failed", "Der Idempotency-Key ist keine UUIDv7.", {},
+							 "Idempotency-Key", "invalid_idempotency_key");
+		if (role == "viewer")
+			return ApiError (403, "forbidden", "Diese Rolle darf keine Projekte anlegen.");
+		const JsonPtr body = Json::Parse (request.body);
+		std::string name = Text (body, "name");
+		while (!name.empty () && name.front () == ' ') name.erase (0, 1);
+		while (!name.empty () && name.back () == ' ') name.pop_back ();
+		if (name.empty () || name.size () > 480)
+			return ApiError (400, "validation_failed", "Ein Projektname darf nicht leer sein.", {},
+							 "name", "too_small");
+		Project project;
+		const auto known = projectByKey.find (key);
+		if (known != projectByKey.end ()) {
+			if (known->second.first != name)
+				return ApiError (409, "idempotency_conflict",
+								 "Derselbe Schlüssel mit anderem Inhalt.");
+			project = Project {known->second.second, name};
+		} else {
+			project = Project {rtx::NewUuidV7 (), name};
+			projectByKey[key] = {name, project.id};
+			projects.insert (projects.begin (), project);
+		}
+		if (loseNextProjectResponse) {
+			loseNextProjectResponse = false;
+			return ApiError (500, "internal_error", "Die Antwort ging verloren.");
+		}
+		return Json200 (201, projectJson (project)->Serialize ());
+	}
+	if (request.path == "/api/v1/projects") {
+		JsonPtr items = Json::MakeArray ();
+		for (const Project& project : projects) items->Append (projectJson (project));
+		JsonPtr root = Json::MakeObject ();
+		root->Set ("items", items);
+		root->Set ("nextCursor", Json::MakeNull ());
+		return Json200 (200, root->Serialize ());
+	}
 	if (request.path.rfind ("/api/v1/projects/", 0) == 0 &&
 		request.path.find ("/workspace") != std::string::npos)
 		return Json200 (200,

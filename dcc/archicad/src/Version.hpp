@@ -16,13 +16,22 @@
 #define RTX_ADDON_IDENTIFIER "ai.rendertaxi.plugin.archicad"
 
 /**
- * Der Build: Datum und Uhrzeit der Übersetzung.
+ * Der Build: der Git-Stand, aus dem übersetzt wurde, und das Datum.
  *
- * Er steht neben der Fassung im „Über"-Fenster, weil zwischen zwei Ständen mit
- * derselben Fassung genau er den Unterschied macht — bei einem Fehlerbericht
- * ist „1.0.0" ohne Build keine Auskunft.
+ * Er steht neben der Fassung im „Über"-Fenster und im Fuß der Palette, weil
+ * zwischen zwei Ständen mit derselben Fassung genau er den Unterschied macht —
+ * bei einem Fehlerbericht ist „1.0.0" ohne Build keine Auskunft. Bis zum
+ * 08.10.2026 stand hier nur das Übersetzungsdatum; welcher Stand das war,
+ * ließ sich aus einem Screenshot nicht ablesen (#281).
+ *
+ * `RTX_BUILD_COMMIT` setzen der Windows-Workflow und `scripts/build.sh` per
+ * CMake-Definition (`-DRTX_BUILD_COMMIT=<hash>`). Fehlt sie, ist es ein
+ * Entwicklungsbuild; `rtx::BuildLine` formt daraus die angezeigte Zeile.
  */
-#define RTX_ADDON_BUILD (__DATE__ " " __TIME__)
+#ifndef RTX_BUILD_COMMIT
+#define RTX_BUILD_COMMIT ""
+#endif
+#define RTX_ADDON_BUILD_DATE __DATE__
 
 /** Vorgabe der Serveradresse; der Nutzer kann sie in der Palette ändern. */
 #define RTX_DEFAULT_SERVER "https://dev.rendertaxi.ai"

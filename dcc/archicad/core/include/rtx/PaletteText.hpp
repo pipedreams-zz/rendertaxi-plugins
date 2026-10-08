@@ -59,4 +59,18 @@ struct InfoParagraph {
 std::vector<std::string> LayoutInfoLines (const std::vector<InfoParagraph>& paragraphs,
 										  std::size_t width, std::size_t rows);
 
+/**
+ * Die Build-Zeile für „Über" und den Fuß der Palette (RTX-A-011, #281):
+ * „Build 7f9ca06 vom 08.10.2026".
+ *
+ * `commit` ist `RTX_BUILD_COMMIT`, den CI und `scripts/build.sh` per
+ * CMake-Definition setzen — ein Git-Hash, wahlweise mit `-dirty` für einen
+ * Stand mit ungesicherten Änderungen. Fehlt er oder ist er kein Hash, ist es
+ * ein „Entwicklungsbuild". `compileDate` ist `__DATE__` („Oct  8 2026").
+ */
+std::string BuildLine (const std::string& commit, const std::string& compileDate);
+
+/** `__DATE__` („Oct  8 2026") als „08.10.2026"; Unlesbares bleibt, wie es ist. */
+std::string FormatCompileDate (const std::string& compileDate);
+
 } // namespace rtx

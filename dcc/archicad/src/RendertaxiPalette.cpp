@@ -64,6 +64,48 @@ void OpenInSystemBrowser (const std::string& url)
 #endif
 }
 
+/**
+ * „Neues Projekt": nur der Name (#281). Der Dialog prüft nichts selbst — was
+ * nicht passt, sagt danach die Palette als Hinweis, nicht ein zweiter Dialog.
+ */
+class NewProjectDialog final : public DG::ModalDialog,
+							   public DG::PanelObserver,
+							   public DG::ButtonItemObserver {
+public:
+	explicit NewProjectDialog (const GS::UniString& name) :
+		DG::ModalDialog (ACAPI_GetOwnResModule (), RtxNewProjectDialogResId,
+						 ACAPI_GetOwnResModule ()),
+		createButton (GetReference (), 1),
+		cancelButton (GetReference (), 2),
+		nameEdit (GetReference (), 4)
+	{
+		nameEdit.SetText (name);
+		Attach (*this);
+		createButton.Attach (*this);
+		cancelButton.Attach (*this);
+	}
+
+	~NewProjectDialog () override
+	{
+		createButton.Detach (*this);
+		cancelButton.Detach (*this);
+		Detach (*this);
+	}
+
+	GS::UniString Name () const { return nameEdit.GetText (); }
+
+private:
+	void ButtonClicked (const DG::ButtonClickEvent& ev) override
+	{
+		if (ev.GetSource () == &createButton) PostCloseRequest (DG::ModalDialog::Accept);
+		else if (ev.GetSource () == &cancelButton) PostCloseRequest (DG::ModalDialog::Cancel);
+	}
+
+	DG::Button createButton;
+	DG::Button cancelButton;
+	DG::TextEdit nameEdit;
+};
+
 GSErrCode NotificationHandler (API_NotifyEventID notifID, Int32)
 {
 	if (notifID == APINotify_Quit) RendertaxiPalette::DestroyInstance ();
@@ -150,7 +192,10 @@ RendertaxiPalette::RendertaxiPalette () :
 	openButton (GetReference (), OpenButtonId),
 	viewLabel (GetReference (), ViewLabelId),
 	viewPopUp (GetReference (), ViewPopUpId),
-	viewRefreshButton (GetReference (), ViewRefreshButtonId)
+	viewRefreshButton (GetReference (), ViewRefreshButtonId),
+	projectRefreshButton (GetReference (), ProjectRefreshButtonId),
+	newProjectButton (GetReference (), NewProjectButtonId),
+	buildText (GetReference (), BuildTextId)
 {
 	rtx::SetLogFile (LogPath ());
 
@@ -173,6 +218,9 @@ RendertaxiPalette::RendertaxiPalette () :
 	createRadio.Select ();
 	cancelButton.Disable ();
 	openButton.Disable ();
+	projectRefreshButton.Disable ();
+	newProjectButton.Disable ();
+	buildText.SetText (U (rtx::BuildLine (RTX_BUILD_COMMIT, RTX_ADDON_BUILD_DATE)));
 
 	// Projektwechsel machen Projektname und Projektschlüssel ungültig. Ohne
 	// diese Benachrichtigung müsste der Leerlauf beides bei jedem Tick neu
@@ -194,6 +242,12 @@ RendertaxiPalette::RendertaxiPalette () :
 	nameEdit.Attach (*this);
 	openButton.Attach (*this);
 	viewRefreshButton.Attach (*this);
+	projectRefreshButton.Attach (*this);
+	newProjectButton.Attach (*this);
+	// Für den Tooltip mit dem vollen Namen; die Liste selbst endet auf „…".
+	projectPopUp.Attach (*this);
+	viewpointPopUp.Attach (*this);
+	viewPopUp.Attach (*this);
 	BeginEventProcessing ();
 	EnableIdleEvent ();
 
@@ -272,6 +326,8 @@ void RendertaxiPalette::Show ()
 {
 	DG::Palette::Show ();
 	ACAPI_KeepInMemory (true);
+	// Beim Öffnen gilt die Liste des Servers, nicht die vom letzten Mal (#281).
+	refreshPending = true;
 }
 
 void RendertaxiPalette::Hide ()
@@ -283,6 +339,35 @@ void RendertaxiPalette::PanelCloseRequested (const DG::PanelCloseRequestEvent&, 
 {
 	*accepted = true;
 	Hide ();
+}
+
+void RendertaxiPalette::PanelActivated (const DG::PanelActivateEvent&)
+{
+	focusRefreshWanted = true;
+}
+
+void RendertaxiPalette::PanelTopStatusGained (const DG::PanelTopStatusEvent&)
+{
+	focusRefreshWanted = true;
+}
+
+void RendertaxiPalette::ItemToolTipRequested (const DG::ItemHelpEvent& ev, GS::UniString* toolTipText)
+{
+	if (toolTipText == nullptr) return;
+	const auto selected = [] (const DG::PopUp& popUp) {
+		return static_cast<std::size_t> (std::max<short> (popUp.GetSelectedItem (), 1) - 1);
+	};
+	if (ev.GetSource () == &projectPopUp) {
+		if (const rtx::ProjectSummary* project = shownProjects.At (projectPopUp.GetSelectedItem ()))
+			*toolTipText = U (project->name);
+	} else if (ev.GetSource () == &viewpointPopUp) {
+		if (const rtx::ViewpointSummary* viewpoint =
+				shownViewpoints.At (viewpointPopUp.GetSelectedItem ()))
+			*toolTipText = U (viewpoint->name);
+	} else if (ev.GetSource () == &viewPopUp) {
+		const std::size_t index = selected (viewPopUp);
+		if (index < viewChoices.size ()) *toolTipText = U (viewChoices[index].label);
+	}
 }
 
 // --- Anzeige ----------------------------------------------------------------
@@ -341,12 +426,9 @@ rtx::DeviceIdentity RendertaxiPalette::CurrentDevice () const
 
 rtx::DesiredOutput RendertaxiPalette::SelectedViewpointFormat () const
 {
-	const short index = viewpointPopUp.GetSelectedItem ();
-	if (index < 1) return {};
-	std::lock_guard<std::mutex> guard (shared.mutex);
-	const std::size_t position = static_cast<std::size_t> (index - 1);
-	if (position >= shared.viewpoints.size ()) return {};
-	return shared.viewpoints[position].desired;
+	// Die dargestellte Liste, nicht die geladene (F-01 an PR #292).
+	const rtx::ViewpointSummary* viewpoint = shownViewpoints.At (viewpointPopUp.GetSelectedItem ());
+	return viewpoint != nullptr ? viewpoint->desired : rtx::DesiredOutput {};
 }
 
 /**
@@ -579,11 +661,8 @@ void RendertaxiPalette::RefreshSourceView ()
 	// Wiederhergestellt wird **einmal je Vorgang**: danach hat der Nutzer
 	// wieder das Sagen, auch wenn er woandershin will.
 	if (hasPending && restoredPendingKey != open.idempotencyKey) {
-		std::vector<rtx::ProjectSummary> known;
-		{
-			std::lock_guard<std::mutex> guard (shared.mutex);
-			known = shared.projects;
-		}
+		// Gesucht wird in der dargestellten Liste: die Stelle gilt der Auswahl.
+		const std::vector<rtx::ProjectSummary>& known = shownProjects.Entries ();
 		for (std::size_t i = 0; i < known.size (); ++i) {
 			if (known[i].id != open.targetProjectId) continue;
 			projectPopUp.SelectItem (static_cast<short> (i + 1));
@@ -635,13 +714,10 @@ void RendertaxiPalette::RefreshSourceView ()
 	}
 
 	if (proposedViewpointPending) {
-		std::lock_guard<std::mutex> guard (shared.mutex);
-		for (std::size_t i = 0; i < shared.viewpoints.size (); ++i) {
-			if (shared.viewpoints[i].id != proposedViewpointId) continue;
-			if (viewpointPopUp.GetItemCount () >= static_cast<short> (i + 1))
-				viewpointPopUp.SelectItem (static_cast<short> (i + 1));
+		const short item = shownViewpoints.Find (proposedViewpointId);
+		if (item >= 1 && viewpointPopUp.GetItemCount () >= item) {
+			viewpointPopUp.SelectItem (item);
 			proposedViewpointPending = false;
-			break;
 		}
 	}
 
@@ -695,9 +771,16 @@ void RendertaxiPalette::RefreshFromState ()
 	bool viewpointsChanged = false;
 	std::vector<rtx::ProjectSummary> projects;
 	std::vector<rtx::ViewpointSummary> viewpoints;
+	std::string viewpointsProjectId;
+	std::string createdProjectId;
+	std::string createdProjectName;
 	{
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		if (!shared.dirty) return;
+		createdProjectId = shared.createdProjectId;
+		createdProjectName = shared.createdProjectName;
+		shared.createdProjectId.clear ();
+		shared.createdProjectName.clear ();
 		shared.dirty = false;
 		connection = shared.connectionText;
 		progress = shared.progressText;
@@ -717,6 +800,7 @@ void RendertaxiPalette::RefreshFromState ()
 		shared.viewpointsChanged = false;
 		projects = shared.projects;
 		viewpoints = shared.viewpoints;
+		viewpointsProjectId = shared.viewpointsProjectId;
 	}
 
 	if (connection != shownConnection) {
@@ -771,21 +855,60 @@ void RendertaxiPalette::RefreshFromState ()
 		shownInfoLines = infoLines;
 	}
 
+	// **Die Auswahl überlebt das Neuladen** (#281): gewählt bleibt, was noch
+	// existiert — über die Kennung, nie über den Namen. Sonst gilt der erste
+	// Eintrag; ein gemerkter Zustand verhindert das Laden nie (Regel 3).
+	if (!createdProjectId.empty ()) {
+		lastProjectId = createdProjectId;
+		// Das neue Projekt hat noch keinen Blickpunkt: also „Neuer Blickpunkt".
+		lastViewpointId.clear ();
+		createRadio.Select ();
+		newProject.Done (createdProjectName);
+		pendingProjectName.clear ();
+	}
+	// **Auswahl und dargestellte Liste wechseln gemeinsam** (F-01 an PR #292):
+	// Jeder, der eine Stelle der Auswahl in einen Eintrag übersetzt, liest
+	// `shownProjects` bzw. `shownViewpoints`, und beide ändern sich nur hier,
+	// im selben Schritt wie die Auswahl.
+	bool targetLost = false;
 	if (projectsChanged) {
+		const rtx::ListChange change = shownProjects.Replace (projects, {}, lastProjectId);
 		while (projectPopUp.GetItemCount () > 0) projectPopUp.DeleteItem (1);
-		for (const rtx::ProjectSummary& project : projects) {
+		for (const rtx::ProjectSummary& project : shownProjects.Entries ()) {
 			projectPopUp.AppendItem ();
-			projectPopUp.SetItemText (projectPopUp.GetItemCount (), U (project.name));
+			projectPopUp.SetItemText (projectPopUp.GetItemCount (), U (rtx::PopupLabel (project.name)));
 		}
-		if (projectPopUp.GetItemCount () > 0) projectPopUp.SelectItem (1);
+		if (change.item > 0) projectPopUp.SelectItem (change.item);
+		targetLost = targetLost || change.lost;
+		if (const rtx::ProjectSummary* project = shownProjects.At (change.item))
+			lastProjectId = project->id;
 	}
 	if (viewpointsChanged) {
+		const rtx::ListChange change =
+			shownViewpoints.Replace (viewpoints, viewpointsProjectId, lastViewpointId);
 		while (viewpointPopUp.GetItemCount () > 0) viewpointPopUp.DeleteItem (1);
-		for (const rtx::ViewpointSummary& viewpoint : viewpoints) {
+		for (const rtx::ViewpointSummary& viewpoint : shownViewpoints.Entries ()) {
 			viewpointPopUp.AppendItem ();
-			viewpointPopUp.SetItemText (viewpointPopUp.GetItemCount (), U (viewpoint.name));
+			viewpointPopUp.SetItemText (viewpointPopUp.GetItemCount (),
+										U (rtx::PopupLabel (viewpoint.name)));
 		}
-		if (viewpointPopUp.GetItemCount () > 0) viewpointPopUp.SelectItem (1);
+		if (change.item > 0) viewpointPopUp.SelectItem (change.item);
+		targetLost = targetLost || change.lost;
+		// Eine vorübergehend leere Liste (sie wird gerade nachgeladen) vergisst
+		// die Wahl nicht; erst eine gefüllte Liste entscheidet.
+		if (const rtx::ViewpointSummary* viewpoint = shownViewpoints.At (change.item))
+			lastViewpointId = viewpoint->id;
+	}
+	// **Ein verschwundenes Ziel wird nie still ersetzt.** Stand die Palette auf
+	// „aktualisieren" und ist das gewählte Projekt oder der gewählte Blickpunkt
+	// beim Neuladen weggefallen, geht sie auf „Neuer Blickpunkt" zurück und sagt
+	// es — sonst wäre der erste Eintrag der Liste das neue Update-Ziel.
+	if (targetLost && updateRadio.IsSelected ()) {
+		createRadio.Select ();
+		proposedUpdateFor.clear ();
+		shared.SetProgress ("Der gewählte Blickpunkt steht nicht mehr in der Liste. Bitte neu "
+							"wählen oder einen neuen Blickpunkt anlegen.");
+		rtx::LogLine ("Update-Ziel beim Neuladen weggefallen; zurück auf „Neuer Blickpunkt“.");
 	}
 
 	if (busy != shownBusy || signedIn != shownSignedIn) {
@@ -804,6 +927,8 @@ void RendertaxiPalette::RefreshFromState ()
 		}
 		projectPopUp.SetStatus (!busy && signedIn);
 		viewpointPopUp.SetStatus (!busy && signedIn);
+		projectRefreshButton.SetStatus (!busy && signedIn);
+		newProjectButton.SetStatus (!busy && signedIn);
 
 		createRadio.SetStatus (!busy && signedIn);
 		updateRadio.SetStatus (!busy && signedIn);
@@ -861,6 +986,21 @@ void RendertaxiPalette::PanelIdle (const DG::PanelIdleEvent&)
 		ProposeUpdateForSelectedView ();
 		RefreshSourceView ();
 	}
+	// Was gewählt ist, gilt als gemerkt — für das nächste Neuladen (#281).
+	{
+		if (const rtx::ProjectSummary* project = shownProjects.At (projectPopUp.GetSelectedItem ()))
+			lastProjectId = project->id;
+		if (const rtx::ViewpointSummary* viewpoint =
+				shownViewpoints.At (viewpointPopUp.GetSelectedItem ()))
+			lastViewpointId = viewpoint->id;
+	}
+	// Fokus zurück: höchstens alle fünf Sekunden. Knopf und Öffnen warten
+	// stattdessen, bis kein Vorgang mehr läuft.
+	if (focusRefreshWanted) {
+		focusRefreshWanted = false;
+		if (refreshGate.Allow (now)) refreshPending = true;
+	}
+	if (refreshPending && !workerRunning.load ()) StartRefreshLists ();
 	RefreshProjectList ();
 	RefreshViewpointList ();
 	RefreshFromState ();
@@ -885,6 +1025,17 @@ void RendertaxiPalette::ButtonClicked (const DG::ButtonClickEvent& ev)
 	else if (ev.GetSource () == &cancelButton) CancelRunningJob ();
 	else if (ev.GetSource () == &openButton) OpenResultInBrowser ();
 	else if (ev.GetSource () == &viewRefreshButton) RefreshSavedViews (true);
+	else if (ev.GetSource () == &projectRefreshButton) {
+		refreshGate.Mark (std::chrono::steady_clock::now ());
+		refreshPending = true;
+		refreshAnnounce = true;
+		if (workerRunning.load ())
+			shared.SetProgress ("Die Listen werden neu geladen, sobald der laufende Vorgang fertig ist.");
+		else
+			StartRefreshLists ();
+	} else if (ev.GetSource () == &newProjectButton) {
+		StartCreateProject ();
+	}
 }
 
 // --- Gespeicherte Ansichten (RTX-A-009) --------------------------------------
@@ -907,7 +1058,7 @@ void RendertaxiPalette::RefreshSavedViews (bool listEntries)
 	while (viewPopUp.GetItemCount () > 0) viewPopUp.DeleteItem (1);
 	for (std::size_t i = 0; i < viewChoices.size (); ++i) {
 		viewPopUp.AppendItem ();
-		viewPopUp.SetItemText (static_cast<short> (i + 1), U (Shorten (viewChoices[i].label, 44)));
+		viewPopUp.SetItemText (static_cast<short> (i + 1), U (rtx::PopupLabel (viewChoices[i].label)));
 	}
 	shownViewIndex = static_cast<short> (again.index + 1);
 	viewPopUp.SelectItem (shownViewIndex);
@@ -994,15 +1145,13 @@ void RendertaxiPalette::ProposeUpdateForSelectedView ()
 	std::string selectedProjectId;
 	std::string listProjectId;
 	std::vector<std::string> listIds;
-	{
-		std::lock_guard<std::mutex> guard (shared.mutex);
-		const short index = projectPopUp.GetSelectedItem ();
-		if (index >= 1 && static_cast<std::size_t> (index) <= shared.projects.size ())
-			selectedProjectId = shared.projects[static_cast<std::size_t> (index - 1)].id;
-		listProjectId = shared.viewpointsProjectId;
-		for (const rtx::ViewpointSummary& viewpoint : shared.viewpoints)
-			listIds.push_back (viewpoint.id);
-	}
+	// Die dargestellten Listen: `step.index` wird gleich zur Stelle in der
+	// Auswahl (F-01 an PR #292).
+	if (const rtx::ProjectSummary* project = shownProjects.At (projectPopUp.GetSelectedItem ()))
+		selectedProjectId = project->id;
+	listProjectId = shownViewpoints.Owner ();
+	for (const rtx::ViewpointSummary& viewpoint : shownViewpoints.Entries ())
+		listIds.push_back (viewpoint.id);
 	const std::string marker =
 		selectedViewGuid + "|" + selectedProjectId + "|" + remembered.viewpointId;
 	const rtx::UpdateProposal proposal = rtx::ProposeUpdate (
@@ -1251,6 +1400,173 @@ void RendertaxiPalette::RefreshProjectList ()
 	});
 }
 
+namespace {
+
+/** Gleiche Kennungen und Namen in gleicher Reihenfolge — dann bleibt die Liste stehen. */
+template <typename Summary>
+bool SameEntries (const std::vector<Summary>& a, const std::vector<Summary>& b)
+{
+	if (a.size () != b.size ()) return false;
+	for (std::size_t i = 0; i < a.size (); ++i)
+		if (a[i].id != b[i].id || a[i].name != b[i].name) return false;
+	return true;
+}
+
+} // namespace
+
+void RendertaxiPalette::StartRefreshLists ()
+{
+	const bool announce = refreshAnnounce;
+	refreshPending = false;
+	refreshAnnounce = false;
+	if (workerRunning.load () || api == nullptr) return;
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		if (!shared.signedIn || shared.busy) return;
+		// Noch keine Liste: das erste Laden übernimmt `RefreshProjectList`,
+		// und zwar sofort statt nach der Wartezeit eines Fehlschlags.
+		if (shared.projects.empty ()) {
+			projectLoadTried = false;
+			return;
+		}
+	}
+	refreshGate.Mark (std::chrono::steady_clock::now ());
+	const std::string projectId = lastProjectId;
+	rtx::LogLine (announce ? "Listen neu laden (Knopf)." : "Listen neu laden (Öffnen oder Fokus).");
+
+	JoinWorker ();
+	cancel.Reset ();
+	if (announce) shared.SetProgress ("Projekte und Blickpunkte werden neu geladen…");
+	workerRunning.store (true);
+	worker = std::thread ([this, projectId, announce] () {
+		const rtx::Result<std::vector<rtx::ProjectSummary>> projects = api->ListProjects (&cancel);
+		if (!projects) {
+			std::lock_guard<std::mutex> guard (shared.mutex);
+			// Die alte Liste bleibt bedienbar; der Hinweis sagt, warum sie alt ist.
+			shared.progressText =
+				"Projekte konnten nicht neu geladen werden: " + projects.GetError ().message;
+			if (projects.GetError ().code == rtx::errc::Unauthorized) {
+				shared.signedIn = false;
+				shared.connectionText = "Die Verbindung wurde beendet. Bitte neu anmelden.";
+			}
+			shared.dirty = true;
+			workerRunning.store (false);
+			return;
+		}
+		// Die Blickpunkte nur für ein Projekt, das es noch gibt. Fehlt es, wählt
+		// die Palette den ersten Eintrag, und der Leerlauf lädt dessen Liste.
+		bool present = false;
+		for (const rtx::ProjectSummary& project : projects.Value ())
+			present = present || project.id == projectId;
+		rtx::Result<std::vector<rtx::ViewpointSummary>> viewpoints =
+			rtx::Result<std::vector<rtx::ViewpointSummary>>::Fail (rtx::errc::Cancelled, {});
+		if (present) viewpoints = api->ListViewpoints (projectId, &cancel);
+
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		// Unveränderte Listen werden nicht neu aufgebaut: eine aufgeklappte
+		// Auswahl klappte sonst beim Fokuswechsel zu.
+		if (!SameEntries (shared.projects, projects.Value ())) {
+			shared.projects = projects.Value ();
+			shared.projectsChanged = true;
+		}
+		if (present && viewpoints && shared.viewpointsProjectId == projectId) {
+			if (!SameEntries (shared.viewpoints, viewpoints.Value ())) {
+				shared.viewpoints = viewpoints.Value ();
+				shared.viewpointsChanged = true;
+			}
+		}
+		// Scheitert nur die Blickpunktabfrage, bleibt die alte Liste stehen —
+		// und der Hinweis sagt es, statt still zu verschwinden.
+		if (shared.projects.empty ())
+			shared.progressText = "Keine Projekte in dieser Organisation.";
+		else if (present && !viewpoints)
+			shared.progressText =
+				"Blickpunkte konnten nicht neu geladen werden: " + viewpoints.GetError ().message;
+		else if (announce)
+			shared.progressText = "";
+		shared.dirty = true;
+		workerRunning.store (false);
+	});
+}
+
+void RendertaxiPalette::StartCreateProject ()
+{
+	if (workerRunning.load ()) {
+		shared.SetProgress ("Ein neues Projekt lässt sich anlegen, sobald der laufende Vorgang "
+							"fertig ist.");
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		if (!shared.signedIn) {
+			shared.progressText = "Bitte zuerst anmelden.";
+			shared.dirty = true;
+			return;
+		}
+	}
+	// Nach einem Fehlschlag steht der Name wieder im Dialog: dieselbe
+	// Bestätigung sendet denselben Schlüssel und legt kein zweites Projekt an.
+	NewProjectDialog dialog (U (pendingProjectName));
+	if (!dialog.Invoke ()) return;
+	const std::string name = rtx::TrimProjectName (Utf8 (dialog.Name ()));
+	const std::string problem = rtx::ProjectNameProblem (name);
+	if (!problem.empty ()) {
+		shared.SetProgress (problem);
+		return;
+	}
+	pendingProjectName = name;
+	const std::string key = newProject.KeyFor (name);
+	rtx::LogLine ("Neues Projekt wird angelegt.");
+
+	JoinWorker ();
+	cancel.Reset ();
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.busy = true;
+		shared.progressText = "Projekt „" + name + "“ wird angelegt…";
+		shared.dirty = true;
+	}
+	workerRunning.store (true);
+	worker = std::thread ([this, name, key] () {
+		const rtx::Result<rtx::ProjectSummary> created = api->CreateProject (name, key, &cancel);
+		if (!created) {
+			std::lock_guard<std::mutex> guard (shared.mutex);
+			shared.busy = false;
+			shared.progressText = "Das Projekt wurde nicht angelegt: " + created.GetError ().message;
+			if (created.GetError ().code == rtx::errc::Unauthorized) {
+				shared.signedIn = false;
+				shared.connectionText = "Die Verbindung wurde beendet. Bitte neu anmelden.";
+			}
+			shared.dirty = true;
+			workerRunning.store (false);
+			return;
+		}
+		// Die Liste neu, damit auch Projekte aus dem Web dastehen. Scheitert
+		// das, steht das neue Projekt trotzdem vorn — angelegt ist es.
+		const rtx::Result<std::vector<rtx::ProjectSummary>> projects = api->ListProjects (&cancel);
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		std::vector<rtx::ProjectSummary> list = projects ? projects.Value () : shared.projects;
+		bool listed = false;
+		for (const rtx::ProjectSummary& project : list)
+			listed = listed || project.id == created.Value ().id;
+		if (!listed) list.insert (list.begin (), created.Value ());
+		shared.busy = false;
+		shared.projects = list;
+		shared.projectsChanged = true;
+		// Ein neues Projekt hat keinen Blickpunkt: die Liste ist leer und gehört
+		// zu ihm, der Modus ist „Neuer Blickpunkt".
+		shared.viewpoints.clear ();
+		shared.viewpointsProjectId = created.Value ().id;
+		shared.viewpointsChanged = true;
+		shared.createdProjectId = created.Value ().id;
+		shared.createdProjectName = name;
+		shared.progressText = "Projekt „" + created.Value ().name +
+							  "“ angelegt. Der erste Blickpunkt entsteht mit der nächsten Übernahme.";
+		shared.dirty = true;
+		workerRunning.store (false);
+	});
+}
+
 /**
  * Hält die Blickpunktliste an dem Projekt, das in der Auswahl steht.
  *
@@ -1292,18 +1608,19 @@ void RendertaxiPalette::RefreshViewpointList ()
 	{
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		signedIn = shared.signedIn;
-		if (!signedIn || shared.busy || shared.projects.empty ()) return;
-		const short index = projectPopUp.GetSelectedItem ();
-		if (index < 1 || static_cast<std::size_t> (index) > shared.projects.size ()) return;
-		const rtx::ProjectSummary& project =
-			shared.projects[static_cast<std::size_t> (index - 1)];
-		if (shared.viewpointsProjectId == project.id) return;
-		wanted = project.id;
+		if (!signedIn || shared.busy) return;
+		// Das **sichtbar** gewählte Projekt (F-01 an PR #292).
+		const rtx::ProjectSummary* project = shownProjects.At (projectPopUp.GetSelectedItem ());
+		if (project == nullptr) return;
+		if (shared.viewpointsProjectId == project->id) return;
+		wanted = project->id;
 
 		// **Zuerst weg, dann laden.** Eine Liste, die zum gewählten Projekt
-		// nicht mehr gehört, darf keine Sekunde länger auswählbar sein.
-		if (!shared.viewpoints.empty ()) {
+		// nicht mehr gehört, darf keine Sekunde länger auswählbar sein — und sie
+		// gehört danach zu keinem Projekt mehr.
+		if (!shared.viewpoints.empty () || !shared.viewpointsProjectId.empty ()) {
 			shared.viewpoints.clear ();
+			shared.viewpointsProjectId.clear ();
 			shared.viewpointsChanged = true;
 			shared.dirty = true;
 		}
@@ -1466,31 +1783,26 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		return;
 	}
 
-	std::vector<rtx::ProjectSummary> projects;
-	std::vector<rtx::ViewpointSummary> viewpoints;
-	std::string viewpointsProjectId;
 	{
 		std::lock_guard<std::mutex> guard (shared.mutex);
-		projects = shared.projects;
-		viewpoints = shared.viewpoints;
-		viewpointsProjectId = shared.viewpointsProjectId;
 		if (!shared.signedIn) {
 			shared.progressText = "Bitte zuerst anmelden.";
 			shared.dirty = true;
 			return;
 		}
 	}
-	if (projects.empty ()) {
-		shared.SetProgress ("Kein Projekt zur Auswahl.");
+	// **Das Ziel ist, was sichtbar gewählt ist** (F-01 an PR #292). Aufgelöst
+	// wird gegen die dargestellten Listen, nie gegen die geladenen: die ersetzt
+	// der Arbeitsfaden, bevor die Auswahl neu aufgebaut ist, und eine Stelle
+	// trifft nach einem Umsortieren dann einen anderen Eintrag.
+	const rtx::ResolvedTarget resolved =
+		rtx::ResolveTarget (shownProjects, projectPopUp.GetSelectedItem (), shownViewpoints,
+							viewpointPopUp.GetSelectedItem (), updateRadio.IsSelected ());
+	if (!resolved.problem.empty ()) {
+		shared.SetProgress (resolved.problem);
 		return;
 	}
-
-	const short projectIndex = projectPopUp.GetSelectedItem ();
-	if (projectIndex < 1 || static_cast<std::size_t> (projectIndex) > projects.size ()) {
-		shared.SetProgress ("Bitte ein Projekt wählen.");
-		return;
-	}
-	const rtx::ProjectSummary& project = projects[static_cast<std::size_t> (projectIndex - 1)];
+	const rtx::ProjectSummary project = resolved.project;
 
 	rtx::CaptureTarget target;
 	target.projectId = project.id;
@@ -1502,21 +1814,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	target.viewpoint.baseImageRole = "viewport";
 	std::string viewpointDisplayName;
 	if (updateRadio.IsSelected ()) {
-		// **Die Liste muss zu diesem Projekt gehören.** Der Leerlauf hält das
-		// nach; hier steht es noch einmal, weil ein Update an einen
-		// projektfremden Blickpunkt kein Fehler ist, den der Server ausbaden
-		// soll — und weil ein Klick schneller sein kann als ein Nachladen.
-		if (viewpointsProjectId != project.id) {
-			shared.SetProgress ("Die Blickpunkte dieses Projekts werden noch geladen.");
-			return;
-		}
-		const short viewpointIndex = viewpointPopUp.GetSelectedItem ();
-		if (viewpointIndex < 1 || static_cast<std::size_t> (viewpointIndex) > viewpoints.size ()) {
-			shared.SetProgress ("Bitte einen bestehenden Blickpunkt wählen.");
-			return;
-		}
-		const rtx::ViewpointSummary& viewpoint =
-			viewpoints[static_cast<std::size_t> (viewpointIndex - 1)];
+		// Dass die Liste zu diesem Projekt gehört, hat `ResolveTarget` geprüft.
+		const rtx::ViewpointSummary& viewpoint = resolved.viewpoint;
 		target.viewpoint.mode = "update";
 		target.viewpoint.viewpointId = viewpoint.id;
 		// **Ausdrückliche Handlung**, kein Vorgabewert: ohne Häkchen behält der

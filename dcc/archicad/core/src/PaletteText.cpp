@@ -112,4 +112,37 @@ std::vector<std::string> LayoutInfoLines (const std::vector<InfoParagraph>& para
 	return lines;
 }
 
+std::string FormatCompileDate (const std::string& compileDate)
+{
+	static const char* const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+										 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+	if (compileDate.size () != 11) return compileDate;
+	int month = 0;
+	for (int i = 0; i < 12; ++i)
+		if (compileDate.compare (0, 3, months[i]) == 0) month = i + 1;
+	const char tens = compileDate[4] == ' ' ? '0' : compileDate[4];
+	const char ones = compileDate[5];
+	if (month == 0 || tens < '0' || tens > '3' || ones < '0' || ones > '9') return compileDate;
+	std::string text;
+	text += tens;
+	text += ones;
+	text += month < 10 ? ".0" : ".";
+	text += std::to_string (month) + "." + compileDate.substr (7, 4);
+	return text;
+}
+
+std::string BuildLine (const std::string& commit, const std::string& compileDate)
+{
+	const std::string date = FormatCompileDate (compileDate);
+	const std::string suffix = "-dirty";
+	const bool dirty = commit.size () > suffix.size () &&
+					   commit.compare (commit.size () - suffix.size (), suffix.size (), suffix) == 0;
+	const std::string hash = dirty ? commit.substr (0, commit.size () - suffix.size ()) : commit;
+	bool isHash = hash.size () >= 7 && hash.size () <= 40;
+	for (const char c : hash)
+		isHash = isHash && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+	if (!isHash) return "Entwicklungsbuild vom " + date;
+	return "Build " + hash.substr (0, 7) + (dirty ? " (geändert)" : "") + " vom " + date;
+}
+
 } // namespace rtx

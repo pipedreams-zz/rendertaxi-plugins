@@ -5,6 +5,7 @@
 // in der Palette und im DevKit-freien Kern.
 #include "APIEnvir.h"
 #include "ACAPinc.h"
+#include "DG.h"
 
 #include <string>
 
@@ -15,6 +16,7 @@
 #include "Settings.hpp"
 #include "Version.hpp"
 #include "rtx/Log.hpp"
+#include "rtx/PaletteText.hpp"
 
 static void ShowOrHidePalette ()
 {
@@ -34,19 +36,23 @@ static GSErrCode MenuCommandHandler (const API_MenuParams* menuParams)
 	if (menuParams->menuItemRef.menuResID == RtxMenuResId) {
 		ShowOrHidePalette ();
 	} else if (menuParams->menuItemRef.menuResID == RtxAboutMenuResId) {
-		// **Was in einem Fehlerbericht stehen muss**, in einem Satz: Fassung,
-		// Build, Kennung, Server. Die Fassung allein sagt zu wenig — zwischen
-		// zwei Ständen mit derselben Nummer unterscheidet nur der Build.
+		// **Was in einem Fehlerbericht stehen muss**: Fassung, Build, Kennung,
+		// Server, Archicad. Die Fassung allein sagt zu wenig — zwischen zwei
+		// Ständen mit derselben Nummer unterscheidet nur der Build, und der
+		// nennt seit #281 den Git-Stand.
+		//
+		// **Ein Hinweis, keine Warnung.** `ACAPI_WriteReport` mit Meldefenster
+		// erschien unter Windows als „Warnung!" mit Warnsymbol (Abnahme vom
+		// 07.10.2026) — für eine Auskunft das falsche Signal.
 		const rtxaddon::HostVersion host = rtxaddon::ReadHostVersion ();
-		ACAPI_WriteReport ("rendertaxi.ai für Archicad\n\n"
-						   "Fassung:   %s\n"
-						   "Build:     %s\n"
-						   "Kennung:   %s\n"
-						   "Server:    %s\n"
-						   "Archicad:  %s (Build %s)",
-						   true, RTX_ADDON_VERSION, RTX_ADDON_BUILD, RTX_ADDON_IDENTIFIER,
-						   rtxaddon::ServerUrl ().c_str (), host.version.c_str (),
-						   host.build.c_str ());
+		const std::string details =
+			"Fassung " RTX_ADDON_VERSION "\n" +
+			rtx::BuildLine (RTX_BUILD_COMMIT, RTX_ADDON_BUILD_DATE) +
+			"\nKennung " RTX_ADDON_IDENTIFIER "\nServer " + rtxaddon::ServerUrl () +
+			"\nArchicad " + host.version + " (Build " + host.build + ")";
+		DGAlert (DG_INFORMATION, GS::UniString ("rendertaxi.ai", CC_UTF8),
+				 GS::UniString ("rendertaxi.ai für Archicad", CC_UTF8),
+				 GS::UniString (details.c_str (), CC_UTF8), GS::UniString ("OK", CC_UTF8));
 	}
 	return NoError;
 }

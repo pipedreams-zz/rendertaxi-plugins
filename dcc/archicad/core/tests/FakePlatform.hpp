@@ -57,6 +57,22 @@ public:
 	/** Die nächsten `count` Tokenabfragen antworten `429` mit `Retry-After`. */
 	void RateLimitNext (int count);
 
+	// --- Projekte (RTX-A-011) ------------------------------------------------
+	/**
+	 * Die nächste Projektanlage **wirkt**, aber ihre Antwort ist `500` — die
+	 * verlorene Antwort aus dem Kerntest zur Idempotenz.
+	 */
+	void LoseNextProjectResponse ();
+	/** `viewer` darf keine Projekte anlegen (`403`), wie auf der Plattform. */
+	void SetRole (std::string role);
+	/** Ein Projekt, das jemand anderswo anlegt — etwa im Web. */
+	void AddProject (const std::string& id, const std::string& name);
+	void RemoveProject (const std::string& id);
+	/** Wie oft ein Projekt mit diesem Namen in der Liste steht. */
+	int ProjectsNamed (const std::string& name) const;
+	/** Die Idempotenzschlüssel aller `POST /projects`, in ihrer Reihenfolge. */
+	std::vector<std::string> ProjectCreateKeys () const;
+
 	// --- Nachweise ---------------------------------------------------------
 	int AssetsCreated () const;
 	int ViewpointsCreated () const;
@@ -79,6 +95,11 @@ private:
 		int attempt = 0;
 		std::string state = "missing";
 		std::string errorCode;
+	};
+
+	struct Project {
+		std::string id;
+		std::string name;
 	};
 
 	struct Viewpoint {
@@ -151,6 +172,13 @@ private:
 	std::string baseUrl;
 	std::string transcriptPath;
 	int nextId = 1;
+	/** Die Liste aus `GET /projects`, neueste zuerst. */
+	std::vector<Project> projects {{"0199a000-0000-7000-8000-00000000000a", "Testprojekt"}};
+	/** Schlüssel → (Name, Projektkennung) der Anlagen. */
+	std::map<std::string, std::pair<std::string, std::string>> projectByKey;
+	std::vector<std::string> projectCreateKeys;
+	bool loseNextProjectResponse = false;
+	std::string role = "owner";
 };
 
 } // namespace testing

@@ -241,7 +241,7 @@ Result<CaptureSessionState> ParseCaptureSession (const JsonPtr& node)
 {
 	if (node == nullptr || node->GetKind () != Json::Kind::Object)
 		return Result<CaptureSessionState>::Fail (errc::Transport,
-												  "Antwort der Capture-Session ist kein Objekt.");
+												  "Die Antwort des Servers auf die Übernahme ist kein Objekt.");
 	CaptureSessionState session;
 	session.captureId = TextField (node, "captureId");
 	session.state = TextField (node, "state");
@@ -649,6 +649,39 @@ Result<std::vector<ProjectSummary>> PluginApiClient::ListProjects (CancelToken* 
 		path = "/api/v1/projects?limit=100&cursor=" + QueryEscape (cursor);
 	}
 	return Result<std::vector<ProjectSummary>>::Ok (projects);
+}
+
+Result<ProjectSummary> PluginApiClient::CreateProject (const std::string& name,
+													   const std::string& idempotencyKey,
+													   CancelToken* cancel)
+{
+	// Nur der Name: Kennung, Zeitpunkt und Region setzt der Server
+	// (`createProjectRequestSchema`). Der Schlüssel reist im Kopf.
+	JsonPtr body = Json::MakeObject ();
+	body->Set ("name", Json::MakeString (name));
+	const HttpHeaders extra {{"Idempotency-Key", idempotencyKey}};
+	const Result<HttpResponse> response =
+		Call ("POST", "/api/v1/projects", body->Serialize (), extra, cancel);
+	if (!response) return Result<ProjectSummary>::Fail (response.GetError ());
+	const int status = response.Value ().status;
+	if (status == 403) {
+		Error error = ErrorFromResponse (response.Value ());
+		error.message = "Deine Rolle in diesem Büro erlaubt keine neuen Projekte. Ein Owner oder "
+						"Mitglied kann es anlegen.";
+		return Result<ProjectSummary>::Fail (error);
+	}
+	if (status != 200 && status != 201)
+		return Result<ProjectSummary>::Fail (ErrorFromResponse (response.Value ()));
+	const JsonPtr node = Json::Parse (response.Value ().body);
+	ProjectSummary project;
+	project.id = TextField (node, "id");
+	project.name = TextField (node, "name");
+	project.viewpointCount = static_cast<int> (IntField (node, "viewpointCount", 0));
+	if (project.id.empty ())
+		return Result<ProjectSummary>::Fail (errc::Transport,
+											 "Die Antwort auf die Projektanlage nennt kein Projekt.");
+	if (project.name.empty ()) project.name = name;
+	return Result<ProjectSummary>::Ok (project);
 }
 
 Result<std::vector<ViewpointSummary>> PluginApiClient::ListViewpoints (const std::string& projectId,

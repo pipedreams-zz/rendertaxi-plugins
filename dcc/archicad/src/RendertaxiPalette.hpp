@@ -25,10 +25,13 @@
 #include "rtx/DeviceLogin.hpp"
 #include "rtx/Http.hpp"
 #include "rtx/PluginApi.hpp"
+#include "rtx/ProjectList.hpp"
 #include "rtx/TokenStore.hpp"
 #include "rtx/TransferStore.hpp"
 
 #define RtxPaletteResId 32500
+/** Der Dialog „Neues Projekt" (`RINT/rendertaxi.grc`, #281). */
+#define RtxNewProjectDialogResId 32510
 // Zwei Menüressourcen mit je **einem** Befehl; zusammen ergeben sie ein
 // flaches Hauptmenü „rendertaxi.ai" (siehe `RINT/rendertaxi.grc`).
 #define RtxMenuResId 32500
@@ -62,6 +65,13 @@ struct SharedState {
 	std::string viewpointsProjectId;
 	bool projectsChanged = false;
 	bool viewpointsChanged = false;
+	/**
+	 * Nach einer Projektanlage: dieses Projekt soll gewählt werden, und der
+	 * Name ist als erledigte Absicht zu melden (#281). Der Faden setzt beides,
+	 * der Hauptfaden löst es ein.
+	 */
+	std::string createdProjectId;
+	std::string createdProjectName;
 	bool signedIn = false;
 	bool busy = false;
 	bool dirty = false;
@@ -74,7 +84,8 @@ struct SharedState {
 class RendertaxiPalette final : public DG::Palette,
 								public DG::PanelObserver,
 								public DG::ButtonItemObserver,
-								public DG::TextEditBaseObserver {
+								public DG::TextEditBaseObserver,
+								public DG::PopUpObserver {
 public:
 	static bool HasInstance ();
 	static RendertaxiPalette& GetInstance ();
@@ -131,7 +142,10 @@ private:
 		InfoLine8Id = 40,
 		ViewLabelId = 41,
 		ViewPopUpId = 42,
-		ViewRefreshButtonId = 43
+		ViewRefreshButtonId = 43,
+		ProjectRefreshButtonId = 44,
+		NewProjectButtonId = 45,
+		BuildTextId = 46
 	};
 
 	RendertaxiPalette ();
@@ -140,6 +154,11 @@ private:
 	void TextEditChanged (const DG::TextEditChangeEvent& ev) override;
 	void PanelIdle (const DG::PanelIdleEvent& ev) override;
 	void PanelCloseRequested (const DG::PanelCloseRequestEvent& ev, bool* accepted) override;
+	/** Der Fokus kehrt auf die Palette zurück: Listen neu laden, höchstens alle 5 s. */
+	void PanelActivated (const DG::PanelActivateEvent& ev) override;
+	void PanelTopStatusGained (const DG::PanelTopStatusEvent& ev) override;
+	/** Der volle Name des gewählten Eintrags — die Liste selbst endet auf „…". */
+	void ItemToolTipRequested (const DG::ItemHelpEvent& ev, GS::UniString* toolTipText) override;
 
 	void StartSignIn ();
 	void StartSignOut ();
@@ -147,6 +166,15 @@ private:
 	void StartDiscard ();
 	/** Lädt die Projekte, sobald jemand angemeldet ist und keine Liste steht. */
 	void RefreshProjectList ();
+	/**
+	 * Lädt Projekt- **und** Blickpunktliste neu, ohne die Auswahl zu
+	 * verlieren (#281): gewählt bleibt, was noch existiert, sonst der erste
+	 * Eintrag. Wege: Knopf „Aktualisieren", Öffnen der Palette, Rückkehr des
+	 * Fokus. Läuft gerade ein Vorgang, holt der Leerlauf es danach nach.
+	 */
+	void StartRefreshLists ();
+	/** „Neues Projekt…": Name erfragen, anlegen, Liste neu laden, Projekt wählen. */
+	void StartCreateProject ();
 	/** Lädt die Blickpunkte **dieses** Projekts; alles andere bleibt stehen. */
 	void StartLoadViewpoints (const std::string& projectId);
 	/** Merkt im Leerlauf, dass die Liste nicht mehr zum gewählten Projekt passt. */
@@ -277,6 +305,12 @@ private:
 	DG::PopUp viewPopUp;
 	DG::Button viewRefreshButton;
 
+	/** „Aktualisieren" an der Projektliste und „Neues Projekt…" (#281). */
+	DG::Button projectRefreshButton;
+	DG::Button newProjectButton;
+	/** „Build … vom …" im Fuß, damit jeder Screenshot den Stand zeigt. */
+	DG::LeftText buildText;
+
 	std::unique_ptr<rtx::HttpClient> http;
 	std::unique_ptr<rtx::TokenStore> tokens;
 	std::unique_ptr<rtx::PluginApiClient> api;
@@ -309,6 +343,29 @@ private:
 	bool discardEnabled = true;
 	/** Wurde schon einmal versucht, die Projekte zu laden? */
 	bool projectLoadTried = false;
+	/**
+	 * **Die Listen, wie sie in den Auswahlen stehen** (F-01 an PR #292). Nur
+	 * `RefreshFromState` ändert sie, im selben Schritt wie die Auswahl; jeder,
+	 * der eine Stelle der Auswahl in einen Eintrag übersetzt, liest sie — nie
+	 * `shared.projects` oder `shared.viewpoints`, die der Arbeitsfaden vorher
+	 * ersetzt.
+	 */
+	rtx::ShownList<rtx::ProjectSummary> shownProjects;
+	rtx::ShownList<rtx::ViewpointSummary> shownViewpoints;
+	/** Zuletzt gewählte Einträge — sie überleben das Neuladen, wenn es sie noch gibt. */
+	std::string lastProjectId;
+	std::string lastViewpointId;
+	/** Ein Neuladen wartet, bis kein Vorgang mehr läuft (Knopf, Öffnen). */
+	bool refreshPending = false;
+	/** Der Fokus kam zurück; der Leerlauf lädt, wenn die Sperre es erlaubt. */
+	bool focusRefreshWanted = false;
+	rtx::RefreshGate refreshGate {std::chrono::seconds (5)};
+	/** Die laufende Projektanlage; derselbe Name trägt denselben Schlüssel. */
+	rtx::NewProjectIntent newProject;
+	/** Der zuletzt bestätigte Name, solange seine Anlage nicht gelungen ist. */
+	std::string pendingProjectName;
+	/** Nur der Knopf meldet das Neuladen; Öffnen und Fokus laden still. */
+	bool refreshAnnounce = false;
 	std::chrono::steady_clock::time_point lastProjectLoad {};
 	bool shownSignedIn = false;
 	bool shownFitEnabled = true;

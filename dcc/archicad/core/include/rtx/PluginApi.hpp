@@ -377,6 +377,19 @@ public:
 	Result<std::vector<ProjectSummary>> ListProjects (CancelToken* cancel);
 	Result<std::vector<ViewpointSummary>> ListViewpoints (const std::string& projectId,
 														  CancelToken* cancel);
+	/**
+	 * `POST /api/v1/projects` — ein neues Projekt mit den Rechten des
+	 * angemeldeten Nutzers (RTX-A-011, #281; wie `create_project` im
+	 * gemeinsamen Python-Client).
+	 *
+	 * `idempotencyKey` kommt aus `NewProjectIntent` (`rtx/ProjectList.hpp`):
+	 * derselbe Schlüssel mit demselben Namen legt **ein** Projekt an, auch wenn
+	 * die erste Antwort verloren ging. Eine Rolle ohne Anlagerecht bekommt
+	 * `403`; die Meldung sagt das in einem Satz statt einen Statuscode zu nennen.
+	 * Den Namen prüft der Server; der Client zeigt seine Antwort.
+	 */
+	Result<ProjectSummary> CreateProject (const std::string& name,
+										  const std::string& idempotencyKey, CancelToken* cancel);
 
 	Result<CaptureSessionState> CreateCapture (const std::string& idempotencyKey,
 											   const CreateCaptureRequest& request,
