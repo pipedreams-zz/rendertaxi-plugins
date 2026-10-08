@@ -75,8 +75,32 @@ class RhinoAdapter:
         result, text = Rhino.UI.Dialogs.ShowEditBox(host.MARK, title, preset, False)
         return text if result and isinstance(text, str) and text.strip() else None
 
-    def probe(self) -> dict:
-        return rhinocapture.probe(rhinocapture.active_document())
+    def probe(self, model: bool = False) -> dict:
+        """``source.host.capabilities``; ``geometryExport`` und ``cameraExport`` nur, wenn ein Modell mitgeht."""
+        doc = rhinocapture.active_document()
+        capabilities = rhinocapture.probe(doc)
+        if model:
+            from . import export
+
+            capabilities.update(export.probe(doc))
+        return capabilities
+
+    def model_problem(self):
+        from . import export
+
+        return export.unit_problem(rhinocapture.active_document())
+
+    def model_estimate(self):
+        from . import export
+
+        return export.estimate(rhinocapture.active_document())
+
+    def export_model(self, directory: str, size, limits, colors: bool, max_triangles: int):
+        """``(CaptureFile, geometry)`` — die GLB-Datei im Übernahmeordner, geprüft, mit den benannten Ansichten."""
+        from . import export
+
+        model = export.export_model(rhinocapture.active_document(), directory, size, limits, colors, max_triangles)
+        return model.file, model.geometry
 
     def pass_rows(self):
         return rhinocapture.pass_rows()
@@ -98,7 +122,12 @@ class RhinoAdapter:
         view = rhinocapture.camera_view(doc, size, view_key)
         if view is None:
             return None
-        return camera_block(view, size, rhinocapture.meters_per_unit(doc), lens_and_shift)
+        bounds = None
+        if not view.perspective:
+            from . import export
+
+            bounds = export.scene_bounds(doc)  # Schnittebenen einer Parallelkamera aus der Szene (Review F-01)
+        return camera_block(view, size, rhinocapture.meters_per_unit(doc), lens_and_shift, bounds)
 
     def status(self, text: str, percent: int) -> None:
         """Fortschritt in der Statusleiste von Rhino; ``percent < 0`` räumt sie."""

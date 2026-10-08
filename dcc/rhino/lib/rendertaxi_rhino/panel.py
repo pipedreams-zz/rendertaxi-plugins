@@ -15,8 +15,7 @@ import Eto.Drawing as drawing
 import Eto.Forms as forms
 
 from . import host
-from .controller import (BEAUTY, CURRENT_VIEW, MODEL_DISABLED, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT,
-                         Controller)
+from .controller import BEAUTY, CURRENT_VIEW, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT, Controller
 from .rendertaxi_client import frame, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
@@ -173,10 +172,12 @@ class RdtxForm(forms.Form):
         self.passes = _stack(_label("Pässe (optional)"), *pass_rows, self.pass_hint,
                              _label(mf.DATA_PASS_BIT_DEPTH_LABEL), self.bit_depth)
         self.image_group = _group("Bild", self.send_image, self.kind, self.resolution, self.frame_text, self.passes)
-        # Modell — in diesem Paket abgeschaltet
+        # Modell (RTX-RH-003)
         self.send_model = _check("Modell senden", self._on_send_model)
-        self.send_model.Enabled = False
-        self.model_group = _group("Modell", self.send_model, _label(MODEL_DISABLED))
+        self.model_colors = _check("Materialfarben mitsenden", self._on_model_colors)
+        self.model_hint = _label("")
+        self.count = _button("Neu zählen", self._guarded(c.count_model))
+        self.model_group = _group("Modell", self.send_model, self.model_colors, self.model_hint, self.count)
         # Übernehmen
         self.summary = _label("")
         self.capture = _button("Bild übernehmen", self._guarded(c.capture))
@@ -244,10 +245,13 @@ class RdtxForm(forms.Form):
         self._changed(lambda: setattr(self.controller.form, "size", self.size.SelectedKey))
 
     def _on_send_image(self, *_):
-        self._changed(lambda: setattr(self.controller.form, "send_image", bool(self.send_image.Checked)))
+        self._changed(lambda: self.controller.set_send_image(bool(self.send_image.Checked)))
 
     def _on_send_model(self, *_):
         self._changed(lambda: self.controller.set_send_model(bool(self.send_model.Checked)))
+
+    def _on_model_colors(self, *_):
+        self._changed(lambda: self.controller.set_model_colors(bool(self.model_colors.Checked)))
 
     def _on_kind(self, *_):
         self._changed(lambda: setattr(self.controller.form, "capture_kind", self.kind.SelectedKey))
@@ -403,7 +407,13 @@ class RdtxForm(forms.Form):
                   str(c.data_pass_bit_depth()))
 
         # Modell
-        self.send_model.Checked = False
+        self.send_model.Checked = form.send_model
+        self.model_colors.Checked = form.model_colors
+        self.model_colors.Visible = self.count.Visible = form.send_model
+        self.count.Enabled = not busy
+        model_hint = c.model_hint()
+        self.model_hint.Text = model_hint
+        self.model_hint.Visible = bool(model_hint)
 
         # Übernehmen
         try:

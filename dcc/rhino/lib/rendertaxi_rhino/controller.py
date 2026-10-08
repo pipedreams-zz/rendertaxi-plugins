@@ -10,12 +10,14 @@ Faden fasst ``Rhino`` nie an: Ergebnisse reicht er über ``Job.post`` weiter; ``
 UI-Faden ein (das Fenster ruft es aus seinem ``UITimer``). Aufnahme und Rendern laufen im UI-Faden: Rhino
 Render ist aus einem Skript modal (QR-08, gemessen) — die Oberfläche zeichnet weiter, der Befehl wartet.
 
-**Bild- und Modellweg** (``ways``, Vertrag 1.6.0): der Bildweg ist in diesem Paket der einzige; der Modellweg
-steht im Fenster und ist abgeschaltet (``MODEL_DISABLED``), bis er mit der nächsten Fassung kommt.
+**Bild- und Modellweg** (``ways``, Vertrag 1.6.0, RTX-RH-003): nur Bild, nur Modell oder beides. Nur mit Modell
+wird nicht aufgenommen: es gehen die GLB-Datei und die Kamera der gewählten Ansicht mit ihrer Bildgröße. Die Wahl
+der Wege und „Materialfarben" sind gemerkt; ein fremder Wert fällt auf die Vorgabe.
 
 **Ein gemerkter Zustand darf das Laden nie verhindern** (Regel 3). ``restore_session`` fängt jeden Fehler und
 endet in „nicht verbunden"; kaputte Einstellungen fallen auf die Vorgaben, eine ungültige Bittiefe wird 8 Bit,
-eine kaputte Ansichtszuordnung wird leer.
+eine kaputte Ansichtszuordnung wird leer, eine gemerkte Wahl „nur Modell" gegen einen alten Server wird
+„Bild und Modell" (``ways.plan``).
 """
 
 from __future__ import annotations
@@ -28,19 +30,22 @@ import threading
 from dataclasses import dataclass, field
 
 from . import host  # noqa: F401 — setzt den Host des Clients, bevor ihn jemand benutzt
-from .rendertaxi_client import auth, frame, ways
+from .rendertaxi_client import auth, frame, glb, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log, log_exception, set_debug
 from .rendertaxi_client.store import (CredentialStore, SettingsStore, TransferStore, has_local_material, read_json,
                                       write_json_private)
 from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewProject, Transfer, Unauthorized,
                                           handshake_problem, normalize_server_url, prepare, project_choices,
-                                          project_name_problem)
+                                          project_name_problem, supports_model)
 
 DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender und Cinema 4D.
+# ``sendImage``, ``sendModel``, ``modelColors``: die Wahl der Wege und der Materialfarben (wie Cinema 4D,
+# RTX-C4D-008) — gemerkt, nie Bedingung fürs Laden.
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
-                    "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH}
+                    "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "sendImage": True, "sendModel": False,
+                    "modelColors": False}
 
 VIEWPORT = "viewport"
 BEAUTY = "beauty"
@@ -52,9 +57,9 @@ SIZE_OPTION = "Blickpunkt-Rahmen"
 NEW_PROJECT_PROMPT = "Name des neuen Projekts"
 VIEWPOINT_NAME_MAX_LENGTH = 200
 PASS_ROLES = ("depth", "normal", "albedo", "object-id", "material-id")
-# Der Modellweg (GLB und Kamera) folgt mit der nächsten Fassung des Plugins; bis dahin steht er abgeschaltet da.
-MODEL_ENABLED = False
-MODEL_DISABLED = "Das Modell lässt sich aus Rhino noch nicht senden; das kommt mit der nächsten Fassung des Plugins."
+# Die Dreiecksgrenze des Servers aus dem gemeinsamen Client; hier gelesen, damit ein Test sie senken kann.
+MAX_TRIANGLES = glb.MAX_TRIANGLES
+NO_MODEL_SERVER = "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne Modell übernehmen."
 VIEWS_FILE = "views.json"
 
 
@@ -77,6 +82,7 @@ class Form:
     resolution: str = RESOLUTION_DOCUMENT
     passes: set = field(default_factory=set)
     send_model: bool = False
+    model_colors: bool = False
 
 
 class State:
@@ -157,6 +163,12 @@ class Controller:
         self._jobs: list = []
         # „Projekt anlegen": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
         self.new_project_intent = NewProject()
+        # Die letzte Zählung für „Modell senden" — nur ein Hinweis, gezählt auf Wunsch.
+        self.model_estimate = None
+        remembered = self.settings()
+        self.form.send_image = remembered["sendImage"]
+        self.form.send_model = remembered["sendModel"]
+        self.form.model_colors = remembered["modelColors"]
 
     # -- Ablage und Einstellungen -------------------------------------------
 
@@ -637,40 +649,132 @@ class Controller:
 
     def chosen(self) -> ways.Plan:
         """Was gesendet wird — ``ValueError`` (``ways.NOTHING_CHOSEN``), wenn nichts gewählt ist."""
-        return ways.plan(self.form.send_image, self.form.send_model and MODEL_ENABLED, self.state.handshake)
+        return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+
+    # -- Modell --------------------------------------------------------------
+
+    def _remember(self, values: dict) -> None:
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save(values)
+        except (OSError, ValueError):  # die Wahl gilt trotzdem, nur nicht über den Neustart hinaus
+            pass
+
+    def set_send_image(self, on: bool) -> None:
+        self.form.send_image = bool(on)
+        self._remember({"sendImage": self.form.send_image})
 
     def set_send_model(self, on: bool) -> None:
-        """Der Modellweg ist in diesem Paket abgeschaltet: der Schalter bleibt aus und sagt warum."""
-        self.form.send_model = bool(on) and MODEL_ENABLED
-        if on and not MODEL_ENABLED:
-            self._set_message(MODEL_DISABLED)
+        self.form.send_model = bool(on)
+        self._remember({"sendModel": self.form.send_model})
+        if self.form.send_model:
+            self.count_model()
+
+    def set_model_colors(self, on: bool) -> None:
+        self.form.model_colors = bool(on)
+        self._remember({"modelColors": self.form.model_colors})
+
+    def model_problem(self) -> str | None:
+        """Warum das Modell nicht geht — im Fenster **vor** dem Senden, beim Übernehmen als Fehler."""
+        if self.state.handshake is not None and not supports_model(self.state.handshake):
+            return NO_MODEL_SERVER
+        try:
+            return self.adapter.model_problem()
+        except Exception as error:  # noqa: BLE001 — kein Dokument: ein Satz, kein Absturz
+            return str(error) or "Kein Rhino-Dokument geöffnet."
+
+    def count_model(self) -> None:
+        """Sichtbare Objekte und Dreiecke zählen — auf Wunsch, nicht bei jedem Zeichnen (Vernetzen kostet)."""
+        self.model_estimate = None
+        if self.model_problem():
+            return
+        try:
+            self.model_estimate = self.adapter.model_estimate()
+        except Exception as error:  # noqa: BLE001 — ohne Zählung bleibt der Hinweis „noch nicht gezählt"
+            log_exception("Modellgröße nicht bestimmbar", error)
+
+    def model_hint(self) -> str:
+        """Größe, Grenzen und was nicht mitgeht — der Text im Bereich „Modell"."""
+        if not self.form.send_model:
+            return ""
+        problem = self.model_problem()
+        if problem:
+            return problem
+        parts = []
+        estimate = self.model_estimate
+        if estimate is None:
+            parts.append("Größe noch nicht gezählt („Neu zählen“).")
+        else:
+            text = (f"≈ {estimate.triangles:,} Dreiecke in {estimate.objects} sichtbaren Objekten "
+                    f"(höchstens {MAX_TRIANGLES:,}).").replace(",", " ")
+            parts.append(("Zu groß: " if estimate.triangles > MAX_TRIANGLES else "") + text)
+            if estimate.skipped:
+                parts.append(f"{estimate.skipped} sichtbare Objekte ohne Fläche (Kurven, Punkte, Texte) gehen "
+                             "nicht mit.")
+            if estimate.clipping:
+                parts.append("Schnittebenen wirken nicht auf das Modell; es geht ganz mit.")
+        cap = ((self.state.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
+        if cap:
+            parts.append(f"Modelldatei höchstens {cap / 1048576:.0f} MB.")
+        named = [name for key, name in self.views() if key != CURRENT_VIEW]
+        if named:
+            parts.append(f"Kameras in der Datei: {len(named)} benannte Ansichten." if len(named) != 1
+                         else "Kamera in der Datei: 1 benannte Ansicht.")
+        return " ".join(parts)
 
     # -- Übernahme ------------------------------------------------------------
 
     def build_capture(self, directory: str) -> bytes:
-        """Aufnehmen, Manifest bauen und lokal prüfen — im UI-Faden.
+        """Aufnehmen und/oder Modell exportieren, Manifest bauen und lokal prüfen — im UI-Faden.
 
-        Die Vertragsfassung des Bildwegs (``mf.image_contract_version``: 1.6.0, 1.5.0, 1.3.0 oder 1.1.0).
-        Ab 1.2.0 trägt das Manifest die Kamera der aufgenommenen Ansicht (Exportraum), ab 1.4.0 mit Objektiv
-        und Shift. Die Pässe tragen die gemerkte Bittiefe; ab 1.5.0 geht der Dateiname als ``source.fileName``
-        mit, nie ihr Ordner.
+        **Drei Fälle** (``ways.plan``): nur Bild, nur Modell, Bild und Modell. Nur mit Modell wird nicht
+        aufgenommen: es gehen die GLB-Datei und die Kamera der gewählten Ansicht, deren Bildgröße die der
+        Rendereinstellungen oder des Blickpunkt-Rahmens ist (``camera.resolution``, ab 1.6.0).
+
+        Die Vertragsfassung kommt aus dem Handshake: ``mf.image_contract_version`` ohne, ``mf.model_contract_version``
+        mit Modell. Ab 1.2.0 trägt das Manifest die Kamera der Ansicht (Exportraum), ab 1.4.0 mit Objektiv und
+        Shift; ohne Modell ist ``geometry`` ``null``. Die Pässe tragen die gemerkte Bittiefe; ab 1.5.0 geht der
+        Dateiname als ``source.fileName`` mit, nie ihr Ordner.
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
-        self.chosen()  # nichts gewählt: ValueError mit dem Satz für das Fenster
+        chosen = self.chosen()  # nichts gewählt: ValueError mit dem Satz für das Fenster
         self.views()  # eine verschwundene benannte Ansicht wird zur aktiven
         size = self.capture_size()
-        contract_version = mf.image_contract_version(handshake)
-        capabilities = self.adapter.probe()
-        files, planned, view_name, size_taken = self.adapter.render(
-            self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
-            self._progress_in_main, self.data_pass_bit_depth(), self.form.view_key)
+        if chosen.model:
+            problem = self.model_problem()
+            if problem:
+                raise ValueError(problem)
+        contract_version = (mf.model_contract_version(handshake) if chosen.model
+                            else mf.image_contract_version(handshake))
+        capabilities = self.adapter.probe(model=chosen.model)
+        files: list = []
+        planned: list = []
+        if chosen.image:
+            files, planned, view_name, size_taken = self.adapter.render(
+                self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
+                self._progress_in_main, self.data_pass_bit_depth(), self.form.view_key)
+        else:
+            size_taken = size or self.document_size()
+            view_name = self.adapter.view_name(self.form.view_key) or "Aktive Ansicht"
         camera = None
         if _camera_allowed(contract_version):
             try:
                 camera = self.adapter.camera(size_taken, mf.camera_lens_allowed(contract_version), self.form.view_key)
             except Exception as error:  # noqa: BLE001 — ohne Kamera geht das Bild trotzdem
                 log_exception("Kamera der Ansicht nicht lesbar; das Bild geht ohne Kamera", error)
+        geometry = None
+        if chosen.model:
+            if chosen.model_only and camera is None:
+                # Ohne Bild ist die Kamera die Aufnahme: ohne sie geht kein Modell allein (Pflicht ab 1.6.0).
+                raise ValueError("Ohne Kamera geht das Modell nicht allein: bitte eine Modellansicht aktivieren "
+                                 "(kein Layout) oder Bild und Modell senden.")
+            self._progress_in_main("Modell exportieren", 70 if chosen.image else 10)
+            model_file, geometry = self.adapter.export_model(directory, size_taken, limits, self.form.model_colors,
+                                                             MAX_TRIANGLES)
+            files.append(model_file)
+            if camera is not None:
+                # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.
+                camera["resolution"] = {"width": int(size_taken[0]), "height": int(size_taken[1])}
         try:
             file_name = self.adapter.document_file_name()
         except Exception:  # noqa: BLE001 — ohne Dateinamen geht der Capture trotzdem
@@ -689,7 +793,7 @@ class Controller:
             files=files,
             planned=planned,
             camera=camera,
-            geometry=None,
+            geometry=geometry,
             source_file_name=file_name,
             contract_version=contract_version,
         )
@@ -732,6 +836,8 @@ class Controller:
             self.state.result = None
             raw = self.build_capture(directory)
             pending = prepare(transfers, key, self.state.server, target, raw, directory)
+            if chosen.hint:
+                self.state.message = chosen.hint
         except (ValueError, OSError, RuntimeError) as error:  # capture.CaptureError ist ein RuntimeError
             self.state.progress = None
             if pending is None and directory:

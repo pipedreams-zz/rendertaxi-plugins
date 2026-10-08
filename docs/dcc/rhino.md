@@ -1,7 +1,8 @@
 # rdtx.ai für Rhino 8
 
 Das Plugin übergibt die **aktuelle Ansicht** oder ein **Rendering mit
-Datenpässen** an rendertaxi.ai, ordnet es einem Projekt und einem Blickpunkt zu —
+Datenpässen** und auf Wunsch das **Modell** (GLB mit den benannten Ansichten als
+Kameras) an rendertaxi.ai, ordnet es einem Projekt und einem Blickpunkt zu —
 neu oder als ausdrückliches Update — und öffnet genau diesen Blickpunkt im
 Browser. Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 
@@ -10,7 +11,7 @@ Browser. Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: **Rhino 8** (macOS oder Windows). Ältere Fassungen werden nicht
 unterstützt — das Plugin lädt dort, sagt aber nur, dass es Rhino 8 braucht.
 Das Paket `rdtx.ai-<Version>+<Build>-rh8-any.yak` (etwa
-`rdtx.ai-0.1.0+3339-rh8-any.yak`) von der
+`rdtx.ai-0.2.0+28396-rh8-any.yak`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 
@@ -79,8 +80,31 @@ Datenpässe gehen als **PNG** an rendertaxi.ai, je Pass eine Datei, mit
 
 ## Modell
 
-Der Bereich **Modell** ist in dieser Fassung noch abgeschaltet; das Modell
-(GLB und Kameras) kommt mit der nächsten Fassung des Plugins.
+Unter **Modell** schaltet **Modell senden** das Modell zu. Unter **Bild** schaltet
+**Bild senden** das Bild ab oder zu. So gehen **nur Bild**, **nur Modell** oder
+**beides**; der Knopf heißt danach „Bild übernehmen", „Modell übernehmen" oder
+„Bild und Modell übernehmen".
+
+- **Was mitgeht:** alles, was in der aktiven Ansicht sichtbar ist, als
+  Dreiecksnetz — Polyflächen, Extrusionen, Flächen, SubD, Netze und Blöcke.
+  Ausgeblendete Objekte und ausgeschaltete Ebenen gehen nicht mit. Kurven,
+  Punkte und Texte haben keine Fläche; das Fenster nennt ihre Zahl.
+- **Maße:** Das Modell kommt in Metern an, gleich ob die Datei in mm, cm oder m
+  ist. Eine Datei ohne Längeneinheit sendet kein Modell; dann unter
+  **Dokumenteigenschaften › Einheiten** eine Einheit wählen.
+- **Kameras:** Jede **benannte Ansicht** geht als Kamera ins Modell und lässt
+  sich in der Webanwendung als Blickpunkt übernehmen.
+- **Nur Modell:** Es wird nicht gerendert. Die Kamera kommt aus der gewählten
+  Ansicht, die Bildgröße aus den Rendereinstellungen oder dem Blickpunkt-Rahmen.
+- **Materialfarben mitsenden:** gibt jedem Objekt die Farbe seines
+  Rendermaterials mit; ohne die Option kommt das Modell einfarbig an.
+- **Neu zählen:** zählt Objekte und Dreiecke. Grenzen (50 Mio. Dreiecke und die
+  Dateigröße, die der Server nennt) prüft das Plugin **vor** dem Senden.
+- **Schnittebenen** wirken nicht auf das Modell; es geht ganz mit.
+
+Deine Datei bleibt dabei unverändert: Das Plugin vernetzt in einer eigenen
+Kopie, speichert nichts im Dokument und löscht die Modelldatei nach der
+Übertragung.
 
 ## Rahmengröße
 
@@ -109,5 +133,5 @@ das Fenster nennt den Weg über **Verbundene Geräte** in der Webanwendung.
   Codestellen im Plugin — nie Pfade, Projekt- oder Dateinamen, nie ein Token.
 - Fuß und **Über …** nennen Fassung und Build-Kennung; bitte bei Rückmeldungen
   angeben.
-- Das Plugin ist eine **Vorschau**: auf macOS in Rhino 8.35 geprüft, die
-  Windows-Prüfung steht aus. Rückmeldungen bitte als Issue in diesem Repository.
+- Das Plugin ist eine **Vorschau**: auf macOS in Rhino 8.35 geprüft (Bild- und
+  Modellweg), die Windows-Prüfung steht aus. Rückmeldungen bitte als Issue in diesem Repository.

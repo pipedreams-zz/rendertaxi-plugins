@@ -8,10 +8,12 @@ und Cinema 4D (``integrations/cinema-4d/plugin/rendertaxi_c4d/export.py``)
 benutzen genau diese Funktionen — eine zweite Zählung in einem Plugin wäre ein
 zweiter Weg zu derselben Grenze.
 
-Zwei Schreibzugriffe, beide nur auf den JSON-Chunk, der Binärteil bleibt
+Drei Schreibzugriffe, alle nur auf den JSON-Chunk, der Binärteil bleibt
 unverändert und die Datei wird nur als Ganzes ersetzt (``_write``):
 ``scale_scene`` hängt die Wurzeln der Szene unter einen Knoten mit gleichförmigem Maßstab — das braucht Cinema 4D, dessen
 glTF-Exporter seinen Maßstab nicht über die Python-API preisgibt (QC-02).
+``add_cameras`` trägt Kameras als Wurzelknoten nach — das braucht Rhino, dessen glTF-Exporter keine
+Kameras schreibt (RTX-RH-003, gemessen).
 ``set_camera_extras`` schreibt Objektiv und Shift je Kamera in
 ``cameras[i].extras.rendertaxi.camera`` (RTX-B-004) — glTF selbst kennt
 beides nicht. Format: ``integrations/_shared/contracts/v1/gltf-camera-extras.schema.json``,
@@ -315,6 +317,119 @@ def set_camera_extras(path: str, by_node_name: dict[str, dict]) -> int:
         extras[CAMERA_EXTRAS_KEY] = {CAMERA_EXTRAS_PART: block}
         definition["extras"] = extras
         written += 1
+    if written:
+        _write(path, document, rest)
+    return written
+
+
+# --------------------------------------------------------------------------
+# Kameras nachtragen (RTX-RH-003)
+# --------------------------------------------------------------------------
+
+
+def _normalized(vector) -> tuple[float, float, float] | None:
+    x, y, z = (float(c) for c in vector)
+    length = math.sqrt(x * x + y * y + z * z)
+    if not (length > 0 and math.isfinite(length)):
+        return None
+    return x / length, y / length, z / length
+
+
+def _cross(a, b) -> tuple[float, float, float]:
+    return a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]
+
+
+def look_rotation(direction, up) -> list[float] | None:
+    """Die Drehung eines glTF-Kameraknotens als Quaternion ``[x, y, z, w]`` — ``None`` ohne gültige Achsen.
+
+    glTF 2.0: eine Kamera blickt entlang −Z ihres Knotens, +Y ist oben, +X rechts. Die Spalten der
+    Drehmatrix sind deshalb rechts = Blick × Oben, Oben (senkrecht auf den Blick gestellt) und −Blick.
+    """
+    forward = _normalized(direction)
+    if forward is None:
+        return None
+    right = _normalized(_cross(forward, _normalized(up) or (0.0, 0.0, 0.0)))
+    if right is None:
+        return None
+    upright = _cross(right, forward)
+    back = (-forward[0], -forward[1], -forward[2])
+    m00, m01, m02 = right[0], upright[0], back[0]
+    m10, m11, m12 = right[1], upright[1], back[1]
+    m20, m21, m22 = right[2], upright[2], back[2]
+    trace = m00 + m11 + m22
+    if trace > 0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        q = ((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s)
+    elif m00 > m11 and m00 > m22:
+        s = 2.0 * math.sqrt(1.0 + m00 - m11 - m22)
+        q = (0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s)
+    elif m11 > m22:
+        s = 2.0 * math.sqrt(1.0 + m11 - m00 - m22)
+        q = ((m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s)
+    else:
+        s = 2.0 * math.sqrt(1.0 + m22 - m00 - m11)
+        q = ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
+    return [round(c, 9) + 0.0 for c in q]
+
+
+def _positive(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+
+def _definition_problem(definition) -> bool:
+    """Ob eine Kameradefinition gegen glTF 2.0 verstößt (Pflichtfelder und Vorzeichen) — dann wird sie nicht geschrieben."""
+    if not isinstance(definition, dict):
+        return True
+    kind = definition.get("type")
+    if kind == "perspective":
+        part = definition.get("perspective") or {}
+        far = part.get("zfar")
+        return not (_positive(part.get("yfov")) and _positive(part.get("znear"))
+                    and ("aspectRatio" not in part or _positive(part["aspectRatio"]))
+                    and (far is None or (_positive(far) and far > part["znear"])))
+    if kind == "orthographic":
+        part = definition.get("orthographic") or {}
+        near, far = part.get("znear"), part.get("zfar")
+        return not (_positive(part.get("xmag")) and _positive(part.get("ymag"))
+                    and isinstance(near, (int, float)) and not isinstance(near, bool) and math.isfinite(near)
+                    and near >= 0 and _positive(far) and far > near)
+    return True
+
+
+def add_cameras(path: str, cameras: list[dict]) -> int:
+    """Kameras als eigene Wurzelknoten in die Szene schreiben — die Zahl der geschriebenen.
+
+    Jede Kamera ist ``{"name", "position", "direction", "up", "definition"}`` im **Exportraum** der Datei
+    (Meter, +Y oben): ``definition`` ist die glTF-Kameradefinition (``perspective`` oder ``orthographic``,
+    gern mit ``extras`` aus ``camera_extras``). Die Knoten stehen auf der obersten Ebene, nie unter
+    einem Maßstabsknoten (``scale_scene``): ihre Lage ist schon in Metern. Eine Kamera ohne gültige Achsen
+    oder mit einer Definition gegen glTF 2.0 bleibt weg. Binärteil, Meshes und vorhandene Kameras bleiben.
+    """
+    document, rest = _read(path)
+    scenes = document.get("scenes") or []
+    if not scenes:
+        raise GlbError("Die GLB-Datei hat keine Szene.")
+    index = document.get("scene", 0)
+    scene = scenes[index if isinstance(index, int) and 0 <= index < len(scenes) else 0]
+    nodes = document.setdefault("nodes", [])
+    definitions = document.setdefault("cameras", [])
+    written = 0
+    for camera in cameras:
+        rotation = look_rotation(camera.get("direction") or (0, 0, 0), camera.get("up") or (0, 0, 0))
+        position = camera.get("position")
+        if (rotation is None or _definition_problem(camera.get("definition"))
+                or not (isinstance(position, (list, tuple)) and len(position) == 3
+                        and all(isinstance(c, (int, float)) and math.isfinite(c) for c in position))):
+            continue
+        definitions.append(camera["definition"])
+        node = {"camera": len(definitions) - 1, "translation": [float(c) for c in position], "rotation": rotation}
+        if camera.get("name"):
+            node = {"name": str(camera["name"]), **node}
+        nodes.append(node)
+        scene.setdefault("nodes", []).append(len(nodes) - 1)
+        written += 1
+    if not definitions:
+        del document["cameras"]
     if written:
         _write(path, document, rest)
     return written

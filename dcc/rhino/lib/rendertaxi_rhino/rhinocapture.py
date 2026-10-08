@@ -700,17 +700,21 @@ def camera_view(doc, size, view_key: str = ""):
     with source_view(doc, view_key) as view:
         if isinstance(view, Rhino.Display.RhinoPageView):
             return None
-        info = Rhino.DocObjects.ViewportInfo(view.ActiveViewport)
-        info.FrustumAspect = float(size[0]) / float(size[1])
-        location, direction, up = info.CameraLocation, info.CameraDirection, info.CameraUp
-        return View(
-            perspective=bool(info.IsPerspectiveProjection),
-            location=(location.X, location.Y, location.Z),
-            direction=(direction.X, direction.Y, direction.Z),
-            up=(up.X, up.Y, up.Z),
-            left=info.FrustumLeft, right=info.FrustumRight, bottom=info.FrustumBottom, top=info.FrustumTop,
-            near=info.FrustumNear, far=info.FrustumFar,
-        )
+        return view_of(Rhino.DocObjects.ViewportInfo(view.ActiveViewport), size)
+
+
+def view_of(info, size) -> View:
+    """Eine ``ViewportInfo`` (eine Kopie: sie wird verändert) im Seitenverhältnis ``size`` als ``View``."""
+    info.FrustumAspect = float(size[0]) / float(size[1])
+    location, direction, up = info.CameraLocation, info.CameraDirection, info.CameraUp
+    return View(
+        perspective=bool(info.IsPerspectiveProjection),
+        location=(location.X, location.Y, location.Z),
+        direction=(direction.X, direction.Y, direction.Z),
+        up=(up.X, up.Y, up.Z),
+        left=info.FrustumLeft, right=info.FrustumRight, bottom=info.FrustumBottom, top=info.FrustumTop,
+        near=info.FrustumNear, far=info.FrustumFar,
+    )
 
 
 def unpack_floats(data: bytes) -> list:
