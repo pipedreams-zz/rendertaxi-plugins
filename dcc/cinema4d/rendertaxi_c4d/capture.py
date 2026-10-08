@@ -504,8 +504,8 @@ def _bitmap(size: tuple[int, int]):
     return bitmap
 
 
-def _save_png(bitmap, path: str) -> None:
-    if bitmap.Save(path, c4d.FILTER_PNG) != c4d.IMAGERESULT_OK:
+def _save_png(bitmap, path: str, savebits: int = 0) -> None:
+    if bitmap.Save(path, c4d.FILTER_PNG, None, savebits) != c4d.IMAGERESULT_OK:
         raise CaptureError("Cinema 4D konnte das Bild nicht als PNG schreiben.")
 
 
@@ -722,9 +722,9 @@ def _write_depth(doc, layer, path: str, size: tuple[int, int], bit_depth: int) -
     return {"encoding": "normalized-linear", "near": near, "far": far}, origin
 
 
-def _object_files(doc, rd, ids: list[int], folder: str, size: tuple[int, int], progress) -> None:
-    """Der Dateiweg: eine markierte Kopie der Voreinstellung (Antialiasing „Keines", je ID ein Objektpuffer-Kanal,
-    Multi-Pass speichern als TIFF 32 Bit nach ``folder``) nur für diesen Render aktiv, danach entfernt."""
+def object_render_data(rd, ids: list[int], folder: str, size: tuple[int, int]):
+    """Die markierte Kopie der Voreinstellung für den Dateiweg: Antialiasing „Keines", je ID ein Objektpuffer-Kanal,
+    Multi-Pass speichern als TIFF 32 Bit nach ``folder`` — noch in keinem Dokument."""
     names = ("RDATA_SAVEIMAGE", "RDATA_MULTIPASS_SAVEIMAGE", "RDATA_MULTIPASS_SAVEONEFILE", "RDATA_MULTIPASS_FILENAME",
              "RDATA_MULTIPASS_SAVEFORMAT", "RDATA_MULTIPASS_SAVEDEPTH", "RDATA_MULTIPASS_SAVEDEPTH_32",
              "RDATA_ANTIALIASING", "RDATA_ANTIALIASING_NONE", "FILTER_TIF", "MULTIPASSOBJECT_OBJECTBUFFER")
@@ -754,6 +754,12 @@ def _object_files(doc, rd, ids: list[int], folder: str, size: tuple[int, int], p
     copy[c4d.RDATA_MULTIPASS_SAVEFORMAT] = c4d.FILTER_TIF
     copy[c4d.RDATA_MULTIPASS_SAVEDEPTH] = c4d.RDATA_MULTIPASS_SAVEDEPTH_32
     copy[c4d.RDATA_ANTIALIASING] = c4d.RDATA_ANTIALIASING_NONE
+    return copy
+
+
+def _object_files(doc, rd, ids: list[int], folder: str, size: tuple[int, int], progress) -> None:
+    """Der Dateiweg: die Kopie aus ``object_render_data`` nur für diesen Render aktiv, danach entfernt."""
+    copy = object_render_data(rd, ids, folder, size)
     bitmap = c4d.bitmaps.MultipassBitmap(size[0], size[1], c4d.COLORMODE_RGBf)
     if bitmap is None:
         raise CaptureError("Cinema 4D konnte keine MultipassBitmap anlegen.")
@@ -766,43 +772,57 @@ def _object_files(doc, rd, ids: list[int], folder: str, size: tuple[int, int], p
         copy.Remove()
 
 
-def _write_object_ids(doc, rd, path: str, size: tuple[int, int], bit_depth: int, progress) -> list[int]:
-    """Die Objekt-ID als Grau-PNG: je Pixel die ID des Objektpuffers, 0 ohne — geprüft, sonst ``PassMissing``."""
-    ids = object_buffer_ids(doc)
+def object_id_problem(ids: list[int], bit_depth: int) -> str | None:
+    """Warum die Objekt-ID mit diesen IDs und dieser Bittiefe nicht geht — ``None``, wenn sie geht."""
     if not ids:
-        raise PassMissing("An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1).")
+        return "An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1)."
     top = (1 << bit_depth) - 1
     if ids[-1] > top:
         if bit_depth == 8 and ids[-1] <= 65535:
-            raise PassMissing(f"Objektpuffer-ID {ids[-1]} passt nicht in 8 Bit; „16 Bit“ wählen oder IDs bis {top} vergeben.")
-        raise PassMissing(f"Objektpuffer-IDs bis {top} vergeben (gefunden: {ids[-1]}).")
+            return f"Objektpuffer-ID {ids[-1]} passt nicht in 8 Bit; „16 Bit“ wählen oder IDs bis {top} vergeben."
+        return f"Objektpuffer-IDs bis {top} vergeben (gefunden: {ids[-1]})."
+    return None
+
+
+def read_object_ids(folder: str, ids: list[int], path: str, size: tuple[int, int], bit_depth: int) -> None:
+    """Die Objektpuffer-Dateien aus ``folder`` als Grau-PNG: je Pixel die ID, 0 ohne — geprüft, sonst ``PassMissing``."""
+    top = (1 << bit_depth) - 1
     width, height = size
+    index = [0] * (width * height)
+    for number in ids:
+        name = os.path.join(folder, f"{PASS_FILE_PREFIX}_object_{number}.tif")
+        if not os.path.isfile(name):
+            raise PassMissing(f"Cinema 4D hat den Objektpuffer {number} nicht geliefert.")
+        try:
+            w, h, values = tiffread.read_float_gray(name)
+        except (OSError, tiffread.TiffError):
+            raise PassMissing(f"Der Objektpuffer {number} ist nicht lesbar.") from None
+        if (w, h) != (width, height):
+            raise PassMissing(f"Der Objektpuffer {number} hat nicht die Bildgröße.")
+        for i, value in enumerate(values):
+            if value == 0.0:
+                continue
+            if abs(value - 1.0) > 1e-6:
+                raise PassMissing("Die Objektpuffer sind nicht eindeutig (Kantenglättung); die Objekt-ID bleibt geplant.")
+            if index[i]:
+                raise PassMissing("Ein Bildpunkt liegt in mehreren Objektpuffern; je Objekt nur einen Objektpuffer vergeben.")
+            index[i] = number
+    pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
+                       ([value / top for value in index[y * width:(y + 1) * width]] for y in range(height)))
+
+
+def _write_object_ids(doc, rd, path: str, size: tuple[int, int], bit_depth: int, progress) -> list[int]:
+    """Die Objekt-ID als Grau-PNG: je Pixel die ID des Objektpuffers, 0 ohne — geprüft, sonst ``PassMissing``."""
+    ids = object_buffer_ids(doc)
+    problem = object_id_problem(ids, bit_depth)
+    if problem:
+        raise PassMissing(problem)
     folder = tempfile.mkdtemp(prefix="rendertaxi-objektpuffer-")
     try:
         _object_files(doc, rd, ids, folder, size, progress)
-        index = [0] * (width * height)
-        for number in ids:
-            name = os.path.join(folder, f"{PASS_FILE_PREFIX}_object_{number}.tif")
-            if not os.path.isfile(name):
-                raise PassMissing(f"Cinema 4D hat den Objektpuffer {number} nicht geliefert.")
-            try:
-                w, h, values = tiffread.read_float_gray(name)
-            except (OSError, tiffread.TiffError):
-                raise PassMissing(f"Der Objektpuffer {number} ist nicht lesbar.") from None
-            if (w, h) != (width, height):
-                raise PassMissing(f"Der Objektpuffer {number} hat nicht die Bildgröße.")
-            for i, value in enumerate(values):
-                if value == 0.0:
-                    continue
-                if abs(value - 1.0) > 1e-6:
-                    raise PassMissing("Die Objektpuffer sind nicht eindeutig (Kantenglättung); die Objekt-ID bleibt geplant.")
-                if index[i]:
-                    raise PassMissing("Ein Bildpunkt liegt in mehreren Objektpuffern; je Objekt nur einen Objektpuffer vergeben.")
-                index[i] = number
+        read_object_ids(folder, ids, path, size, bit_depth)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
-                       ([value / top for value in index[y * width:(y + 1) * width]] for y in range(height)))
     return ids
 
 
@@ -815,8 +835,13 @@ def _remove(path: str) -> None:
 
 
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
-                  allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH):
+                  allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH,
+                  rendered=None):
     """Beauty als PNG und die gewählten Pässe als PNG mit ``bit_depth`` — ``(beauty, pass_files, planned)``.
+
+    ``rendered``: das Ergebnis eines Renderns im Picture Viewer (``pictureviewer.Rendering``, RTX-C4D-010). Dann wird
+    **nicht** gerendert: Beauty und Ebenen kommen aus dessen Bildspeicher, die Objekt-ID aus den Dateien seines zweiten
+    Durchgangs — mit denselben Schreibern wie unten, also mit derselben Kodierung.
 
     Gerendert wird mit dem aktiven Renderer auf einer Kopie des Containers der aktiven Rendervoreinstellung. Ein
     gewählter Pass wird ``planned`` mit Begründung, wenn Cinema 4D ihn nicht liefert (Material-ID), der Kanal nicht
@@ -835,7 +860,7 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
     rd = doc.GetActiveRenderData()
     if rd is None:
         raise CaptureError("Das Dokument hat keine aktive Rendervoreinstellung.")
-    size = size or document_size(doc)
+    size = rendered.size if rendered is not None else (size or document_size(doc))
     images = os.path.join(root, "images")
     os.makedirs(images, exist_ok=True)
 
@@ -855,13 +880,20 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         else:
             wanted.append(spec)
 
-    engine = renderer_label(rd[c4d.RDATA_RENDERENGINE])
+    engine = renderer_label(rendered.engine if rendered is not None else rd[c4d.RDATA_RENDERENGINE])
     data = rd.GetDataInstance().GetClone(c4d.COPYFLAGS_NONE)
     _prepare_data(data, size)
     beauty_path = os.path.join(images, "beauty.png")
-    bitmap = _bitmap(size)
-    _render(doc, data, bitmap, progress, "Beauty rendern")
-    _save_png(bitmap, beauty_path)
+    if rendered is None:
+        bitmap = _bitmap(size)
+        _render(doc, data, bitmap, progress, "Beauty rendern")
+    else:
+        bitmap = rendered.bitmap  # gebacken wie die Beauty oben (RENDERFLAGS_OCIO_BAKE_RENDERING), Ebenen roh
+    # Aus dem Bildspeicher so gespeichert, wie Cinema 4D das Rendering selbst speichert: mit Alphakanal genau dann, wenn
+    # die Rendervoreinstellung ihn hat — dann pixelgleich zur Datei des Renderers (gemessen 08.10.2026, c4dpy).
+    alpha = rendered is not None and rendered.alpha and getattr(c4d, "SAVEBIT_ALPHA", None) is not None
+    _save_png(bitmap, beauty_path, c4d.SAVEBIT_ALPHA if alpha else 0)
+    passage = "aus dem Bildspeicher des Renderns im Picture Viewer" if rendered is not None else "zweiter Renderdurchgang"
 
     files: list[mf.CaptureFile] = []
 
@@ -886,7 +918,13 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         layer_data = data.GetClone(c4d.COPYFLAGS_NONE)
         problems: list[str] = []
         swept = 0
-        if depth_spec is None:
+        if rendered is not None:
+            layered = rendered.bitmap
+            if depth_spec is not None and not rendered.position:
+                layered_specs.remove(depth_spec)
+                missing(depth_spec, "Der Positions-Pass ließ sich nicht einschalten; die Tiefe bleibt geplant.")
+                depth_spec = None
+        elif depth_spec is None:
             _render(doc, layer_data, layered, progress, "Pässe rendern", bake=False)
         else:
             layer_data[c4d.RDATA_MULTIPASS_ENABLE] = True
@@ -918,11 +956,13 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
                     continue
                 tail = f"; {swept} verwaiste rendertaxi-Einträge aus der Rendervoreinstellung entfernt" if swept else ""
                 tail += f"; Zurücksetzen meldete: {', '.join(problems)}" if problems else ""
-                describe(spec, path, lambda written, depth=depth, origin=origin, tail=tail: (
-                    f"Tiefe entlang der Blickachse (planar) aus dem Positions-Pass von {engine} (Videopost 1027117, nur "
-                    f"für den Render eingeschaltet und zurückgesetzt), {written}, normalized-linear zwischen near "
-                    f"{depth['near']:g} m und far {depth['far']:g} m ({origin}), kein Treffer = 1, zweiter "
-                    f"Renderdurchgang (QC-03, am Host gemessen){tail}."), depth=depth)
+                where = ("nur in der Kopie des Dokuments für den Render eingeschaltet" if rendered is not None
+                         else "nur für den Render eingeschaltet und zurückgesetzt")
+                describe(spec, path, lambda written, depth=depth, origin=origin, tail=tail, where=where: (
+                    f"Tiefe entlang der Blickachse (planar) aus dem Positions-Pass von {engine} (Videopost 1027117, "
+                    f"{where}), {written}, normalized-linear zwischen near "
+                    f"{depth['near']:g} m und far {depth['far']:g} m ({origin}), kein Treffer = 1, {passage} "
+                    f"(QC-03, am Host gemessen){tail}."), depth=depth)
                 continue
             if layer is None or not _save_pass(layer, path, size, spec, bit_depth):
                 missing(spec, f"Cinema 4D hat den Kanal {spec.channel} nicht geliefert.")
@@ -933,24 +973,33 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
             normal = {"space": spec.normal_space} if spec.normal_space else None
             describe(spec, path, lambda written, spec=spec, normal_note=normal_note: (
                 f"Multi-Pass „{spec.channel}“ aus {engine}, {written}, {space_note}, eigener PNG-Schreiber aus den Floats "
-                f"(GetPixelCnt), zweiter Renderdurchgang.{normal_note}"), normal=normal)
+                f"(GetPixelCnt), {passage}.{normal_note}"), normal=normal)
 
     for spec in [spec for spec in wanted if spec.source == FILES]:
         path = os.path.join(images, f"{spec.role}.png")
         try:
-            ids = _write_object_ids(doc, rd, path, size, bit_depth, progress)
+            if rendered is None:
+                ids = _write_object_ids(doc, rd, path, size, bit_depth, progress)
+            else:
+                ids = rendered.object_ids(bit_depth)
+                read_object_ids(rendered.object_folder, ids, path, size, bit_depth)
         except PassMissing as reason:
             missing(spec, str(reason))
             continue
-        describe(spec, path, lambda written, ids=ids: (
+        third = ("zweiter Durchgang des Renderns im Picture Viewer, unsichtbar" if rendered is not None
+                 else "dritter Renderdurchgang")
+        describe(spec, path, lambda written, ids=ids, third=third: (
             f"Objekt-ID aus den Objektpuffern der Compositing-Tags (IDs {', '.join(map(str, ids))}), {engine}, "
             f"{written}, Wert = ID, 0 = kein Objektpuffer; Multi-Pass als TIFF 32 Bit in ein temporäres Verzeichnis, "
-            f"Antialiasing „Keines“ nur in einer Kopie der Rendervoreinstellung, dritter Renderdurchgang (QC-05, am "
+            f"Antialiasing „Keines“ nur in einer Kopie der Rendervoreinstellung, {third} (QC-05, am "
             f"Host gemessen)."))
 
-    extra = beauty_engine_note(rd[c4d.RDATA_RENDERENGINE])
+    extra = beauty_engine_note(rendered.engine if rendered is not None else rd[c4d.RDATA_RENDERENGINE])
+    how = ("RenderDocument im Hintergrundfaden, sichtbar im Picture Viewer; aus dessen Bildspeicher"
+           + (", mit Alphakanal wie in der Rendervoreinstellung" if alpha else "") if rendered is not None
+           else "RenderDocument")
     beauty = mf.capture_file(beauty_path, root, "beauty", PNG, mf.describe_png(beauty_path),
-                             f"Beauty (RenderDocument), {engine}, {view_name(doc)}; {color_note()}"
+                             f"Beauty ({how}), {engine}, {view_name(doc)}; {color_note()}"
                              f"{'; ' + extra if extra else ''}.")
     order = [spec.role for spec in PASSES]
     files.sort(key=lambda f: order.index(f.role))

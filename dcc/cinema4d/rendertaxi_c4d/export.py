@@ -47,8 +47,14 @@ und wird mit ``tools/measure_model_way.py`` am Mac gemessen.
   Linsenverzerrung, Pixelseitenverhältnis ≠ 1, Filmformat ≠ Bildformat, Film
   Offset vor 1.4.0), führt zu ``None`` mit einem Satz, der sagt, was zu tun
   ist — der Dialog zeigt ihn **vor** dem Senden.
-* **Kameras in der Datei (QC-16).** Die sichtbaren Kameras der Szene gehen
-  mit in die GLB; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum.
+* **Kameras in der Datei (QC-16, RTX-C4D-010).** Die Kamera der Renderansicht
+  geht immer mit in die GLB, weitere Kameras der Szene nur, wenn der Nutzer sie
+  im Tab „Modell“ gewählt hat („Zusätzliche Kameras mitsenden“); bis 0.4.0
+  gingen alle sichtbaren. Kenntlich ist eine Kamera an ihrem Namen und, bei
+  gleichen Namen, an ihrer Reihenfolge (``camera_keys``) — die GUID von Cinema 4D
+  übersteht weder ``Polygonize`` noch Speichern und Laden (gemessen 08.10.2026).
+  Welche Objekte Kameras sind, steht nur in ``CAMERA_TYPES``. Der
+  glTF-Exporter schreibt sie mit „Flip Z“ richtig herum.
   Objektiv und Film Offset (als Shift) trägt das Plugin danach in
   ``cameras[i].extras.rendertaxi.camera`` ein (RTX-B-004, Vertrag 11.5) —
   gerechnet mit dem ``aspectRatio``, das der Exporter geschrieben hat, und nur
@@ -98,6 +104,9 @@ TOLERANCE = 1e-6
 # Die Redshift-Kamera: in Python ein ``BaseObject``, kein ``c4d.CameraObject`` — ``Polygonize`` behält sie, mit
 # Weltmatrix und lesbaren Kameraparametern (am Host gemessen, 07.10.2026, Cinema 4D 2026.3.1 mit Redshift).
 REDSHIFT_CAMERA = 1057516
+# Die Kameratypen der Szene — die eine Stelle dafür (RTX-C4D-010): Typ → wie der Tab „Modell“ ihn nennt. Ein weiterer
+# Typ braucht hier eine Zeile und, wenn er kein ``c4d.CameraObject`` ist, seinen Weg in ``standard_camera``.
+CAMERA_TYPES = {getattr(c4d, "Ocamera", 5103): "Kamera", REDSHIFT_CAMERA: "Redshift-Kamera"}
 # Was von einer Redshift-Kamera in die Standardkamera des Exports geht — dieselben Parameter-IDs wie bei ``Ocamera``.
 _CAMERA_PARAMETERS = ("CAMERA_PROJECTION", "CAMERA_FOCUS", "CAMERAOBJECT_APERTURE", "CAMERAOBJECT_FILM_OFFSET_X",
                       "CAMERAOBJECT_FILM_OFFSET_Y", "CAMERAOBJECT_NEAR_CLIPPING_ENABLE", "CAMERAOBJECT_NEAR_CLIPPING",
@@ -365,8 +374,63 @@ def _baked(obj, mesh_index: int):
 
 
 def is_camera(obj) -> bool:
-    """Eine Kamera der Szene: ``Ocamera`` oder eine Redshift-Kamera (``REDSHIFT_CAMERA``)."""
-    return isinstance(obj, c4d.CameraObject) or (obj is not None and obj.GetType() == REDSHIFT_CAMERA)
+    """Eine Kamera der Szene: ein ``c4d.CameraObject`` oder ein Typ aus ``CAMERA_TYPES``."""
+    return isinstance(obj, c4d.CameraObject) or (obj is not None and obj.GetType() in CAMERA_TYPES)
+
+
+def camera_keys(names: list[str]) -> list[tuple[str, int]]:
+    """Die Schlüssel der Kameras — **die eine Stelle** dafür; Liste, Renderkamera und Export lesen sie hier.
+
+    ``names`` in der Reihenfolge des Objekt-Managers; je Kamera ``(Schlüssel, Nummer)``. Die erste Kamera eines Namens
+    heißt wie er; jede weitere gleichen Namens ``Name#n`` mit dem kleinsten ``n ≥ 2``, das **kein** Name einer Kamera
+    und kein schon vergebener Schlüssel ist — so bleiben auch Namen, die selbst wie ``A#2`` aussehen, eindeutig
+    (Review F-02, #310: ``A``, ``A``, ``A#2`` → ``A``, ``A#3``, ``A#2``). ``Nummer`` zählt die gleichen Namen (für die
+    Beschriftung „A (2)“).
+    """
+    taken = set(names)
+    seen: dict = {}
+    keys = []
+    for name in names:
+        seen[name] = seen.get(name, 0) + 1
+        number = seen[name]
+        if number == 1:
+            keys.append((name, number))
+            continue
+        suffix = 2
+        while f"{name}#{suffix}" in taken:
+            suffix += 1
+        key = f"{name}#{suffix}"
+        taken.add(key)
+        keys.append((key, number))
+    return keys
+
+
+def _keyed_cameras(first) -> list:
+    """``(Schlüssel, Nummer, Kamera)`` für jede Kamera unter ``first``, in der Reihenfolge des Objekt-Managers."""
+    cameras = [obj for obj in _walk(first) if is_camera(obj)]
+    keys = camera_keys([camera.GetName() or "" for camera in cameras])
+    return [(key, number, obj) for (key, number), obj in zip(keys, cameras)]
+
+
+def scene_cameras(doc) -> list[dict]:
+    """Die Kameras der Szene für den Tab „Modell“: ``key``, ``label``, ``kind`` und ob sie die der Renderansicht ist."""
+    render = render_camera_key(doc)
+    cameras = []
+    for key, number, obj in _keyed_cameras(doc.GetFirstObject()):
+        name = obj.GetName() or "Kamera"
+        cameras.append({"key": key, "label": f"{name} ({number})" if number > 1 else name,
+                        "kind": CAMERA_TYPES.get(obj.GetType(), "Kamera"), "render": key == render})
+    return cameras
+
+
+def render_camera_key(doc) -> str | None:
+    """Der Schlüssel der Kamera der Renderansicht — ``None`` für die Editor-Kamera."""
+    view = capture.render_view(doc)
+    camera = view.GetSceneCamera(doc) if view is not None else None
+    editor = view.GetEditorCamera() if view is not None else None
+    if camera is None or (editor is not None and camera == editor):
+        return None
+    return next((key for key, _number, obj in _keyed_cameras(doc.GetFirstObject()) if obj == camera), None)
 
 
 def standard_camera(obj):
@@ -477,13 +541,19 @@ def _image_size(target, size: tuple[int, int] | None) -> None:
     rd[c4d.RDATA_PIXELASPECT] = 1.0
 
 
-def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
-    """Die sichtbaren Polygone und Kameras des Dokuments in einem eigenen Exportdokument — das Dokument bleibt unberührt.
+def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=()) -> Prepared:
+    """Die sichtbaren Polygone und die gewählten Kameras in einem eigenen Exportdokument — das Dokument bleibt unberührt.
 
     Kameras (QC-16) gehen mit ihrer Weltmatrix mit; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum
     (Blick −Z und Oben +Y des Knotens gleich der gespiegelten Kamera, am Host gemessen,
-    ``docs/measurements/2026-10-05-kamera.md``). Sie zählen nicht zu den Objekten der Größenschätzung.
+    ``docs/measurements/2026-10-05-kamera.md``). Mit geht die Kamera der Renderansicht und jede, deren Schlüssel in
+    ``extra_cameras`` steht — gewählt ist gewählt, auch eine im Objekt-Manager ausgeblendete. Ein Schlüssel ohne Kamera
+    (gelöscht, umbenannt) zählt nicht. Kameras zählen nicht zu den Objekten der Größenschätzung.
     """
+    wanted = set(extra_cameras)
+    render = render_camera_key(doc)
+    if render is not None:
+        wanted.add(render)
     source = doc.Polygonize(False)
     if source is None:
         raise ExportError("Cinema 4D konnte die Szene nicht in Polygone wandeln.")
@@ -495,8 +565,12 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
         lenses: dict = {}
         low = [math.inf] * 3
         high = [-math.inf] * 3
+        # Dieselben Schlüssel wie in der Liste: ``Polygonize`` behält Namen und Reihenfolge der Kameras.
+        keys = iter([key for key, _number, _obj in _keyed_cameras(source.GetFirstObject())])
         for obj in _walk(source.GetFirstObject()):
-            if is_camera(obj) and visible(obj, source, kind):
+            if is_camera(obj):
+                if next(keys) not in wanted:
+                    continue
                 copy = _camera(obj)
                 target.InsertObject(copy)
                 cameras += 1
@@ -623,14 +697,16 @@ class Model:
     exporter_scale: float  # gemessen: GLB-Einheiten je Einheit des Dokuments, vor der Korrektur
 
 
-def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None) -> Model:
-    """Die sichtbaren Objekte und Kameras als GLB nach ``directory/model/scene.glb`` — geprüft, in Metern.
+def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=()) -> Model:
+    """Die sichtbaren Objekte, die Kamera der Renderansicht und die gewählten Kameras als GLB nach
+    ``directory/model/scene.glb`` — geprüft, in Metern.
 
-    ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). Die Datei bleibt im
-    Capture-Verzeichnis (0700); Meldungen tragen keinen Pfad.
+    ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). ``extra_cameras``: die
+    Schlüssel weiterer Kameras (``scene_cameras``). Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen tragen
+    keinen Pfad.
     """
     meters = meters_per_unit(doc)
-    prepared = prepare(doc, kind, size)
+    prepared = prepare(doc, kind, size, extra_cameras)
     try:
         if prepared.objects == 0 or prepared.triangles == 0:
             raise ExportError("Keine sichtbare Geometrie: das Modell wäre leer.")

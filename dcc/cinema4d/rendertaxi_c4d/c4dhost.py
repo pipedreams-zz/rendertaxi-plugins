@@ -13,7 +13,7 @@ import webbrowser
 import c4d
 from c4d import gui
 
-from . import capture, export, host
+from . import capture, export, host, pictureviewer
 from .controller import BEAUTY
 
 
@@ -68,14 +68,44 @@ class Cinema4DAdapter:
         return capture.pass_rows(capture.active_document())
 
     def render(self, kind: str, directory: str, size, roles: list[str], allowed_media_types, progress,
-               bit_depth: int):
-        """``(files, planned, view_name)`` — Viewport oder Beauty mit Pässen (PNG, ``bit_depth`` 8 oder 16)."""
+               bit_depth: int, rendered=None):
+        """``(files, planned, view_name)`` — Viewport oder Beauty mit Pässen (PNG, ``bit_depth`` 8 oder 16).
+
+        ``rendered``: das Ergebnis von ``start_rendering`` — die Beauty kommt dann aus dessen Bildspeicher.
+        """
         doc = capture.active_document()
         if kind == BEAUTY:
             beauty, passes, planned = capture.render_beauty(doc, directory, size, roles, allowed_media_types, progress,
-                                                            bit_depth)
+                                                            bit_depth, rendered)
             return [beauty, *passes], planned, capture.view_name(doc)
         return [capture.render_viewport(doc, directory, size, progress)], [], capture.view_name(doc)
+
+    def direct_beauty(self, kind: str) -> bool:
+        """Ob „Bild übernehmen“ direkt rendert (Ansicht oder Viewport Renderer) — sonst im Picture Viewer."""
+        return pictureviewer.direct(capture.active_document(), kind)
+
+    def renderer_label(self, engine) -> str:
+        return capture.renderer_label(engine)
+
+    def start_rendering(self, size: tuple[int, int], roles: list[str]):
+        """Das Rendern im Picture Viewer starten — das Ergebnis fragt der Controller mit ``poll`` ab."""
+        rendering = pictureviewer.Rendering(capture.active_document(), size, roles)
+        rendering.start()
+        return rendering
+
+    def rendering_stale(self, rendering, size: tuple[int, int], roles: list[str]) -> str | None:
+        return rendering.stale(capture.active_document(), size, roles)
+
+    def document(self):
+        """Das aktive Dokument als Identität — der Controller vergleicht es nur mit ``same_document``."""
+        return capture.active_document()
+
+    def same_document(self, then, now) -> bool:
+        """Dasselbe, noch offene Dokument (``==`` auf dem Objekt hinter der Python-Hülle, nie ``id()`` oder Name)."""
+        return pictureviewer.same_document(then, now)
+
+    def scene_cameras(self) -> list[dict]:
+        return export.scene_cameras(capture.active_document())
 
     def model_problem(self) -> str | None:
         return export.model_problem(capture.active_document())
@@ -86,14 +116,16 @@ class Cinema4DAdapter:
     def camera_problem(self, size: tuple[int, int], lens_and_shift: bool = False) -> str | None:
         return export.camera_problem(capture.active_document(), size, lens_and_shift)
 
-    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress, lens_and_shift: bool = False):
-        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte und Kameras und die Kamera für ein Bild ``size``.
+    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress, lens_and_shift: bool = False,
+                     extra_cameras=()):
+        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte mit der Kamera der Renderansicht und den
+        gewählten weiteren Kameras, und die Kamera für ein Bild ``size``.
 
         ``lens_and_shift``: der Server setzt Manifest 1.4.0 um — die Kamera trägt Objektiv und Shift.
         """
         doc = capture.active_document()
         progress("Modell exportieren", 10)
-        model = export.export_model(doc, kind, directory, size)
+        model = export.export_model(doc, kind, directory, size, extra_cameras)
         progress("Modell exportieren", 100)
         return model.file, model.geometry, export.camera_block(doc, size, model.meters, lens_and_shift)
 

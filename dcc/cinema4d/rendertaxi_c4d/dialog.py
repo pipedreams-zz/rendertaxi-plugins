@@ -33,7 +33,7 @@ import c4d
 from c4d import gui
 
 from . import host
-from .controller import BEAUTY, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT, Controller, wrap
+from .controller import BEAUTY, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT, Controller, wrap
 from .rendertaxi_client import frame
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
@@ -91,7 +91,14 @@ ID_TAB_NOTE = {"project": 1212, "viewpoint": 1213, "image": 1214, "model": 1215}
 ID_TAB_BODY = {"project": 1222, "viewpoint": 1223, "image": 1224, "model": 1225}
 ID_GRP_SEND = 1230
 ID_SEND_IMAGE = 1231
-ID_SEND_SUMMARY = 1232  # bis 1233: zwei Zeilen
+ID_SEND_SUMMARY = 1232  # bis 1234: drei Zeilen (SUMMARY_LINES)
+# RTX-C4D-010: Kameras im Modell und das Rendern im Picture Viewer.
+ID_SEND_CAMERAS = 1236
+ID_TAKE = 1074
+ID_CAMERAS = 1240  # die Gruppe der Kameraliste, neu gefüllt, wenn sich die Kameras ändern
+ID_CAMERA_NOTE = 1241
+ID_CAMERA_FIRST = 1300  # bis 1300 + MAX_CAMERAS - 1
+MAX_CAMERAS = 40
 # Die Gruppen von früher: „Projekt und Blickpunkt" sind jetzt zwei Tabs, „Bild übernehmen" der Tab Bild.
 ID_GRP_TARGET = ID_TAB_BODY["project"]
 ID_GRP_CAPTURE = ID_TAB_BODY["image"]
@@ -111,7 +118,7 @@ TAB_TITLES = {"connection": "Verbindung", "project": "Projekt", "viewpoint": "Bl
               "model": "Modell"}
 NOT_CONNECTED = "Erst unter „Verbindung“ anmelden — dann lässt sich hier wählen."
 LINES = 4
-SUMMARY_LINES = 2
+SUMMARY_LINES = 3
 WIDTH = 64
 
 
@@ -127,6 +134,8 @@ class RendertaxiDialog(gui.GeDialog):
         # Wie viele Zeilen eines mehrzeiligen Textes sichtbar sind — leere Zeilen belegen keinen Platz.
         self._shown_lines: dict[int, int] = {}
         self._tab: str | None = None
+        # Die Kameraliste, wie sie gerade im Tab „Modell“ steht: (Schlüssel, Beschriftung) je Häkchen.
+        self._camera_rows: list[tuple[str, str]] | None = None
 
     # -- Aufbau ---------------------------------------------------------------
 
@@ -164,6 +173,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._lists, self._labels, self._gadgets = {}, {}, {}
         self._layout_state = None
         self._shown_lines = {}
+        self._camera_rows = None
         self.SetTitle(f"rendertaxi.ai {host.PLUGIN_VERSION}")
         self.GroupBegin(ID_MAIN, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, 1, 0, "")
         self.GroupBorderSpace(8, 8, 8, 8)
@@ -229,10 +239,14 @@ class RendertaxiDialog(gui.GeDialog):
         self._tab_end("image")
 
         self._tab_begin("model")
-        self._text(0, "GLB der sichtbaren Objekte und ihre Kameras; dazu die Kamera der Renderansicht.")
+        self._text(0, "GLB der sichtbaren Objekte mit der Kamera der Renderansicht.")
         self._gadgets[ID_MODEL_COUNT] = self.AddButton(ID_MODEL_COUNT, c4d.BFH_LEFT, 0, 0, "Neu zählen")
         for line in range(LINES):
             self._text(ID_MODEL_HINT + line)
+        self._text(0, "Kameras der Szene")
+        self.GroupBegin(ID_CAMERAS, c4d.BFH_SCALEFIT, 1, 0, "")
+        self.GroupEnd()
+        self._text(ID_CAMERA_NOTE)
         self._tab_end("model")
         self.GroupEnd()  # Tabs
 
@@ -240,15 +254,20 @@ class RendertaxiDialog(gui.GeDialog):
         self.GroupBegin(ID_GRP_SEND, c4d.BFH_SCALEFIT | c4d.BFV_BOTTOM, 1, 0, "Übernehmen")
         self.GroupBorder(c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 6, 6, 6)
-        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 1, "")
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 2, "")
         self._gadgets[ID_SEND_IMAGE] = self.AddCheckbox(ID_SEND_IMAGE, c4d.BFH_SCALEFIT, 0, 0, "Bild")
         self._gadgets[ID_MODEL] = self.AddCheckbox(ID_MODEL, c4d.BFH_SCALEFIT, 0, 0, "Modell")
+        self.AddStaticText(0, c4d.BFH_SCALEFIT, 0, 0, "", 0)
+        # Unter „Modell“ (Nutzerwunsch vom 07.10.2026).
+        self._gadgets[ID_SEND_CAMERAS] = self.AddCheckbox(ID_SEND_CAMERAS, c4d.BFH_SCALEFIT, 0, 0,
+                                                          "Zusätzliche Kameras mitsenden")
         self.GroupEnd()
         for line in range(SUMMARY_LINES):
             self._text(ID_SEND_SUMMARY + line)
         self._text(ID_PENDING)
-        self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 1, "")
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 4, 1, "")
         self._gadgets[ID_CAPTURE] = self.AddButton(ID_CAPTURE, c4d.BFH_SCALEFIT, 0, 0, "Bild und Modell übernehmen")
+        self._gadgets[ID_TAKE] = self.AddButton(ID_TAKE, c4d.BFH_SCALEFIT, 0, 0, TAKE_LABEL)
         self._gadgets[ID_RESUME] = self.AddButton(ID_RESUME, c4d.BFH_SCALEFIT, 0, 0, "Übernahme fortsetzen")
         self._gadgets[ID_DISCARD] = self.AddButton(ID_DISCARD, c4d.BFH_SCALEFIT, 0, 0, "Angefangene verwerfen")
         self.GroupEnd()
@@ -456,6 +475,45 @@ class RendertaxiDialog(gui.GeDialog):
         self._enable(ID_MODEL_COUNT, not busy and controller.form.send_model)
         hint = controller.model_hint() if controller.form.send_model else "Unter „Übernehmen“ „Modell“ wählen."
         self._lines(ID_MODEL_HINT, hint)
+        self._refresh_cameras(busy)
+
+    def _refresh_cameras(self, busy: bool) -> None:
+        """Die Kameras der Szene mit Häkchen — neu aufgebaut, wenn sich Kameras oder Namen ändern.
+
+        Die Kamera der Renderansicht geht immer mit: ihr Häkchen ist gesetzt und gesperrt. Die anderen gelten nur mit
+        „Zusätzliche Kameras mitsenden“.
+        """
+        form = self.controller.form
+        rows = self.controller.camera_rows()
+        shown = rows[:MAX_CAMERAS]
+        wanted = [(row["key"], self._camera_label(row)) for row in shown]
+        if wanted != self._camera_rows:
+            self.LayoutFlushGroup(ID_CAMERAS)
+            for index, (_key, label) in enumerate(wanted):
+                self._gadgets[ID_CAMERA_FIRST + index] = self.AddCheckbox(ID_CAMERA_FIRST + index, c4d.BFH_SCALEFIT,
+                                                                          0, 0, label)
+            self.LayoutChanged(ID_CAMERAS)
+            self._camera_rows = wanted
+        usable = form.send_model and form.send_extra_cameras and not busy
+        for index, row in enumerate(shown):
+            self.SetBool(ID_CAMERA_FIRST + index, row["checked"])
+            self._enable(ID_CAMERA_FIRST + index, usable and not row["render"])
+        if not rows:
+            note = "Keine Kamera in der Szene; gesendet wird die Ansicht der Renderansicht."
+        elif len(rows) > MAX_CAMERAS:
+            note = f"Gezeigt sind die ersten {MAX_CAMERAS} von {len(rows)} Kameras."
+        elif not form.send_extra_cameras:
+            note = "Weitere Kameras wählen: unter „Übernehmen“ „Zusätzliche Kameras mitsenden“."
+        else:
+            note = ""
+        self.SetString(ID_CAMERA_NOTE, note)
+
+    @staticmethod
+    def _camera_label(row: dict) -> str:
+        label = row["label"][:60]
+        if row["kind"] != "Kamera":
+            label = f"{label} ({row['kind']})"
+        return f"{label} — Renderansicht, geht immer mit" if row["render"] else label
 
     def _refresh_send(self, form, state, busy: bool) -> None:
         """Der feste Bereich: Wege, der Satz dazu, Knopf, Fortsetzen und Verwerfen."""
@@ -465,8 +523,16 @@ class RendertaxiDialog(gui.GeDialog):
         self.SetBool(ID_MODEL, form.send_model)
         self._enable(ID_SEND_IMAGE, connected and not busy)
         self._enable(ID_MODEL, connected and not busy)
+        self.SetBool(ID_SEND_CAMERAS, form.send_extra_cameras)
+        self._enable(ID_SEND_CAMERAS, connected and not busy and form.send_model)
         self._lines(ID_SEND_SUMMARY, controller.send_summary(), SUMMARY_LINES)
         self.SetString(ID_CAPTURE, controller.send_label())
+        # „Gerenderte Bilder übernehmen“ nur auf dem Weg über den Picture Viewer; aktiv, wenn ein passendes Ergebnis da ist.
+        picture_viewer = controller.picture_viewer_way()
+        if self._labels.get(ID_TAKE) != [str(picture_viewer)]:
+            self.HideElement(ID_TAKE, not picture_viewer)
+            self.LayoutChanged(ID_GRP_SEND)
+            self._labels[ID_TAKE] = [str(picture_viewer)]
         pending = controller.pending() if connected else None
         if pending:
             self.SetString(ID_PENDING, f"Offene Übernahme vom {pending.get('createdAt', '')[:16].replace('T', ' ')} UTC")
@@ -474,6 +540,7 @@ class RendertaxiDialog(gui.GeDialog):
             self.SetString(ID_PENDING, "")
         chosen = controller.chosen_ways()
         self._enable(ID_CAPTURE, connected and not busy and not pending and chosen is not None)
+        self._enable(ID_TAKE, connected and not busy and not pending and controller.can_take_rendered())
         self._enable(ID_RESUME, connected and not busy and bool(pending))
         self._enable(ID_DISCARD, connected and not busy and bool(pending))
 
@@ -512,6 +579,7 @@ class RendertaxiDialog(gui.GeDialog):
             ID_REFRESH: controller.refresh,
             ID_NEW_PROJECT: controller.new_project,
             ID_CAPTURE: controller.capture,
+            ID_TAKE: controller.take_rendered,
             ID_RESUME: controller.resume,
             ID_DISCARD: controller.discard,
             ID_OPEN_RESULT: controller.open_result,
@@ -539,6 +607,12 @@ class RendertaxiDialog(gui.GeDialog):
             controller.set_send_image(self.GetBool(ID_SEND_IMAGE))
         elif element_id == ID_MODEL:
             controller.set_send_model(self.GetBool(ID_MODEL))
+        elif element_id == ID_SEND_CAMERAS:
+            controller.set_send_extra_cameras(self.GetBool(ID_SEND_CAMERAS))
+        elif ID_CAMERA_FIRST <= element_id < ID_CAMERA_FIRST + MAX_CAMERAS:
+            index = element_id - ID_CAMERA_FIRST
+            if self._camera_rows and index < len(self._camera_rows):
+                controller.set_extra_camera(self._camera_rows[index][0], self.GetBool(element_id))
         elif element_id == ID_KIND:
             form.capture_kind = KINDS[max(0, min(len(KINDS) - 1, self.GetInt32(ID_KIND)))]
         elif element_id == ID_BIT_DEPTH:
