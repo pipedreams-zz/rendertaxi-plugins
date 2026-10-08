@@ -15,6 +15,8 @@ import traceback
 from . import CLIENT_DIR, _CURRENT
 
 _DEBUG = {"enabled": False}
+# Weitere Empfänger jeder Zeile (Dateiprotokoll, Kommandozeile des Hosts) — ``add_sink``.
+_SINKS: list = []
 
 
 def set_debug(enabled: bool) -> None:
@@ -25,9 +27,25 @@ def debug_enabled() -> bool:
     return _DEBUG["enabled"]
 
 
+def add_sink(sink) -> None:
+    """``sink(line)`` bekommt jede Zeile zusätzlich zur Konsole — einmal je Empfänger.
+
+    Für Hosts, deren ``stderr`` niemand sieht oder die ihn je Skriptlauf austauschen (Rhino 8): dort hängt
+    das Plugin ein Dateiprotokoll und die Kommandozeile ein. Ein Empfänger, der scheitert, hält nichts auf.
+    """
+    if sink not in _SINKS:
+        _SINKS.append(sink)
+
+
 def log(message: str) -> None:
-    """Eine Zeile auf die Konsole des Hosts (``stderr``)."""
-    print(f"rendertaxi: {message}", file=sys.stderr)
+    """Eine Zeile auf die Konsole des Hosts (``stderr``) und an die Empfänger aus ``add_sink``."""
+    line = f"rendertaxi: {message}"
+    print(line, file=sys.stderr)
+    for sink in list(_SINKS):
+        try:
+            sink(line)
+        except Exception:  # noqa: BLE001 — ein Protokollempfänger darf nie eine Übernahme stören
+            pass
 
 
 def _roots() -> tuple[str, ...]:

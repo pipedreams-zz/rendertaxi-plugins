@@ -17,7 +17,7 @@ Module:
 * ``glb``       exportierte GLB lesen: Dreiecke wie der Server, Hülle, Maßstab auf Meter setzen
 * ``schema/``   Kopie der drei Schemas aus ``integrations/_shared/contracts/v1``
 
-Nur Python-Standardbibliothek, Python ≥ 3.11, kein Hostmodul (``bpy``,
+Nur Python-Standardbibliothek, Python ≥ 3.9 (Rhino 8), kein Hostmodul (``bpy``,
 ``c4d``). Was je Host verschieden ist — Schlüssel, ``client_id``, Version,
 welche Rolle nie ``present`` sein darf —, steht in einem ``Host``, den das
 Plugin beim Laden **einmal** mit ``configure`` setzt. Weil jedes Plugin seine

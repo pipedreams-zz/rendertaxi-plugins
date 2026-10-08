@@ -7,15 +7,15 @@ Webanwendung.
 
 ## Download
 
-Fertige Zips liegen unter [Releases](../../releases/latest). Die
+Fertige Zips (und für Rhino das yak-Paket) liegen unter [Releases](../../releases/latest). Die
 Webanwendung verlinkt dieselbe Seite unter **Verbundene Geräte › Plugins herunterladen** (`/geraete`).
 
-| Plugin    | Ordner         | Voraussetzung                                     | Stand           |
-| --------- | -------------- | ------------------------------------------------- | --------------- |
-| Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64)           | verfügbar       |
-| Blender   | `dcc/blender`  | Blender 4.5 LTS, 5.1, 5.2 LTS (macOS, Win, Linux) | Vorschau        |
-| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026 (macOS, Win)                       | Vorschau        |
-| Rhino     | `dcc/rhino`    | —                                                 | in Vorbereitung |
+| Plugin    | Ordner         | Voraussetzung                                     | Stand     |
+| --------- | -------------- | ------------------------------------------------- | --------- |
+| Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64)           | verfügbar |
+| Blender   | `dcc/blender`  | Blender 4.5 LTS, 5.1, 5.2 LTS (macOS, Win, Linux) | Vorschau  |
+| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026 (macOS, Win)                       | Vorschau  |
+| Rhino     | `dcc/rhino`    | Rhino 8 (macOS, Win)                              | Vorschau  |
 
 Jedes Plugin zählt seine Version eigenständig. Releases tragen ein Datum
 (`2026.09.26`) und nennen in ihrer Notiz die enthaltenen Versionen.
@@ -25,6 +25,7 @@ Jedes Plugin zählt seine Version eigenständig. Releases tragen ein Datum
 - [Archicad](docs/dcc/archicad.md)
 - [Blender](docs/dcc/blender.md)
 - [Cinema 4D](docs/dcc/cinema4d.md)
+- [Rhino](docs/dcc/rhino.md)
 
 ## Herkunft
 
@@ -37,8 +38,10 @@ Ein Release baut die Windows-Fassung des Archicad-Add-ons selbst
 (`.github/workflows/archicad-windows.yml`) und packt sie mit dem
 macOS-Bundle aus `dcc/archicad/dist/macos/` (`scripts/pack.sh`). Die
 Blender-Extension und das Cinema-4D-Plugin sind Python und werden ohne Build
-aus `dcc/blender/` und `dcc/cinema4d/` gepackt; beide tragen denselben
-eingebetteten Python-Client (`rendertaxi_client/`).
+aus `dcc/blender/` und `dcc/cinema4d/` gepackt. Das Rhino-Plugin (`rdtx.ai`)
+ist ebenfalls Python; sein yak-Paket baut `rhinocode` am Mac und legt es unter
+`dcc/rhino/dist/` ab. Alle drei tragen denselben eingebetteten Python-Client
+(`rendertaxi_client/`).
 
 ## Lizenz
 

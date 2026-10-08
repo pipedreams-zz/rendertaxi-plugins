@@ -36,4 +36,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "rendertaxi.ai-Plugins $GITHUB_REF_NAME" \
             --notes-file dist/RELEASE.md \
-            dist/*.zip
+            dist/*.zip dist/*.yak

@@ -1,0 +1,78 @@
+{
+  "host": {
+    "name": "Rhino3D",
+    "version": "8.35.26251+13002",
+    "os": "macOS",
+    "arch": "arm64"
+  },
+  "id": "b47606d7-0da9-4f5b-86c4-43f5b32f1865",
+  "identity": {
+    "name": "rdtx.ai",
+    "version": "0.1.0",
+    "publisher": {
+      "name": "Alexander Pfeiffer",
+      "url": "https://github.com/pipedreams-zz/rendertaxi-plugins"
+    },
+    "description": "rdtx.ai: eine Rhino-Ansicht oder ein Rendering mit Datenpässen als Bild an rendertaxi.ai übergeben und einem Projekt und Blickpunkt zuordnen.",
+    "copyright": "Copyright © 2026 Alexander Pfeiffer",
+    "license": "MIT",
+    "url": "https://github.com/pipedreams-zz/rendertaxi-plugins",
+    "image": {
+      "light": {
+        "type": "svg",
+        "data": "PHN2ZyB2aWV3Qm94PSIwIDAgMzc3Ljk1MzM0IDM3Ny45NTMzNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGZpbGw9IiMxNDE0MTQiIHRyYW5zZm9ybT0ibWF0cml4KDEuMzMzMzMzLCAwLCAwLCAtMS4zMzMzMzMsIDE5My4xNjU3MywgMTEzLjM0MjUzKSIgZD0iTTAgMGg5NS44MSAyMS45MzdDOTYuNDEzIDQ1LjM3OCA1MC4zMTcgNzYuNzk1LTMuMTQyIDc2Ljc5NWMtNzMuNzQ2IDAtMTMzLjUyLTU5Ljc3NS0xMzMuNTItMTMzLjUxNiAwLTMwLjI1OCAxMC4wNzQtNTguMTU3IDI3LjAzMy04MC41MzRsNDYuMjA1IDk5LjQwOEMtNTEuNTE5LTEyLjE2OS0zMi41MTktMmUtMyAwIDBNMTUuNjc2LTM2Ljc5OWMtMTUuMTMzIDAtMjIuODItMi4xNjEtMjcuOTU4LTEyLjYwNGwtNDMuNjM5LTkyLjQ5OC0xNC4wODktMzAuMzc0YzE5LjY2My0xMS4zOTggNDIuNTAyLTE3Ljk3MSA2Ni44NjgtMTcuOTcxIDczLjc0IDAgMTMzLjUyIDU5Ljc4NCAxMzMuNTIgMTMzLjUyNSAwIDYuNzgxLTAuNTExIDEzLjQyMy0xLjQ4NSAxOS45MjJ6Ij48L3BhdGg+Cjwvc3ZnPgo="
+      },
+      "dark": {
+        "type": "svg",
+        "data": "PHN2ZyB2aWV3Qm94PSIwIDAgMzc3Ljk1MzM0IDM3Ny45NTMzNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGZpbGw9IiNlYmVhZTciIHRyYW5zZm9ybT0ibWF0cml4KDEuMzMzMzMzLCAwLCAwLCAtMS4zMzMzMzMsIDE5My4xNjU3MywgMTEzLjM0MjUzKSIgZD0iTTAgMGg5NS44MSAyMS45MzdDOTYuNDEzIDQ1LjM3OCA1MC4zMTcgNzYuNzk1LTMuMTQyIDc2Ljc5NWMtNzMuNzQ2IDAtMTMzLjUyLTU5Ljc3NS0xMzMuNTItMTMzLjUxNiAwLTMwLjI1OCAxMC4wNzQtNTguMTU3IDI3LjAzMy04MC41MzRsNDYuMjA1IDk5LjQwOEMtNTEuNTE5LTEyLjE2OS0zMi41MTktMmUtMyAwIDBNMTUuNjc2LTM2Ljc5OWMtMTUuMTMzIDAtMjIuODItMi4xNjEtMjcuOTU4LTEyLjYwNGwtNDMuNjM5LTkyLjQ5OC0xNC4wODktMzAuMzc0YzE5LjY2My0xMS4zOTggNDIuNTAyLTE3Ljk3MSA2Ni44NjgtMTcuOTcxIDczLjc0IDAgMTMzLjUyIDU5Ljc4NCAxMzMuNTIgMTMzLjUyNSAwIDYuNzgxLTAuNTExIDEzLjQyMy0xLjQ4NSAxOS45MjJ6Ij48L3BhdGg+Cjwvc3ZnPgo="
+      }
+    }
+  },
+  "settings": {
+    "buildPath": "build/",
+    "buildTarget": {
+      "host": {
+        "name": "Rhino3D",
+        "version": "8"
+      },
+      "title": "Rhino3D (8.*)",
+      "slug": "rh8"
+    },
+    "publishTarget": {
+      "title": "McNeel Yak Server"
+    }
+  },
+  "codes": [
+    {
+      "id": "a9d1167b-6ca7-491f-8caf-d03e61063afc",
+      "language": {
+        "id": "*.*.python",
+        "version": "3.*.*"
+      },
+      "title": "RdtxAI",
+      "uri": "commands/RdtxAI.py",
+      "image": {
+        "light": {
+          "type": "svg",
+          "data": "PHN2ZyB2aWV3Qm94PSIwIDAgMzc3Ljk1MzM0IDM3Ny45NTMzNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGZpbGw9IiMxNDE0MTQiIHRyYW5zZm9ybT0ibWF0cml4KDEuMzMzMzMzLCAwLCAwLCAtMS4zMzMzMzMsIDE5My4xNjU3MywgMTEzLjM0MjUzKSIgZD0iTTAgMGg5NS44MSAyMS45MzdDOTYuNDEzIDQ1LjM3OCA1MC4zMTcgNzYuNzk1LTMuMTQyIDc2Ljc5NWMtNzMuNzQ2IDAtMTMzLjUyLTU5Ljc3NS0xMzMuNTItMTMzLjUxNiAwLTMwLjI1OCAxMC4wNzQtNTguMTU3IDI3LjAzMy04MC41MzRsNDYuMjA1IDk5LjQwOEMtNTEuNTE5LTEyLjE2OS0zMi41MTktMmUtMyAwIDBNMTUuNjc2LTM2Ljc5OWMtMTUuMTMzIDAtMjIuODItMi4xNjEtMjcuOTU4LTEyLjYwNGwtNDMuNjM5LTkyLjQ5OC0xNC4wODktMzAuMzc0YzE5LjY2My0xMS4zOTggNDIuNTAyLTE3Ljk3MSA2Ni44NjgtMTcuOTcxIDczLjc0IDAgMTMzLjUyIDU5Ljc4NCAxMzMuNTIgMTMzLjUyNSAwIDYuNzgxLTAuNTExIDEzLjQyMy0xLjQ4NSAxOS45MjJ6Ij48L3BhdGg+Cjwvc3ZnPgo="
+        },
+        "dark": {
+          "type": "svg",
+          "data": "PHN2ZyB2aWV3Qm94PSIwIDAgMzc3Ljk1MzM0IDM3Ny45NTMzNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGZpbGw9IiNlYmVhZTciIHRyYW5zZm9ybT0ibWF0cml4KDEuMzMzMzMzLCAwLCAwLCAtMS4zMzMzMzMsIDE5My4xNjU3MywgMTEzLjM0MjUzKSIgZD0iTTAgMGg5NS44MSAyMS45MzdDOTYuNDEzIDQ1LjM3OCA1MC4zMTcgNzYuNzk1LTMuMTQyIDc2Ljc5NWMtNzMuNzQ2IDAtMTMzLjUyLTU5Ljc3NS0xMzMuNTItMTMzLjUxNiAwLTMwLjI1OCAxMC4wNzQtNTguMTU3IDI3LjAzMy04MC41MzRsNDYuMjA1IDk5LjQwOEMtNTEuNTE5LTEyLjE2OS0zMi41MTktMmUtMyAwIDBNMTUuNjc2LTM2Ljc5OWMtMTUuMTMzIDAtMjIuODItMi4xNjEtMjcuOTU4LTEyLjYwNGwtNDMuNjM5LTkyLjQ5OC0xNC4wODktMzAuMzc0YzE5LjY2My0xMS4zOTggNDIuNTAyLTE3Ljk3MSA2Ni44NjgtMTcuOTcxIDczLjc0IDAgMTMzLjUyIDU5Ljc4NCAxMzMuNTIgMTMzLjUyNSAwIDYuNzgxLTAuNTExIDEzLjQyMy0xLjQ4NSAxOS45MjJ6Ij48L3BhdGg+Cjwvc3ZnPgo="
+        }
+      }
+    }
+  ],
+  "libraries": [
+    {
+      "type": "uri",
+      "library": {
+        "base": "lib/rendertaxi_rhino/",
+        "language": {
+          "id": "*.*.python",
+          "version": "3.*.*"
+        }
+      }
+    }
+  ]
+}
