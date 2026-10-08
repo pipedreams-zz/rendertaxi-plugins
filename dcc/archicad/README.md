@@ -62,6 +62,10 @@ Endnutzer-Anleitung steht in
 [`../../public-repo/docs/dcc/archicad.md`](../../public-repo/docs/dcc/archicad.md).
 Nach einer Änderung am Add-on gehört vor dem Release-Tag ein frisches
 `dist.sh macos` dazu, sonst packt der Release das alte Bundle.
+Das Bundle entsteht **nur** am Mac, der Release baut es nicht neu (nur die
+Windows-.apx). `integrations/public-repo/scripts/check-archicad-bundle.sh`
+weist ein Bundle ab, dessen Version nicht `src/Version.hpp` entspricht — im
+Spiegel-Workflow und in `pack.sh`.
 
 ## Aufbau
 

@@ -8,7 +8,16 @@
 		<dict>
 			<key>hash</key>
 			<data>
-			PfWSfIBlWOAZBBUo2Igrpckbu1w=
+			DD9QZIh1hw791C53buIYKwPnvdo=
+			</data>
+			<key>optional</key>
+			<true/>
+		</dict>
+		<key>Resources/English.lproj/DLGH_32510.rsrd</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			CW1JQqKyP+FekZ7HKC7SeVrSPJU=
 			</data>
 			<key>optional</key>
 			<true/>
@@ -17,7 +26,16 @@
 		<dict>
 			<key>hash</key>
 			<data>
-			lkaA8MLwarGFgDypa4cDXYEOqOE=
+			DCSJYHEl6AY5AzG2nQxzRdeXY7c=
+			</data>
+			<key>optional</key>
+			<true/>
+		</dict>
+		<key>Resources/English.lproj/GSDG_32510.rsrd</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			7EAPsoi9Z0lympc69lhvXnNAWwM=
 			</data>
 			<key>optional</key>
 			<true/>
@@ -47,7 +65,16 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			GdgQSaTfV1Hk05GP6nWaAN8kZrnC78prlyG+m0Y0gpg=
+			nG+dRE9VyMWweqVwRPsX61EOZae0mVWfBXPSCh6RalM=
+			</data>
+			<key>optional</key>
+			<true/>
+		</dict>
+		<key>Resources/English.lproj/DLGH_32510.rsrd</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			iQdxLWypEF1Kk5UuL2VfjB8aK2Rz06uipPWmk8njI1Q=
 			</data>
 			<key>optional</key>
 			<true/>
@@ -56,7 +83,16 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			MJKfGFZGxJnDol6tEsKBGAFVQed+NbsU1F+IvPcNATg=
+			E7Xw+bzQ8/zNlY6HQ/ay//cMTrukQYwh1IdDyyBdvMM=
+			</data>
+			<key>optional</key>
+			<true/>
+		</dict>
+		<key>Resources/English.lproj/GSDG_32510.rsrd</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			3qmP7VDvFj3OqdkozjctYbbBHZhO2Qzo0ny6zy3LOug=
 			</data>
 			<key>optional</key>
 			<true/>

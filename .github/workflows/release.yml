@@ -4,7 +4,8 @@ name: Release
 # genau diesem Stand selbst, legt sie nach dcc/archicad/dist/win/, packt alle
 # Plugins (scripts/pack.sh) und hängt die Zips als Release an; die Notiz nennt
 # die Version jedes Plugins. Das macOS-Bundle liegt eingecheckt unter
-# dcc/archicad/dist/macos/ (auf dem Mac gebaut).
+# dcc/archicad/dist/macos/ (auf dem Mac gebaut, nicht im Release); pack.sh bricht
+# ab, wenn es nicht die Version aus Version.hpp trägt.
 on:
   push:
     tags: ["v*", "20*"]

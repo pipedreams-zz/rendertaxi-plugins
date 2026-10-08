@@ -32,7 +32,8 @@
 # (rendertaxi_client/) eingebettet; fehlt er, bricht das Skript ab.
 #
 # Archicad: dcc/archicad/dist/ muss macos/rendertaxi.bundle **und**
-# win/rendertaxi.apx enthalten; fehlt eines, bricht das Skript ab, statt ein
+# win/rendertaxi.apx enthalten und das Bundle muss die Version aus Version.hpp
+# tragen (scripts/check-archicad-bundle.sh); fehlt eines, bricht das Skript ab, statt ein
 # halbes Paket auszuliefern. Die .apx legt der Release-Workflow aus seinem
 # eigenen Windows-Build dorthin; lokal holt sie
 # dcc/archicad/scripts/dist.sh win.
@@ -52,6 +53,7 @@ ARCHICAD_ZIP="rendertaxi-archicad${ARCHICAD_HOST}-${ARCHICAD}-${RELEASE}.zip"
 
 ARCHICAD_DIST=dcc/archicad/dist
 test -d "$ARCHICAD_DIST/macos/rendertaxi.bundle" || { echo "Fehlt: $ARCHICAD_DIST/macos/rendertaxi.bundle" >&2; exit 1; }
+bash scripts/check-archicad-bundle.sh
 test -f "$ARCHICAD_DIST/win/rendertaxi.apx" || { echo "Fehlt: $ARCHICAD_DIST/win/rendertaxi.apx" >&2; exit 1; }
 cp docs/dcc/archicad.md "$ARCHICAD_DIST/ANLEITUNG.md"
 (cd "$ARCHICAD_DIST" && zip -qry "../../../dist/$ARCHICAD_ZIP" ANLEITUNG.md macos win -x '*.DS_Store')
