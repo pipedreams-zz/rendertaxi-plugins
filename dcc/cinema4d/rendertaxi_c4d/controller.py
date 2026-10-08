@@ -27,7 +27,7 @@ import threading
 from dataclasses import dataclass, field
 
 from . import host  # noqa: F401 — setzt den Host des Clients, bevor ihn jemand benutzt
-from .rendertaxi_client import auth, frame
+from .rendertaxi_client import auth, frame, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception, set_debug
 from .rendertaxi_client.store import CredentialStore, SettingsStore, TransferStore, has_local_material
@@ -38,8 +38,13 @@ from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewPro
 
 DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender (RTX-P-012).
+# ``lastTab``, ``sendImage``, ``sendModel``: der zuletzt gewählte Tab und die Wahl der Wege (RTX-C4D-008) —
+# gemerkt, nie Bedingung fürs Laden: ein fremder Wert fällt auf die Vorgabe.
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
-                    "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH}
+                    "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "lastTab": "connection",
+                    "sendImage": True, "sendModel": False}
+# Die Tabs des Fensters, in ihrer Reihenfolge (Nutzerentscheidung vom 05.10.2026).
+TABS = ("connection", "project", "viewpoint", "image", "model")
 
 VIEWPORT = "viewport"
 BEAUTY = "beauty"
@@ -67,6 +72,8 @@ class Form:
     capture_kind: str = VIEWPORT
     resolution: str = RESOLUTION_DOCUMENT
     passes: set[str] = field(default_factory=set)
+    # Bildweg und Modellweg (RTX-P-014): einzeln oder zusammen; ``ways.plan`` entscheidet, was gesendet wird.
+    send_image: bool = True
     send_model: bool = False
 
 
@@ -147,6 +154,10 @@ class Controller:
         self.model_estimate: tuple[str, int, int] | None = None
         # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
         self.new_project_intent = NewProject()
+        # Die gemerkte Wahl der Wege; ``settings`` fällt bei jedem Fehler auf die Vorgaben (Regel 3).
+        remembered = self.settings()
+        self.form.send_image = remembered["sendImage"]
+        self.form.send_model = remembered["sendModel"]
 
     # -- Ablage und Einstellungen -------------------------------------------
 
@@ -197,6 +208,27 @@ class Controller:
         except (OSError, ValueError):  # nicht merkbar: es bleibt bei der gemerkten Bittiefe, der Dialog sagt es
             self._set_error("Die Bittiefe ließ sich nicht merken (Einstellungsordner nicht beschreibbar).")
         return bit_depth
+
+    def last_tab(self) -> str:
+        """Der zuletzt gewählte Tab — ein unbekannter Wert heißt „Verbindung" (Regel 3)."""
+        tab = self.settings().get("lastTab")
+        return tab if tab in TABS else TABS[0]
+
+    def remember_tab(self, tab: str) -> None:
+        """Den gewählten Tab merken; nicht merkbar ist kein Fehler — es bleibt beim Merken davor."""
+        if tab not in TABS:
+            return
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save({"lastTab": tab})
+        except (OSError, ValueError):
+            pass
+
+    def _remember_ways(self) -> None:
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save(
+                {"sendImage": bool(self.form.send_image), "sendModel": bool(self.form.send_model)})
+        except (OSError, ValueError):  # die Wahl gilt trotzdem, nur nicht über den Neustart hinaus
+            pass
 
     # -- Hintergrundarbeit --------------------------------------------------
 
@@ -567,15 +599,41 @@ class Controller:
     # -- Modell --------------------------------------------------------------
 
     def model_problem(self) -> str | None:
-        """Warum „Modell mitsenden" nicht geht — im Dialog **vor** dem Senden, beim Aufnehmen als Fehler."""
+        """Warum das Modell nicht geht — im Fenster **vor** dem Senden, beim Übernehmen als Fehler."""
         if self.state.handshake is not None and not supports_model(self.state.handshake):
-            return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne „Modell mitsenden“ übernehmen."
+            return "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne Modell übernehmen."
         return self.adapter.model_problem()
+
+    def set_send_image(self, on: bool) -> None:
+        self.form.send_image = bool(on)
+        self._remember_ways()
 
     def set_send_model(self, on: bool) -> None:
         self.form.send_model = bool(on)
+        self._remember_ways()
         if self.form.send_model:
             self.count_model()
+
+    def chosen_ways(self) -> ways.Plan | None:
+        """Was gesendet wird (``ways.plan``) — ``None``, wenn weder Bild noch Modell gewählt ist."""
+        try:
+            return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+        except ValueError:
+            return None
+
+    def send_summary(self) -> str:
+        """Der Satz über dem Knopf: was gesendet wird, warum anders als gewählt, oder warum nichts geht."""
+        if not self.state.connected:
+            return "Erst unter „Verbindung“ anmelden; dann lässt sich übernehmen."
+        chosen = self.chosen_ways()
+        if chosen is None:
+            return ways.NOTHING_CHOSEN
+        return " ".join(part for part in (ways.summary(chosen), chosen.hint) if part)
+
+    def send_label(self) -> str:
+        """Die Beschriftung des Knopfs: „Bild übernehmen", „Modell übernehmen" oder „Bild und Modell übernehmen"."""
+        chosen = self.chosen_ways()
+        return f"{ways.label(chosen)} übernehmen" if chosen is not None else "Übernehmen"
 
     def count_model(self) -> None:
         """Sichtbare Objekte und Dreiecke zählen — auf Wunsch, nicht bei jedem Zeichnen (Polygonize kostet)."""
@@ -590,7 +648,7 @@ class Controller:
         self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles)
 
     def model_hint(self) -> str:
-        """Größe, Grenzen und was nicht mitgeht — der Text unter „Modell mitsenden"."""
+        """Größe, Grenzen und was nicht mitgeht — der Text im Tab „Modell"."""
         if not self.form.send_model:
             return ""
         problem = self.model_problem()
@@ -621,35 +679,55 @@ class Controller:
     def build_capture(self, directory: str) -> bytes:
         """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
 
-        Capture-Manifest 1.3.0 (PNG-Datenpässe, mit oder ohne Modell) gegen
-        einen Server, der es umsetzt (``mf.image_contract_version`` bzw.
-        ``mf.model_contract_version``); sonst ohne Modell 1.1.0 mit ``camera``
-        und ``geometry`` ``null``, mit Modell 1.2.0 mit GLB und — wenn
-        darstellbar — der Kamera der Aufnahme. Die Pässe tragen die gemerkte
-        Bittiefe (8 oder 16 Bit). Gegen einen Server mit 1.5.0 geht der Name der
-        gespeicherten Datei als ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
+        **Drei Fälle** (RTX-P-014, ``ways.plan``): nur Bild, nur Modell, Bild und Modell. Nur mit Modell wird
+        **nicht gerendert**: es gehen die GLB und die Kamera der Renderansicht, deren Bildgröße die der
+        Rendervoreinstellung ist (``camera.resolution``, ab Capture-Manifest 1.6.0). Gegen einen Server unter
+        1.6.0 fällt „nur Modell" mit Hinweis auf „Bild und Modell" zurück.
+
+        Die Vertragsfassung kommt aus dem Handshake (``mf.image_contract_version`` bzw.
+        ``mf.model_contract_version``); ohne Modell sind ``camera`` und ``geometry`` ``null``. Die Pässe tragen die
+        gemerkte Bittiefe (8 oder 16 Bit). Gegen einen Server mit 1.5.0 geht der Name der gespeicherten Datei als
+        ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
+        chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
         size = self.capture_size()
-        send_model = self.form.send_model
         contract_version = mf.image_contract_version(handshake)
-        if send_model:
+        if chosen.model:
             problem = self.model_problem()
             if problem:
                 raise ValueError(problem)
-        capabilities = self.adapter.probe(model=send_model)
-        files, planned, view_name = self.adapter.render(
-            self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
-            self._progress_in_main, self.data_pass_bit_depth())
+        if chosen.model_only:
+            # Ohne Bild ist die Kamera die Aufnahme: ohne sie geht kein Modell allein (Pflicht ab 1.6.0).
+            why = self.adapter.camera_problem(self.document_size(),
+                                              mf.camera_lens_allowed(mf.model_contract_version(handshake)))
+            if why:
+                raise ValueError(f"Ohne Kamera geht das Modell nicht allein: {why}")
+        capabilities = self.adapter.probe(model=chosen.model)
+        files: list = []
+        planned: list = []
+        view_name = None
+        if chosen.image:
+            files, planned, view_name = self.adapter.render(
+                self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
+                self._progress_in_main, self.data_pass_bit_depth())
         camera = geometry = None
-        if send_model:
-            image = files[0].image
+        if chosen.model:
+            if chosen.image:
+                width, height = files[0].image["width"], files[0].image["height"]
+            else:
+                width, height = self.document_size()
             contract_version = mf.model_contract_version(handshake)
             model, geometry, camera = self.adapter.export_model(
-                self.form.capture_kind, directory, (image["width"], image["height"]), self._progress_in_main,
+                self.form.capture_kind, directory, (width, height), self._progress_in_main,
                 mf.camera_lens_allowed(contract_version))
+            if camera is not None:
+                # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.
+                camera["resolution"] = {"width": int(width), "height": int(height)}
             files.append(model)
+            if chosen.model_only:
+                view_name = self.adapter.camera_name() or "Renderansicht"
         try:
             file_name = self.adapter.document_file_name()
         except (RuntimeError, AttributeError, TypeError):  # ohne Dateinamen geht der Capture trotzdem
@@ -687,7 +765,7 @@ class Controller:
         self.adapter.status(text, percent)
 
     def capture(self) -> bool:
-        """„Aufnehmen und übernehmen": aufnehmen im Hauptfaden, übertragen im Hintergrund."""
+        """„Übernehmen": Bild und/oder Modell im Hauptfaden, übertragen im Hintergrund."""
         if self.state.job is not None:
             self._set_error("Es läuft schon ein Vorgang.")
             return False
@@ -704,9 +782,10 @@ class Controller:
             key = self.adapter.document_key(create=True)
             if transfers.pending(key):
                 raise ValueError("Hier läuft schon eine Übernahme. Fortsetzen oder verwerfen.")
+            chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
             directory = transfers.capture_dir(mf.uuid_v7())
             os.makedirs(directory, mode=0o700, exist_ok=True)
-            self.state.progress = ("Aufnehmen …", 0)
+            self.state.progress = (f"{ways.steps(chosen)[0]} …", 0)
             self.state.result = None
             raw = self.build_capture(directory)
             pending = prepare(transfers, key, self.state.server, target, raw, directory)
@@ -718,6 +797,7 @@ class Controller:
             return False
         finally:
             self.adapter.status("", -1)
+        self.state.message = chosen.hint or ""
         return self.start_job("transfer", self._transfer_work(self.state.server, credentials.token(self.state.server),
                                                               key, pending))
 
@@ -739,7 +819,9 @@ class Controller:
                     "openUrl": outcome["result"].get("openUrl"),
                     "viewpointId": outcome["result"].get("viewpointId"),
                 }
-                self.state.message = "Übernahme abgeschlossen."
+                # Was angekommen ist, aus dem Abschlussbeleg je Weg — und was am Blickpunkt stehen blieb.
+                update = (pending["target"].get("viewpoint") or {}).get("mode") == frame.UPDATE
+                self.state.message = ways.result_text(outcome["result"], update)
 
             job.post(apply)
             # Neuer Blickpunkt: die Liste neu lesen, damit er gleich wählbar ist.

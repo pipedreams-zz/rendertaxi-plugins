@@ -95,6 +95,13 @@ UNIT_METERS = {getattr(c4d, name): meters for name, meters in _UNIT_METERS.items
 BOUNDS_TOLERANCE = 1e-4
 SCALE_TOLERANCE = 1e-6
 TOLERANCE = 1e-6
+# Die Redshift-Kamera: in Python ein ``BaseObject``, kein ``c4d.CameraObject`` — ``Polygonize`` behält sie, mit
+# Weltmatrix und lesbaren Kameraparametern (am Host gemessen, 07.10.2026, Cinema 4D 2026.3.1 mit Redshift).
+REDSHIFT_CAMERA = 1057516
+# Was von einer Redshift-Kamera in die Standardkamera des Exports geht — dieselben Parameter-IDs wie bei ``Ocamera``.
+_CAMERA_PARAMETERS = ("CAMERA_PROJECTION", "CAMERA_FOCUS", "CAMERAOBJECT_APERTURE", "CAMERAOBJECT_FILM_OFFSET_X",
+                      "CAMERAOBJECT_FILM_OFFSET_Y", "CAMERAOBJECT_NEAR_CLIPPING_ENABLE", "CAMERAOBJECT_NEAR_CLIPPING",
+                      "CAMERAOBJECT_FAR_CLIPPING_ENABLE", "CAMERAOBJECT_FAR_CLIPPING")
 # Die kleinste Nahgrenze, wenn die Kamera nicht abschneidet: der Vertrag verlangt near > 0.
 NO_NEAR_CLIP = 0.000001
 # Die Grenzen des Objektivs und des Shifts im Vertrag (capture-manifest.md, Abschnitt 11.3).
@@ -235,9 +242,9 @@ def exporter_scale(scene_low, scene_high, glb_low, glb_high) -> float:
         return factor
     if _fits(scene_low, scene_high, factor, glb_low, glb_high, tolerance):
         raise ExportError("Der glTF-Export liefert das Modell seitenverkehrt („Flip Z“ fehlt). "
-                          "Das Bild lässt sich ohne „Modell mitsenden“ übernehmen.")
+                          "Das Bild lässt sich ohne Modell übernehmen.")
     raise ExportError("Der glTF-Export hat das Modell verschoben oder verzerrt. "
-                      "Das Bild lässt sich ohne „Modell mitsenden“ übernehmen.")
+                      "Das Bild lässt sich ohne Modell übernehmen.")
 
 
 # --------------------------------------------------------------------------
@@ -357,8 +364,36 @@ def _baked(obj, mesh_index: int):
     return mesh, triangles
 
 
+def is_camera(obj) -> bool:
+    """Eine Kamera der Szene: ``Ocamera`` oder eine Redshift-Kamera (``REDSHIFT_CAMERA``)."""
+    return isinstance(obj, c4d.CameraObject) or (obj is not None and obj.GetType() == REDSHIFT_CAMERA)
+
+
+def standard_camera(obj):
+    """``obj`` als Standardkamera: eine ``Ocamera`` bleibt, wie sie ist; aus einer Redshift-Kamera wird eine neue
+    Standardkamera mit Name, Weltmatrix, Projektion, Brennweite, Sensorbreite, Film Offset und Clipping.
+
+    Der glTF-Exporter und die Kamerafragen (Objektiv, Shift, Sichtfeld) kennen nur die Standardkamera; die Szene
+    bleibt unberührt — die neue Kamera steht in keinem Dokument.
+    """
+    if obj is None or isinstance(obj, c4d.CameraObject) or obj.GetType() != REDSHIFT_CAMERA:
+        return obj
+    camera = c4d.CameraObject()
+    camera.SetName(obj.GetName())
+    for name in _CAMERA_PARAMETERS:
+        value = _get(obj, name)
+        if value is not None:
+            camera[getattr(c4d, name)] = value
+    camera.SetMg(obj.GetMg())
+    return camera
+
+
 def _camera(obj):
-    """Eine Kopie der Kamera ohne Kinder und Tags (ein Ziel-Tag fände sein Ziel nicht), mit ihrer Weltmatrix."""
+    """Eine Kopie der Kamera ohne Kinder und Tags (ein Ziel-Tag fände sein Ziel nicht), mit ihrer Weltmatrix.
+
+    Eine Redshift-Kamera geht als Standardkamera mit (``standard_camera``)."""
+    if not isinstance(obj, c4d.CameraObject):
+        return standard_camera(obj)
     camera = obj.GetClone(c4d.COPYFLAGS_NO_HIERARCHY)
     for tag in list(camera.GetTags()):
         tag.Remove()
@@ -461,12 +496,15 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None) -> Prepared:
         low = [math.inf] * 3
         high = [-math.inf] * 3
         for obj in _walk(source.GetFirstObject()):
-            if isinstance(obj, c4d.CameraObject) and visible(obj, source, kind):
-                target.InsertObject(_camera(obj))
+            if is_camera(obj) and visible(obj, source, kind):
+                copy = _camera(obj)
+                target.InsertObject(copy)
                 cameras += 1
                 name = obj.GetName()
                 # Zwei Kameras gleichen Namens: der Knoten wäre nicht eindeutig — beide ohne extras.
-                lenses[name] = None if name in lenses else _lens_of(obj, doc)
+                # Objektiv und Shift einer Redshift-Kamera aus ihrer Standardkamera, sonst wie bisher.
+                lens_source = obj if isinstance(obj, c4d.CameraObject) else copy
+                lenses[name] = None if name in lenses else _lens_of(lens_source, doc)
                 continue
             if not isinstance(obj, c4d.PolygonObject) or not visible(obj, source, kind):
                 continue
@@ -665,7 +703,8 @@ def probe(doc, size: tuple[int, int]) -> dict:
 def render_camera(doc):
     """Die Kamera, aus der gerendert wird: Szenenkamera der Renderansicht oder die Editor-Kamera."""
     view = capture.render_view(doc)
-    return view.GetSceneCamera(doc) if view is not None else None
+    # Eine Redshift-Kamera als Standardkamera — Kamerablock und Kamerafragen kennen nur diese.
+    return standard_camera(view.GetSceneCamera(doc)) if view is not None else None
 
 
 def stereo(doc, camera) -> bool:

@@ -68,7 +68,9 @@ def size_text(creating: bool, fit_to_capture: bool, size: str) -> str:
     """Was die gewählte Rahmengröße bewirkt — ``size`` wirkt nur, wo ADR 0024 es vorsieht."""
     follows = creating or fit_to_capture
     if size == SIZE_CAPTURE and follows:
-        return "Zielgröße: Aufnahmemaße (unter 1536 langer Kante bleibt die Canvas-Vorgabe)"
+        # Die Untergrenze ist die lange Kante der Canvas-Vorgabe — im Admin-Bereich einstellbar (ADR 0040), dem
+        # Plugin nicht bekannt: der Satz nennt deshalb keine Zahl (Host, 07.10.2026: „1536“ war fest eingetragen).
+        return "Zielgröße: Aufnahmemaße, mindestens die lange Kante der Canvas-Vorgabe"
     if size == SIZE_CAPTURE:
         return "Zielgröße: Aufnahmemaße — wirkt erst mit „Rahmen an Aufnahme anpassen“"
     return "Zielgröße: Canvas-Vorgabe — nur das Seitenverhältnis der Aufnahme"
