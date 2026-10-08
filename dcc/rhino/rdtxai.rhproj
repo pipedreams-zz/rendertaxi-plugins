@@ -10,6 +10,7 @@
     "name": "rdtx.ai",
     "version": "0.1.0",
     "publisher": {
+      "email": "pfeiffer@rendertaxi.de",
       "name": "Alexander Pfeiffer",
       "url": "https://github.com/pipedreams-zz/rendertaxi-plugins"
     },

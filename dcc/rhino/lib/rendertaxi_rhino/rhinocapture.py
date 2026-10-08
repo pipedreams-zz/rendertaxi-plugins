@@ -8,8 +8,8 @@ Gitter vorher und nachher gleich). PNG 8 Bit RGBA mit ``sRGB``-Chunk (QR-02, gem
 
 **Rendering.** ``-_Render`` mit dem aktuellen Renderer; die Datenpässe nur mit Rhino Render. Was das Rendern
 braucht — Kanalwahl, Bildgröße, Quelle „aktive Ansicht" —, setzt ``TransientRender`` nur für diesen Lauf in den
-Rendereinstellungen des Dokuments und stellt danach die **Kopie der vorherigen Einstellungen** zurück, samt
-Änderungsmarke des Dokuments (Regel 2: die Einstellungen des Nutzers sind danach dieselben). Aus einem Skript
+Rendereinstellungen des Dokuments und stellt danach die **Kopie der vorherigen Einstellungen** zurück (Regel 2:
+die Einstellungen des Nutzers sind danach dieselben; zur Änderungsmarke siehe ``TransientRender``). Aus einem Skript
 ist ``-_Render`` modal (QR-08, gemessen): der Aufruf kehrt nach dem fertigen Bild zurück, die Oberfläche
 zeichnet währenddessen weiter.
 
@@ -424,9 +424,10 @@ class TransientRender:
 
     Gemessen (Rhino 8.35, 08.10.2026):
 
-    * Jede Zuweisung an ``doc.RenderSettings`` markiert das Dokument als geändert, und ``doc.Modified = False``
-      greift danach nur im Kontext eines Befehls — nicht im Leerlauf, nicht in einem Zeitgeber, nicht nach
-      einem Klick im Fenster.
+    * Jede Zuweisung an ``doc.RenderSettings`` markiert das Dokument als geändert. ``doc.Modified`` lässt sich
+      unter macOS nicht setzen, auch nicht in einem Befehl oder einem zweiten Befehlsaufruf
+      (``tools/measure_modified_mark.py``); Rhino für macOS speichert ein gespeichertes Dokument rund 15 s später
+      selbst, dann ist die Marke weg. Unter Windows ist das Setzen nicht gemessen — der Versuch unten schadet nicht.
     * Am Objekt des Dokuments (``BeginChange`` … ``EndChange``) markiert ein Wechsel des **Kanalmodus** das
       Dokument nicht; eine geänderte **Kanalliste** markiert es in jedem Änderungskontext (Program, Ignore, UI).
 
