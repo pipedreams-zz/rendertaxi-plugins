@@ -11,6 +11,10 @@
 #include <shlobj.h>
 #endif
 
+#if defined (__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace rtx {
 
 #if defined (_WIN32)
@@ -144,6 +148,51 @@ std::string NativePath (const std::string& path)
 }
 
 #endif
+
+std::string NormalizeNfc (const std::string& utf8)
+{
+	if (utf8.empty ()) return utf8;
+	bool ascii = true;
+	for (const char c : utf8)
+		if (static_cast<unsigned char> (c) >= 0x80) ascii = false;
+	if (ascii) return utf8;  // ASCII ist in jeder Normalform gleich.
+#if defined (__APPLE__)
+	CFStringRef source = CFStringCreateWithBytes (kCFAllocatorDefault, reinterpret_cast<const UInt8*> (utf8.data ()),
+												  static_cast<CFIndex> (utf8.size ()), kCFStringEncodingUTF8, false);
+	if (source == nullptr) return utf8;
+	CFMutableStringRef text = CFStringCreateMutableCopy (kCFAllocatorDefault, 0, source);
+	CFRelease (source);
+	if (text == nullptr) return utf8;
+	CFStringNormalize (text, kCFStringNormalizationFormC);
+	const CFIndex length = CFStringGetLength (text);
+	CFIndex bytes = 0;
+	CFStringGetBytes (text, CFRangeMake (0, length), kCFStringEncodingUTF8, 0, false, nullptr, 0, &bytes);
+	std::string out (static_cast<std::size_t> (bytes), '\0');
+	if (bytes > 0)
+		CFStringGetBytes (text, CFRangeMake (0, length), kCFStringEncodingUTF8, 0, false,
+						  reinterpret_cast<UInt8*> (&out[0]), bytes, nullptr);
+	CFRelease (text);
+	return out;
+#elif defined (_WIN32)
+	const std::wstring wide = Widen (utf8);
+	if (wide.empty ()) return utf8;
+	int length = NormalizeString (NormalizationC, wide.data (), static_cast<int> (wide.size ()), nullptr, 0);
+	for (int attempt = 0; attempt < 3 && length > 0; ++attempt) {
+		std::wstring out (static_cast<std::size_t> (length), L'\0');
+		const int written =
+			NormalizeString (NormalizationC, wide.data (), static_cast<int> (wide.size ()), &out[0], length);
+		if (written > 0) {
+			out.resize (static_cast<std::size_t> (written));
+			return Narrow (out);
+		}
+		if (GetLastError () != ERROR_INSUFFICIENT_BUFFER) break;
+		length = -written;
+	}
+	return utf8;
+#else
+	return utf8;
+#endif
+}
 
 bool RemoveFile (const std::string& path)
 {

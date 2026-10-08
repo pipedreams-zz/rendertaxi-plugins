@@ -7,17 +7,21 @@
 # unter Windows Credential Manager, WinHTTP (URL-Zerlegung) und WIC.
 
 add_library (rtxcore STATIC
+	src/ArchicadCamera.cpp
 	src/Canonical.cpp
 	src/CaptureManifest.cpp
 	src/CaptureTransfer.cpp
+	src/CaptureWays.cpp
 	src/CropPlan.cpp
 	src/DeviceLogin.cpp
+	src/Glb.cpp
 	src/HttpCurl.cpp
 	src/Ids.cpp
 	src/ImageCrop.cpp
 	src/ImageFile.cpp
 	src/Json.cpp
 	src/Log.cpp
+	src/Numbers.cpp
 	src/PaletteText.cpp
 	src/Platform.cpp
 	src/SavedViews.cpp
@@ -52,7 +56,8 @@ target_link_libraries (rtxcore PUBLIC CURL::libcurl)
 if (WIN32)
 	# Credential Manager (Advapi32), URL-Zerlegung (WinHTTP), Bilder (WIC über
 	# COM), Known Folders (Shell32). Alles Systembibliotheken von Windows.
-	target_link_libraries (rtxcore PUBLIC advapi32 winhttp windowscodecs ole32 shell32)
+	# `NormalizeString` (NFC des Dateinamens) aus Normaliz.
+	target_link_libraries (rtxcore PUBLIC advapi32 winhttp windowscodecs ole32 shell32 normaliz)
 endif ()
 
 if (APPLE)

@@ -165,6 +165,43 @@ void FakePlatform::SetCanvasDefault (std::string aspectRatio, int longEdgePx)
 	canvasLongEdgePx = longEdgePx;
 }
 
+void FakePlatform::SetCaptureMaxMinor (int minor)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	captureMaxMinor = minor;
+}
+
+void FakePlatform::SetHighestSupportedVersionText (std::string text)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	highestSupportedVersionText = std::move (text);
+}
+
+std::string FakePlatform::LastContractVersion () const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	return lastContractVersion;
+}
+
+std::string FakePlatform::LastBaseImageRole () const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	return lastBaseImageRole;
+}
+
+std::vector<std::string> FakePlatform::LastFileRoles () const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	return lastFileRoles;
+}
+
+std::string FakePlatform::BlobBytes (const std::string& sha256) const
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	const auto found = blobBytes.find (sha256);
+	return found == blobBytes.end () ? std::string () : found->second;
+}
+
 void FakePlatform::RejectNextFile ()
 {
 	std::lock_guard<std::mutex> guard (mutex);
@@ -375,6 +412,7 @@ std::string FakePlatform::SessionJson (const Session& session) const
 	media->Append (Json::MakeString ("image/jpeg"));
 	media->Append (Json::MakeString ("image/png"));
 	media->Append (Json::MakeString ("image/webp"));
+	if (captureMaxMinor >= 2) media->Append (Json::MakeString ("model/gltf-binary"));
 	limits->Set ("allowedMediaTypes", media);
 	limits->Set ("captureTtlSeconds", Json::MakeInt (86400));
 	root->Set ("limits", limits);
@@ -709,7 +747,7 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 		JsonPtr versions = rtx::Json::MakeArray ();
 		JsonPtr one = rtx::Json::MakeObject ();
 		one->Set ("major", rtx::Json::MakeInt (1));
-		one->Set ("maxMinor", rtx::Json::MakeInt (0));
+		one->Set ("maxMinor", rtx::Json::MakeInt (captureMaxMinor));
 		versions->Append (one);
 		capture->Set ("versions", versions);
 		contracts->Append (capture);
@@ -731,7 +769,10 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 							  rtx::Json::MakeString ("rendertaxi.plugin.capture-manifest"));
 			negotiation->Set ("contractVersion", rtx::Json::MakeString ("1.0.0"));
 			negotiation->Set ("result", rtx::Json::MakeString ("supported"));
-			negotiation->Set ("highestSupportedVersion", rtx::Json::MakeString ("1.0.0"));
+			negotiation->Set ("highestSupportedVersion",
+							  rtx::Json::MakeString (highestSupportedVersionText.empty ()
+														 ? "1." + std::to_string (captureMaxMinor) + ".0"
+														 : highestSupportedVersionText));
 			root->Set ("negotiation", negotiation);
 		} else {
 			root->Set ("negotiation", rtx::Json::MakeNull ());
@@ -757,6 +798,8 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 		media->Append (rtx::Json::MakeString ("image/jpeg"));
 		media->Append (rtx::Json::MakeString ("image/png"));
 		media->Append (rtx::Json::MakeString ("image/webp"));
+		// Seit RTX-P-011 nennt der Server die Modelldatei — nur für die Rolle `model`.
+		if (captureMaxMinor >= 2) media->Append (rtx::Json::MakeString ("model/gltf-binary"));
 		limits->Set ("allowedMediaTypes", media);
 		limits->Set ("captureTtlSeconds", rtx::Json::MakeInt (86400));
 		root->Set ("limits", limits);
@@ -991,6 +1034,9 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 			session.targetViewpointName = Text (viewpoint, "name");
 			session.targetBaseImageRole = Text (viewpoint, "baseImageRole");
 		}
+		lastContractVersion = session.contractVersion;
+		lastBaseImageRole = session.targetBaseImageRole;
+		lastFileRoles.clear ();
 
 		if (const JsonPtr files = body->Get ("files")) {
 			for (const JsonPtr& item : files->Items ()) {
@@ -1000,6 +1046,10 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 				file.sha256 = Text (item, "sha256");
 				file.mediaType = Text (item, "mediaType");
 				file.byteSize = IntOf (item, "byteSize");
+				lastFileRoles.push_back (file.role);
+				// Rolle und Medientyp gehören fest zusammen (§7.2).
+				if ((file.role == "model") != (file.mediaType == "model/gltf-binary"))
+					return ApiError (400, "validation_failed", "Rolle und Medientyp passen nicht zusammen.");
 				if (storedBlobs.count (file.sha256) > 0) {
 					file.state = "deduplicated";
 					file.assetId = rtx::NewUuidV7 ();

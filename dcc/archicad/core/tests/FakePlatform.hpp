@@ -56,6 +56,22 @@ public:
 	 * das Feld.
 	 */
 	void SetCanvasDefault (std::string aspectRatio, int longEdgePx);
+	/**
+	 * Die höchste MINOR des Capture-Manifests, die der Handshake nennt
+	 * (`versions[].maxMinor`, `negotiation.highestSupportedVersion`). Ohne
+	 * Aufruf 0, wie der Server, gegen den das Add-on zuerst gebaut wurde.
+	 */
+	void SetCaptureMaxMinor (int minor);
+	/** Ersetzt `negotiation.highestSupportedVersion` wörtlich — für unbrauchbare Angaben (F-01 an #311). */
+	void SetHighestSupportedVersionText (std::string text);
+	/** Die Anlage des letzten Captures: Fassung und `baseImageRole` (leer, wenn nicht gesendet). */
+	std::string LastContractVersion () const;
+	std::string LastBaseImageRole () const;
+	/** Die Rollen der Dateien der letzten Anlage, in ihrer Reihenfolge. */
+	std::vector<std::string> LastFileRoles () const;
+	/** Die Bytes einer übertragenen Datei nach ihrem SHA-256; leer, wenn nichts ankam. */
+	std::string BlobBytes (const std::string& sha256) const;
+
 	/** Die nächste Prüfung einer Datei lehnt sie ab (`asset_hash_mismatch`). */
 	void RejectNextFile ();
 	/** Die nächsten `count` Tokenabfragen antworten `slow_down`. */
@@ -157,6 +173,11 @@ private:
 	std::string canvasAspectRatio;
 	int canvasLongEdgePx = 0;
 	bool rejectNextFile = false;
+	int captureMaxMinor = 0;
+	std::string highestSupportedVersionText;
+	std::string lastContractVersion;
+	std::string lastBaseImageRole;
+	std::vector<std::string> lastFileRoles;
 	int slowDownRemaining = 0;
 	int rateLimitRemaining = 0;
 	int pendingPolls = 0;

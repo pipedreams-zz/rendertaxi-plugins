@@ -11,7 +11,10 @@
 
 #include "FakePlatform.hpp"
 #include "MockServer.hpp"
+#include "rtx/ArchicadCamera.hpp"
 #include "rtx/CaptureTransfer.hpp"
+#include "rtx/CaptureWays.hpp"
+#include "rtx/Glb.hpp"
 #include "rtx/DeviceLogin.hpp"
 #include "rtx/Ids.hpp"
 #include "rtx/Platform.hpp"
@@ -138,6 +141,57 @@ struct Harness {
 		request.target.viewpoint.baseImageRole = "viewport";
 		request.target.viewpoint.frame = frame;
 		return request;
+	}
+
+	/**
+	 * Hängt die Modelldatei (ein Würfel, eine Kamera) an — wie der Modellweg im Add-on
+	 * (RTX-A-012): Fassung aus dem Handshake, `geometry`, Kamerablock mit Bildgröße.
+	 */
+	std::string AddModel (TransferRequest& request, bool keepImage, const std::string& version)
+	{
+		GlbSceneBuilder builder;
+		builder.BeginElement ("0F0A1B2C-0000-4000-8000-00000000000A");
+		const std::uint32_t m = builder.Material (1, "Grau", 0.5, 0.5, 0.5, 0);
+		builder.AddConvexPolygon (m, {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}}, {}, {0, 0, 1});
+		ArchicadProjection view;
+		view.eye[0] = 0.5;
+		view.eye[1] = -5;
+		view.eye[2] = 1.6;
+		view.target[0] = 0.5;
+		view.target[1] = 0.5;
+		view.target[2] = 0;
+		view.hSize = 1600;
+		view.vSize = 900;
+		SceneBox box;
+		box.known = true;
+		box.max[0] = box.max[1] = 1;
+		const Result<MappedCamera> camera =
+			MapArchicadCamera (view, box, "Aktuelle Ansicht", "current", 0, 0, ContractMinor (version) >= 6);
+		RTX_CHECK (camera.IsOk ());
+		builder.Scene ().cameras.push_back (camera.Value ().gltf);
+		const Result<GlbFile> file = FinishGlb (builder.Scene (), 0);
+		RTX_CHECK (file.IsOk ());
+		const std::string bytes (file.Value ().bytes.begin (), file.Value ().bytes.end ());
+		EnsureDirectory (request.directory + "/model");
+		const std::string local = request.directory + "/model/scene.glb";
+		WriteTextFile (local, bytes);
+
+		CaptureManifest& manifest = request.manifest;
+		manifest.contractVersion = version;
+		if (!keepImage) manifest.assets.clear ();
+		CaptureAsset model;
+		model.role = kModelRole;
+		model.path = "model/scene.glb";
+		model.mediaType = kModelMediaType;
+		model.byteSize = static_cast<std::int64_t> (bytes.size ());
+		model.sha256 = Sha256::OfString (bytes);
+		model.localPath = local;
+		manifest.assets.push_back (model);
+		manifest.hasGeometry = true;
+		manifest.geometry.assetPath = model.path;
+		manifest.hasCamera = true;
+		manifest.camera = camera.Value ().manifest;
+		return model.sha256;
 	}
 };
 
@@ -1171,4 +1225,108 @@ RTX_TEST (RahmenAnAufnahmeAnpassenGehtUeberDieLeitung)
 	RTX_CHECK (second.IsOk ());
 	RTX_CHECK_EQ (second.Value ().viewpointId, first.Value ().viewpointId);
 	RTX_CHECK_EQ (harness.platform.BaseImageVersions (), 2);
+}
+
+// --- RTX-A-012: der Modellweg durch denselben Zustandsautomaten ---------------
+
+RTX_TEST (ModellAlleinLaeuftDurchDenZustandsautomaten)
+{
+	Harness harness;
+	harness.platform.SetCaptureMaxMinor (7);
+	harness.SignIn ();
+	const Result<HandshakeInfo> handshake = harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+	RTX_CHECK (handshake.IsOk ());
+	const int minor = HighestCaptureMinor (handshake.Value ());
+	RTX_CHECK_EQ (minor, 7);
+	RTX_CHECK_EQ (handshake.Value ().limits.maxGeometryBytes, std::int64_t (67108864));
+	const CapturePlan plan = PlanCapture (false, true, minor).Value ();
+	RTX_CHECK (plan.ModelOnly ());
+
+	TransferRequest request = harness.MakeRequest ("modell-allein", "create");
+	const std::string sha = harness.AddModel (request, false, PlanContractVersion (plan, minor));
+	std::string local;
+	RTX_CHECK (ReadTextFile (request.manifest.assets[0].localPath, local));
+	CaptureTransfer transfer (*harness.api, *harness.store);
+	const Result<CaptureResult> result = transfer.Run (request, nullptr, {});
+	RTX_CHECK (result.IsOk ());
+	if (!result) {
+		std::cerr << "  " << result.GetError ().code << ": " << result.GetError ().message << "\n";
+		return;
+	}
+	RTX_CHECK_EQ (harness.platform.LastContractVersion (), std::string ("1.6.0"));
+	// Ohne Bild kein Basisbild: `baseImageRole` reist nicht mit (§7.2).
+	RTX_CHECK_EQ (harness.platform.LastBaseImageRole (), std::string ());
+	RTX_CHECK_EQ (harness.platform.LastFileRoles ().size (), std::size_t (1));
+	RTX_CHECK_EQ (harness.platform.LastFileRoles ().front (), std::string ("model"));
+	// Dieselben Bytes kommen an — und die temporäre GLB ist danach gelöscht (Sicherheits-Checkliste #307).
+	RTX_CHECK (!local.empty ());
+	RTX_CHECK (harness.platform.BlobBytes (sha) == local);
+	RTX_CHECK_EQ (FileSize (request.manifest.assets[0].localPath), -1LL);
+	RTX_CHECK_EQ (PlanResultText (result.Value (), false), std::string ("Modell und Kamera übernommen."));
+}
+
+RTX_TEST (BildUndModellLaufenGemeinsam)
+{
+	Harness harness;
+	harness.platform.SetCaptureMaxMinor (7);
+	harness.SignIn ();
+	TransferRequest request = harness.MakeRequest ("bild-und-modell", "create");
+	harness.AddModel (request, true, "1.6.0");
+	CaptureTransfer transfer (*harness.api, *harness.store);
+	const Result<CaptureResult> result = transfer.Run (request, nullptr, {});
+	RTX_CHECK (result.IsOk ());
+	RTX_CHECK_EQ (harness.platform.LastBaseImageRole (), std::string ("viewport"));
+	RTX_CHECK_EQ (harness.platform.LastFileRoles ().size (), std::size_t (2));
+	RTX_CHECK_EQ (PlanResultText (result.Value (), true), std::string ("Bild und Modell übernommen."));
+}
+
+RTX_TEST (ModellHatSeineEigeneGrenze)
+{
+	Harness harness;
+	harness.platform.SetCaptureMaxMinor (7);
+	harness.SignIn ();
+	const Result<HandshakeInfo> handshake = harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+	TransferRequest request = harness.MakeRequest ("modell-grenze", "create");
+	harness.AddModel (request, true, "1.6.0");
+	CaptureAsset& model = request.manifest.assets.back ();
+	// Größer als ein Bild sein darf (`maxAssetBytes`), aber unter `maxGeometryBytes`: angenommen.
+	model.byteSize = handshake.Value ().limits.maxAssetBytes + 1;
+	RTX_CHECK (CaptureTransfer::CheckLimits (request.manifest, 1000, handshake.Value ().limits).IsOk ());
+	model.byteSize = handshake.Value ().limits.maxGeometryBytes + 1;
+	const Status tooLarge = CaptureTransfer::CheckLimits (request.manifest, 1000, handshake.Value ().limits);
+	RTX_CHECK (!tooLarge);
+	RTX_CHECK_EQ (tooLarge.GetError ().code, std::string (errc::LimitExceeded));
+	// Ein Server ohne Modell nennt `model/gltf-binary` nicht: abgelehnt, bevor etwas übertragen wird.
+	Harness older;
+	older.SignIn ();
+	const Result<HandshakeInfo> oldHandshake = older.api->Handshake (MakeDevice (older.deviceId), nullptr);
+	model.byteSize = 10;
+	RTX_CHECK (!CaptureTransfer::CheckLimits (request.manifest, 1000, oldHandshake.Value ().limits));
+}
+
+// --- F-01 an PR #311: eine übergroße Fassung vom Server ist ein Fehlerwert, keine Ausnahme ---
+
+RTX_TEST (UebergrosseFassungImHandshakeWirftNicht)
+{
+	for (const char* text : {"1.999999999999999999999.0", "99999999999999999999.6.0", "1.6.99999999999999999999"}) {
+		Harness harness;
+		harness.platform.SetCaptureMaxMinor (7);
+		harness.platform.SetHighestSupportedVersionText (text);
+		bool threw = false;
+		int minor = 0;
+		try {
+			const Result<HandshakeInfo> handshake = harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+			RTX_CHECK (handshake.IsOk ());
+			RTX_CHECK_EQ (handshake.Value ().highestSupportedVersion, std::string (text));
+			minor = HighestCaptureMinor (handshake.Value ());
+			// Unbrauchbar heißt „unbekannt": die Wahl bleibt, das Manifest prüft dann selbst.
+			const Result<CapturePlan> plan = PlanCapture (true, true, minor);
+			RTX_CHECK (plan.IsOk ());
+			RTX_CHECK (!PlanContractVersion (plan.Value (), minor).empty ());
+		} catch (...) {
+			threw = true;
+		}
+		RTX_CHECK (!threw);
+		RTX_CHECK_EQ (minor, -1);
+	}
 }

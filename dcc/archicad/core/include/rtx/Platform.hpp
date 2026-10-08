@@ -50,6 +50,15 @@ bool RenameReplacing (const std::string& from, const std::string& to);
  */
 std::string NativePath (const std::string& path);
 
+/**
+ * Unicode-Normalform C eines UTF-8-Textes über das System — unter macOS
+ * `CFStringNormalize`, unter Windows `NormalizeString`. macOS liefert
+ * Dateinamen zerlegt (NFD), das Manifest steht in NFC (`source.fileName`,
+ * `capture-manifest.md` Abschnitt 13). Ohne Systemhilfe (andere Plattformen,
+ * ungültiges UTF-8) bleibt der Text, wie er ist.
+ */
+std::string NormalizeNfc (const std::string& utf8);
+
 #if defined (_WIN32)
 /** UTF-8 nach UTF-16; leer bei ungültigem UTF-8. */
 std::wstring Widen (const std::string& utf8);

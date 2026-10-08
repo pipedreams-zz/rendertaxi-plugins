@@ -83,9 +83,17 @@ Status CaptureTransfer::CheckLimits (const CaptureManifest& manifest, std::int64
 		if (asset.status != "present") continue;
 		++count;
 		total += asset.byteSize;
-		if (limits.maxAssetBytes > 0 && asset.byteSize > limits.maxAssetBytes)
+		if (asset.role == kModelRole) {
+			// Die Modelldatei hat ihre eigene Grenze (`maxGeometryBytes`, RTX-P-011).
+			const std::int64_t cap = limits.maxGeometryBytes > 0 ? limits.maxGeometryBytes : limits.maxAssetBytes;
+			if (cap > 0 && asset.byteSize > cap)
+				return Status::Fail (errc::LimitExceeded,
+									 "Das Modell ist größer, als der Server annimmt. Bitte den 3D-Ausschnitt "
+									 "verkleinern.");
+		} else if (limits.maxAssetBytes > 0 && asset.byteSize > limits.maxAssetBytes) {
 			return Status::Fail (errc::LimitExceeded,
 								 "Die Datei " + asset.path + " ist größer, als der Server annimmt.");
+		}
 		if (!limits.allowedMediaTypes.empty ()) {
 			bool allowed = false;
 			for (const std::string& type : limits.allowedMediaTypes) {
@@ -248,9 +256,17 @@ Result<CaptureResult> CaptureTransfer::Run (const TransferRequest& request, Canc
 
 	CreateCaptureRequest create;
 	create.contract = kCaptureContract;
-	create.contractVersion = kCaptureContractVersion;
+	// Die Fassung **der Bytes auf der Platte**: eine Wiederaufnahme sendet dieselbe Anlage, auch wenn der
+	// Server inzwischen eine neuere Fassung nennt — sonst wiese er sie als `idempotency_conflict` ab.
+	create.contractVersion = request.manifest.contractVersion;
+	if (const JsonPtr stored = Json::Parse (manifestText))
+		create.contractVersion = stored->Get ("contractVersion") ? stored->Get ("contractVersion")->StringOr (create.contractVersion)
+																 : create.contractVersion;
 	create.manifestSha256 = manifestSha256;
 	create.target = request.target;
+	// Ohne Bild gibt es kein Basisbild: `baseImageRole` nennt nie `model` (§7.2), und eine Bildrolle ohne
+	// Bilddatei wäre eine Formverletzung. Der Blickpunkt bekommt dann Modell und Kamera (RTX-P-014).
+	if (!request.manifest.HasPresentImage ()) create.target.viewpoint.baseImageRole.clear ();
 	for (const CaptureAsset& asset : request.manifest.assets) {
 		if (asset.status == "present") create.files.push_back (asset);
 	}

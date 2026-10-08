@@ -35,6 +35,8 @@ inline constexpr const char* kPluginClientId = "ai.rendertaxi.plugin.archicad";
  */
 struct CaptureLimits {
 	std::int64_t maxAssetBytes = 0;
+	/** Die eigene Grenze der Modelldatei (RTX-P-011); ohne Angabe gilt `maxAssetBytes`. */
+	std::int64_t maxGeometryBytes = 0;
 	std::int64_t maxTotalBytes = 0;
 	std::int64_t maxManifestBytes = 0;
 	int maxAssetCount = 0;

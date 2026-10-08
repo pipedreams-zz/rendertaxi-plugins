@@ -93,7 +93,10 @@ keine neu aufgenommene Abhängigkeit im Sinne der Reiferichtlinie aus
 | Baustein          | Was er tut                                                                                                 |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |
 | `Canonical`       | Längenpräfigierte Kodierung und `contentHash` nach `architecture.md`, 8.2 und 8.6                          |
-| `CaptureManifest` | Erzeugt und **prüft** das Manifest, bevor etwas das Gerät verlässt                                         |
+| `CaptureManifest` | Erzeugt und **prüft** das Manifest, bevor etwas das Gerät verlässt — Fassungen 1.0.0 bis 1.6.0             |
+| `CaptureWays`     | Bild, Modell oder beides; Fassung aus dem Handshake, Rückfall gegen ältere Server (RTX-A-012)              |
+| `Glb`             | GLB-Schreiber des Modellwegs: Knoten je Element mit GUID, Grenzen vor dem Senden, Rückfall je Material     |
+| `ArchicadCamera`  | Kamera einer Ansicht als glTF-Kamera und Kamerablock: Perspektive, Zweifluchtpunkt als Shift, Parallel     |
 | `PluginApiClient` | Die elf Endpunkte der Plugin API v1 und die beiden Lesewege                                                |
 | `CaptureTransfer` | Der Zustandsautomat der Übernahme: anlegen, übertragen, Manifest, finalisieren, wiederaufnehmen            |
 | `TransferStore`   | Was einen Neustart von Archicad überlebt — Idempotenzschlüssel, angefangene Vorgänge, der letzte Vorschlag |

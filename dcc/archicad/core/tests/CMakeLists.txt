@@ -8,6 +8,7 @@ add_executable (rtxcore-tests
 	PlatformTest.cpp
 	SavedViewsTest.cpp
 	ProjectListTest.cpp
+	ModelWayTest.cpp
 )
 
 target_link_libraries (rtxcore-tests PRIVATE rtxcore)
@@ -17,6 +18,10 @@ target_link_libraries (rtxcore-tests PRIVATE rtxcore)
 target_include_directories (rtxcore-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}"
 	"${CMAKE_CURRENT_LIST_DIR}/../../src")
 target_compile_features (rtxcore-tests PRIVATE cxx_std_17)
+# Die gemeinsamen Fixtures (`integrations/_shared/fixtures/v1`): die Fälle der Dateinamen gelten für
+# Python-Client, Server und diesen Kern gleich.
+target_compile_definitions (rtxcore-tests PRIVATE
+	RTX_SHARED_FIXTURES="${CMAKE_CURRENT_LIST_DIR}/../../../../_shared/fixtures/v1")
 if (NOT WIN32)
 	target_compile_options (rtxcore-tests PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
 endif ()

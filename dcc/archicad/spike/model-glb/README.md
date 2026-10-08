@@ -8,6 +8,12 @@ deshalb unverändert, so verlangt es Regel 2 des Auftrags.
 Ergebnisse und Empfehlung stehen in
 [`../../../docs/model-glb-spike.md`](../../../docs/model-glb-spike.md).
 
+**Umsetzung (RTX-A-012, #307):** Schreiber und Kameraabbildung leben jetzt im
+DevKit-freien Kern — `core/include/rtx/Glb.hpp` und
+`core/include/rtx/ArchicadCamera.hpp`, mit Kerntests gegen die Messwerte dieses
+Ordners. Die Dateien hier bleiben als Stand der Messung unverändert; neue Arbeit
+gehört in den Kern.
+
 ## Inhalt
 
 | Datei                    | Zweck                                                                                 |

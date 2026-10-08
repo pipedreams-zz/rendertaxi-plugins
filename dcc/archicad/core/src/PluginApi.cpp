@@ -7,6 +7,7 @@
 
 #include "rtx/Ids.hpp"
 #include "rtx/Log.hpp"
+#include "rtx/Numbers.hpp"
 
 namespace rtx {
 namespace {
@@ -101,6 +102,7 @@ CaptureLimits ParseLimits (const JsonPtr& node)
 	CaptureLimits limits;
 	if (node == nullptr) return limits;
 	limits.maxAssetBytes = IntField (node, "maxAssetBytes", 0);
+	limits.maxGeometryBytes = IntField (node, "maxGeometryBytes", 0);
 	limits.maxTotalBytes = IntField (node, "maxTotalBytes", 0);
 	limits.maxManifestBytes = IntField (node, "maxManifestBytes", 0);
 	limits.maxAssetCount = static_cast<int> (IntField (node, "maxAssetCount", 0));
@@ -229,9 +231,12 @@ DesiredOutput ParseDesiredOutput (const JsonPtr& node)
 	if (node == nullptr || node->GetKind () != Json::Kind::Object) return desired;
 	const std::string kind = TextField (node, "kind");
 	if (kind == "exact") {
-		desired.exactWidth = static_cast<int> (IntField (node, "width", 0));
-		desired.exactHeight = static_cast<int> (IntField (node, "height", 0));
-		if (desired.exactWidth <= 0 || desired.exactHeight <= 0) return desired;
+		// Erst begrenzen, dann verengen: eine übergroße Zahl würde als `int` zu irgendetwas (F-01 an #311).
+		const std::int64_t width = IntField (node, "width", 0);
+		const std::int64_t height = IntField (node, "height", 0);
+		if (width <= 0 || height <= 0 || width > kBoundedIntMax || height > kBoundedIntMax) return desired;
+		desired.exactWidth = static_cast<int> (width);
+		desired.exactHeight = static_cast<int> (height);
 		desired.known = true;
 		int a = desired.exactWidth;
 		int b = desired.exactHeight;
@@ -246,9 +251,10 @@ DesiredOutput ParseDesiredOutput (const JsonPtr& node)
 	const std::string value = TextField (node, "value");
 	const std::size_t colon = value.find (':');
 	if (colon == std::string::npos || colon == 0 || colon + 1 >= value.size ()) return desired;
-	desired.aspectWidth = std::atoi (value.substr (0, colon).c_str ());
-	desired.aspectHeight = std::atoi (value.substr (colon + 1).c_str ());
-	if (desired.aspectWidth <= 0 || desired.aspectHeight <= 0) {
+	// Begrenzt und ohne `atoi`: eine übergroße Zahl vom Server ist kein Seitenverhältnis (F-01 an #311).
+	if (!ParseBoundedInt (value.substr (0, colon), desired.aspectWidth) ||
+		!ParseBoundedInt (value.substr (colon + 1), desired.aspectHeight) || desired.aspectWidth <= 0 ||
+		desired.aspectHeight <= 0) {
 		desired.aspectWidth = 0;
 		desired.aspectHeight = 0;
 		return desired;

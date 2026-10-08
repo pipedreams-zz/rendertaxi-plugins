@@ -4,6 +4,7 @@
 
 #include "rtx/Ids.hpp"
 #include "rtx/Log.hpp"
+#include "rtx/Numbers.hpp"
 
 namespace rtx {
 
@@ -89,7 +90,9 @@ Result<StoredCredential> DeviceLogin::SignIn (const DeviceIdentity& device, Canc
 		if (code == errc::SlowDown) {
 			// **Dauerhaft** um 5 s erhöhen; nennt der Server einen neuen
 			// Abstand in `details.interval`, gilt dieser (§5.1).
-			const int announced = std::atoi (token.GetError ().pointer.c_str ());
+			// Begrenzt gelesen (F-01 an #311): mehr als eine Stunde Abstand ist keine Angabe, sondern ein Fehler.
+			int announced = 0;
+			if (!ParseBoundedInt (token.GetError ().pointer, announced, 3600)) announced = 0;
 			interval = announced > 0 ? announced : interval + kSlowDownIncrementSeconds;
 			LogLine ("Gerätelogin: Abstand auf " + std::to_string (interval) + " s erhöht.");
 			continue;

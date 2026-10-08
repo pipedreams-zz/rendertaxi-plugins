@@ -1,10 +1,14 @@
 #include "rtx/CaptureManifest.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <regex>
 #include <set>
 
 #include "rtx/Canonical.hpp"
 #include "rtx/Ids.hpp"
+#include "rtx/Numbers.hpp"
+#include "rtx/Platform.hpp"
 
 namespace rtx {
 namespace {
@@ -13,7 +17,107 @@ constexpr std::int64_t kMaxSafeInteger = 9007199254740991LL;
 
 const char* const kRoles[] = {"viewport", "beauty",    "depth",         "normal",  "albedo",
 							  "mask",     "object-id", "material-id",   "ambient-occlusion",
-							  "cryptomatte"};
+							  "cryptomatte", "model"};
+
+/** Präzisionsklassen (`canonical-hash.mjs`, `CANONICAL_DECIMALS`). */
+constexpr int kLength = 6;
+constexpr int kRatio = 6;
+constexpr int kAngle = 9;
+constexpr int kDirection = 9;
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kUnitTolerance = 1e-6;
+
+/** Kanonischer Wert einer Präzisionsklasse: gerundet, ohne negative Null. */
+double Canon (double value, int decimals)
+{
+	const double scale = std::pow (10.0, decimals);
+	const double rounded = std::round (value * scale) / scale;
+	return rounded == 0.0 ? 0.0 : rounded;
+}
+
+JsonPtr Decimal (double value, int decimals)
+{
+	return Json::MakeDecimal (Canon (value, decimals), decimals);
+}
+
+JsonPtr Vector (const double v[3], int decimals)
+{
+	JsonPtr array = Json::MakeArray ();
+	for (int i = 0; i < 3; ++i) array->Append (Decimal (v[i], decimals));
+	return array;
+}
+
+double Length3 (const double v[3])
+{
+	return std::sqrt (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+bool AllFinite (const double v[3])
+{
+	return std::isfinite (v[0]) && std::isfinite (v[1]) && std::isfinite (v[2]);
+}
+
+/** Die Codepunkte eines UTF-8-Textes; leer bei ungültigem UTF-8. */
+bool DecodeUtf8 (const std::string& text, std::vector<std::uint32_t>& out)
+{
+	out.clear ();
+	for (std::size_t i = 0; i < text.size ();) {
+		const unsigned char c = static_cast<unsigned char> (text[i]);
+		std::uint32_t cp = 0;
+		int extra = 0;
+		if (c < 0x80) { cp = c; }
+		else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+		else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+		else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+		else return false;
+		for (int k = 1; k <= extra; ++k) {
+			if (i + k >= text.size ()) return false;
+			const unsigned char next = static_cast<unsigned char> (text[i + k]);
+			if ((next & 0xC0) != 0x80) return false;
+			cp = (cp << 6) | (next & 0x3F);
+		}
+		out.push_back (cp);
+		i += 1 + extra;
+	}
+	return true;
+}
+
+/** Die Regel des Schemas für `source.fileName` (`pattern`, Länge). */
+bool MatchesFileName (const std::string& name)
+{
+	std::vector<std::uint32_t> points;
+	if (!DecodeUtf8 (name, points)) return false;
+	if (points.empty () || points.size () > 255) return false;
+	if (name == "." || name == "..") return false;
+	for (const std::uint32_t cp : points) {
+		if (cp == '/' || cp == '\\' || cp == ':') return false;
+		if (cp <= 0x1F || (cp >= 0x7F && cp <= 0x9F)) return false;
+		if ((cp >= 0x200B && cp <= 0x200F) || (cp >= 0x2028 && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) ||
+			cp == 0xFEFF)
+			return false;
+	}
+	return true;
+}
+
+/**
+ * Dieselben Funde wie `FORBIDDEN_CONTENT` in `tools/validate.mjs` und im
+ * Server, soweit sie einen Dateinamen treffen können (wie
+ * `_FILE_NAME_FORBIDDEN` im Python-Client). `\b` arbeitet hier wie in
+ * JavaScript ohne `u`: ein Byte über 0x7F ist kein Wortzeichen.
+ */
+bool HasForbiddenContent (const std::string& text)
+{
+	static const std::regex patterns[] = {
+		std::regex ("[A-Za-z0-9._-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*"),
+		std::regex ("\\b[A-Za-z0-9-]+\\.(local|lan|internal|localdomain)\\b", std::regex::icase),
+		std::regex ("\\b(secret|password|passwd|api[_-]?key|access[_-]?token|bearer)\\b\\s*[:=]", std::regex::icase),
+		std::regex ("X-Amz-[A-Za-z-]+=|X-Goog-Signature=|[?&](Signature|sig)="),
+		std::regex ("\\bBEGIN [A-Z ]*PRIVATE KEY\\b"),
+	};
+	for (const std::regex& pattern : patterns)
+		if (std::regex_search (text, pattern)) return true;
+	return false;
+}
 
 Status Invalid (const std::string& message, const std::string& pointer)
 {
@@ -147,6 +251,50 @@ bool IsColorAssetRole (const std::string& role)
 	return role == "viewport" || role == "beauty" || role == "albedo";
 }
 
+int ContractMinor (const std::string& contractVersion)
+{
+	// Ohne `std::stoi`: eine übergroße MINOR aus dem Handshake oder einem Manifest wäre sonst eine
+	// Ausnahme statt eines Fehlerwerts (F-01 an PR #311). MAJOR und PATCH werden ebenso begrenzt gelesen.
+	if (!MatchesSemver (contractVersion)) return -1;
+	const std::size_t first = contractVersion.find ('.');
+	const std::size_t second = contractVersion.find ('.', first + 1);
+	int major = 0, minor = 0, patch = 0;
+	if (!ParseBoundedInt (contractVersion.substr (0, first), major) ||
+		!ParseBoundedInt (contractVersion.substr (first + 1, second - first - 1), minor) ||
+		!ParseBoundedInt (contractVersion.substr (second + 1), patch))
+		return -1;
+	return major == 1 ? minor : -1;
+}
+
+std::string SourceFileName (const std::string& nameOrPath)
+{
+	std::string name = NormalizeNfc (nameOrPath);
+	std::replace (name.begin (), name.end (), '\\', '/');
+	const std::size_t slash = name.rfind ('/');
+	if (slash != std::string::npos) name = name.substr (slash + 1);
+	// Leerraum am Rand wie `str.strip ()` im Python-Client (ASCII genügt: der Name kommt aus dem Dateisystem).
+	const char* const space = " \t\n\r\f\v";
+	const std::size_t first = name.find_first_not_of (space);
+	if (first == std::string::npos) return {};
+	name = name.substr (first, name.find_last_not_of (space) - first + 1);
+	if (!MatchesFileName (name) || HasForbiddenContent (name)) return {};
+	return name;
+}
+
+bool CaptureManifest::HasPresentImage () const
+{
+	for (const CaptureAsset& asset : assets)
+		if (asset.status == "present" && asset.role != kModelRole) return true;
+	return false;
+}
+
+bool CaptureManifest::HasPresentModel () const
+{
+	for (const CaptureAsset& asset : assets)
+		if (asset.status == "present" && asset.role == kModelRole) return true;
+	return false;
+}
+
 Result<std::string> CaptureManifest::ContentHash () const
 {
 	std::vector<ContentHashAsset> present;
@@ -157,8 +305,66 @@ Result<std::string> CaptureManifest::ContentHash () const
 	return CaptureContentHash (present);
 }
 
+namespace {
+
+/** Der Kamerablock nach `checkCamera` in `tools/validate.mjs` und dem Schema. */
+Status ValidateCamera (const CaptureCamera& camera, int minor)
+{
+	const bool perspective = camera.projection == "perspective";
+	if (!perspective && camera.projection != "orthographic")
+		return Invalid ("camera.projection ist weder perspective noch orthographic.", "/camera/projection");
+	if (!AllFinite (camera.position) || !AllFinite (camera.direction) || !AllFinite (camera.up))
+		return Invalid ("camera enthält keine endliche Zahl.", "/camera");
+	double direction[3], up[3];
+	for (int i = 0; i < 3; ++i) {
+		direction[i] = Canon (camera.direction[i], kDirection);
+		up[i] = Canon (camera.up[i], kDirection);
+	}
+	if (std::fabs (Length3 (direction) - 1.0) > kUnitTolerance)
+		return Invalid ("camera.direction ist kein normierter Vektor.", "/camera/direction");
+	if (std::fabs (Length3 (up) - 1.0) > kUnitTolerance)
+		return Invalid ("camera.up ist kein normierter Vektor.", "/camera/up");
+	const double dot = direction[0] * up[0] + direction[1] * up[1] + direction[2] * up[2];
+	if (std::fabs (dot) >= 1.0 - kUnitTolerance)
+		return Invalid ("camera.up ist parallel zu direction.", "/camera/up");
+	if (perspective) {
+		if (camera.fovAxis != "horizontal" && camera.fovAxis != "vertical")
+			return Invalid ("camera.fieldOfView.axis ist weder horizontal noch vertical.", "/camera/fieldOfView/axis");
+		const double angle = Canon (camera.fovAngle, kAngle);
+		if (!(angle > 0.0 && angle < kPi))
+			return Invalid ("camera.fieldOfView.angle liegt nicht echt zwischen 0 und π.", "/camera/fieldOfView/angle");
+	} else {
+		if (!(Canon (camera.halfWidth, kLength) > 0.0) || !(Canon (camera.halfHeight, kLength) > 0.0))
+			return Invalid ("camera.extent braucht halbe Breite und Höhe größer als 0.", "/camera/extent");
+	}
+	const double nearClip = Canon (camera.clipNear, kLength);
+	if (!(nearClip > 0.0)) return Invalid ("camera.clip.near ist nicht größer als 0.", "/camera/clip/near");
+	if (camera.clipFar != 0.0 && !(Canon (camera.clipFar, kLength) > nearClip))
+		return Invalid ("camera.clip.far ist nicht größer als near.", "/camera/clip/far");
+	if (camera.HasShift ()) {
+		if (minor < 4) return Invalid ("camera.shift ist erst ab contractVersion 1.4.0 zulässig.", "/camera/shift");
+		if (!(std::fabs (camera.shiftX) <= 2.0) || !(std::fabs (camera.shiftY) <= 2.0))
+			return Invalid ("camera.shift liegt außerhalb von −2 … 2.", "/camera/shift");
+	}
+	if (camera.resolutionWidth != 0 || camera.resolutionHeight != 0) {
+		if (minor < 6)
+			return Invalid ("camera.resolution ist erst ab contractVersion 1.6.0 zulässig.", "/camera/resolution");
+		if (camera.resolutionWidth < 1 || camera.resolutionWidth > 65536 || camera.resolutionHeight < 1 ||
+			camera.resolutionHeight > 65536)
+			return Invalid ("camera.resolution liegt außerhalb von 1 … 65536.", "/camera/resolution");
+	}
+	return Status::Ok ();
+}
+
+} // namespace
+
 Status CaptureManifest::Validate () const
 {
+	const int minor = ContractMinor (contractVersion);
+	if (minor < 0)
+		return Invalid ("contractVersion ist keine Fassung 1.x.y.", "/contractVersion");
+	if (minor > kCaptureHighestMinor)
+		return Invalid ("contractVersion ist neuer, als dieser Kern schreibt.", "/contractVersion");
 	if (!IsUuidV7 (captureId))
 		return Invalid ("captureId ist keine UUIDv7 in Kleinschreibung.", "/captureId");
 	if (!IsTimestampUtc (createdAt))
@@ -183,6 +389,31 @@ Status CaptureManifest::Validate () const
 	if (source.architecture != "arm64" && source.architecture != "x64")
 		return Invalid ("source.machine.architecture ist unbekannt.", "/source/machine/architecture");
 
+	// Ein Feld einer MINOR-Version gehört nicht in ein Dokument, das eine ältere nennt.
+	if (!source.capabilities.empty () && minor < 1)
+		return Invalid ("source.host.capabilities ist erst ab contractVersion 1.1.0 zulässig.",
+						"/source/host/capabilities");
+	std::set<std::string> seenCapabilities;
+	for (const auto& [key, state] : source.capabilities) {
+		static const std::set<std::string> keys = {
+			"viewportCapture", "beautyRender", "depthPass",       "normalPass",   "albedoPass",
+			"objectIdPass",    "materialIdPass", "maskPass",      "cameraExport", "geometryExport",
+			"modelOnlyCapture", "bimMetadata",  "backgroundRender", "resultReimport"};
+		if (keys.count (key) == 0 || !seenCapabilities.insert (key).second)
+			return Invalid ("Unbekannte oder doppelte Capability: " + key, "/source/host/capabilities");
+		if (state != "available" && state != "planned" && state != "unavailable" && state != "unknown")
+			return Invalid ("Unbekannter Capability-Zustand: " + state, "/source/host/capabilities/" + key);
+		if (key == "modelOnlyCapture" && minor < 6)
+			return Invalid ("modelOnlyCapture ist erst ab contractVersion 1.6.0 zulässig.",
+							"/source/host/capabilities/modelOnlyCapture");
+	}
+	if (!source.fileName.empty ()) {
+		if (minor < 5)
+			return Invalid ("source.fileName ist erst ab contractVersion 1.5.0 zulässig.", "/source/fileName");
+		if (!MatchesFileName (source.fileName) || HasForbiddenContent (source.fileName))
+			return Invalid ("source.fileName ist kein zulässiger Dateiname ohne Pfad.", "/source/fileName");
+	}
+
 	if (!platformProjectId.empty () && !IsUuidV7 (platformProjectId))
 		return Invalid ("project.platformProjectId ist keine UUIDv7.", "/project/platformProjectId");
 	if (!sourceProjectKey.empty () && !MatchesStableKey (sourceProjectKey))
@@ -202,17 +433,27 @@ Status CaptureManifest::Validate () const
 	if (intent.promptText.size () > 4000)
 		return Invalid ("intent.promptText ist länger als 4000 Zeichen.", "/intent/promptText");
 
+	if ((hasCamera || hasGeometry) && minor < 2)
+		return Invalid ("camera und geometry sind erst ab contractVersion 1.2.0 ein Objekt.", "/camera");
+	if (hasCamera) {
+		const Status cameraStatus = ValidateCamera (camera, minor);
+		if (!cameraStatus) return cameraStatus;
+	}
+
 	if (assets.empty () || assets.size () > 10)
 		return Invalid ("assets enthält weniger als 1 oder mehr als 10 Einträge.", "/assets");
 
 	std::set<std::string> seenRoles;
 	std::set<std::string> seenPaths;
-	int presentCount = 0;
+	const CaptureAsset* model = nullptr;
 	for (std::size_t i = 0; i < assets.size (); ++i) {
 		const CaptureAsset& asset = assets[i];
 		const std::string at = "/assets/" + std::to_string (i);
 		if (!IsKnownAssetRole (asset.role))
 			return Invalid ("Unbekannte Assetrolle: " + asset.role, at + "/role");
+		const bool isModel = asset.role == kModelRole;
+		if (isModel && minor < 2)
+			return Invalid ("Die Rolle model ist erst ab contractVersion 1.2.0 zulässig.", at + "/role");
 		if (!seenRoles.insert (asset.role).second)
 			return Invalid ("Je Rolle ist höchstens ein Eintrag zulässig: " + asset.role,
 							at + "/role");
@@ -224,9 +465,11 @@ Status CaptureManifest::Validate () const
 			return Invalid ("assets[].status ist unbekannt.", at + "/status");
 		if (asset.note.size () > 512)
 			return Invalid ("assets[].note ist länger als 512 Zeichen.", at + "/note");
+		// Seit 1.3.0 ist PNG das einzige Bildformat — auch bei `planned`, wenn ein Medientyp genannt ist.
+		if (!isModel && minor >= 3 && !asset.mediaType.empty () && asset.mediaType != "image/png")
+			return Invalid ("Ab contractVersion 1.3.0 ist jedes Bild image/png.", at + "/mediaType");
 
 		if (asset.status == "present") {
-			++presentCount;
 			if (!IsMediaType (asset.mediaType))
 				return Invalid ("assets[].mediaType fehlt oder ist kein IANA-Medientyp.",
 								at + "/mediaType");
@@ -236,6 +479,14 @@ Status CaptureManifest::Validate () const
 			if (!MatchesSha256 (asset.sha256))
 				return Invalid ("assets[].sha256 sind nicht 64 Hexziffern in Kleinschreibung.",
 								at + "/sha256");
+			if (isModel) {
+				if (asset.mediaType != kModelMediaType)
+					return Invalid ("Die Modelldatei ist model/gltf-binary.", at + "/mediaType");
+				if (asset.hasImage)
+					return Invalid ("Die Modelldatei trägt keinen image-Block.", at + "/image");
+				model = &asset;
+				continue;
+			}
 			if (!asset.hasImage)
 				return Invalid ("Ein vorhandenes Asset braucht einen image-Block.", at + "/image");
 
@@ -250,6 +501,8 @@ Status CaptureManifest::Validate () const
 								at + "/image/sampleFormat");
 			if (image.sampleFormat == "float" && image.bitDepth == 8)
 				return Invalid ("float verlangt 16 oder 32 Bit je Kanal.", at + "/image/bitDepth");
+			if (minor >= 3 && (image.sampleFormat != "uint" || image.bitDepth == 32))
+				return Invalid ("Ab contractVersion 1.3.0 hat ein Bild 8 oder 16 Bit uint.", at + "/image");
 			if (image.channels != "gray" && image.channels != "gray-alpha" &&
 				image.channels != "rgb" && image.channels != "rgba")
 				return Invalid ("assets[].image.channels ist unbekannt.", at + "/image/channels");
@@ -265,8 +518,36 @@ Status CaptureManifest::Validate () const
 				return Invalid ("Ein Asset ohne Datei darf weder sha256 noch byteSize führen.", at);
 		}
 	}
-	if (presentCount == 0)
+
+	// Was ein Capture mindestens trägt (Abschnitt 14): bis 1.5.x ein Bild, seit 1.6.0 ein Bild oder das
+	// Modell — ohne Bild dann mit Kamera samt Bildgröße. Ein leerer Capture ist in keiner Version zulässig.
+	const bool image = HasPresentImage ();
+	if (!image && model == nullptr)
 		return Invalid ("Mindestens ein Asset muss status present tragen.", "/assets");
+	if (!image && minor < 6)
+		return Invalid ("Das Modell allein ist erst ab contractVersion 1.6.0 ein Capture.", "/assets");
+	if (!image && (!hasCamera || !camera.HasResolution ()))
+		return Invalid ("Ein Capture nur mit Modell verlangt die Kamera mit Bildgröße.", "/camera/resolution");
+
+	// `geometry` steht genau dann, wenn die Modelldatei vorhanden ist, und meint genau sie.
+	if (model != nullptr && !hasGeometry)
+		return Invalid ("Die Modelldatei verlangt den Block geometry.", "/geometry");
+	if (model == nullptr && hasGeometry)
+		return Invalid ("Der Block geometry verlangt eine vorhandene Modelldatei.", "/geometry");
+	if (hasGeometry) {
+		if (geometry.assetPath != model->path)
+			return Invalid ("geometry.assetPath zeigt nicht auf die Modelldatei.", "/geometry/assetPath");
+		const double scale = Canon (geometry.sourceUnitScaleToMeter, kRatio);
+		if (!(scale > 0.0) || scale > 1000000.0)
+			return Invalid ("geometry.units.sourceUnitScaleToMeter liegt außerhalb von (0, 10^6].",
+							"/geometry/units/sourceUnitScaleToMeter");
+		if (geometry.handedness != "right" && geometry.handedness != "left")
+			return Invalid ("geometry.axes.handedness ist unbekannt.", "/geometry/axes/handedness");
+		if (geometry.upAxis != "y" && geometry.upAxis != "z")
+			return Invalid ("geometry.axes.upAxis ist unbekannt.", "/geometry/axes/upAxis");
+		if (!AllFinite (geometry.origin))
+			return Invalid ("geometry.origin enthält keine endliche Zahl.", "/geometry/origin");
+	}
 
 	const Result<std::string> hash = ContentHash ();
 	if (!hash) return Status::Fail (hash.GetError ());
@@ -282,7 +563,7 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 
 	JsonPtr root = Json::MakeObject ();
 	root->Set ("contract", Json::MakeString (kCaptureContract));
-	root->Set ("contractVersion", Json::MakeString (kCaptureContractVersion));
+	root->Set ("contractVersion", Json::MakeString (contractVersion));
 	root->Set ("captureId", Json::MakeString (captureId));
 	root->Set ("createdAt", Json::MakeString (createdAt));
 
@@ -290,6 +571,15 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 	host->Set ("key", Json::MakeString (source.hostKey));
 	host->Set ("version", Json::MakeString (source.hostVersion));
 	if (!source.hostBuild.empty ()) host->Set ("build", Json::MakeString (source.hostBuild));
+	if (!source.capabilities.empty ()) {
+		JsonPtr capabilities = Json::MakeObject ();
+		for (const auto& [key, state] : source.capabilities) {
+			JsonPtr entry = Json::MakeObject ();
+			entry->Set ("state", Json::MakeString (state));
+			capabilities->Set (key, entry);
+		}
+		host->Set ("capabilities", capabilities);
+	}
 
 	JsonPtr plugin = Json::MakeObject ();
 	plugin->Set ("identifier", Json::MakeString (source.pluginIdentifier));
@@ -304,6 +594,7 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 	sourceNode->Set ("host", host);
 	sourceNode->Set ("plugin", plugin);
 	sourceNode->Set ("machine", machine);
+	if (!source.fileName.empty ()) sourceNode->Set ("fileName", Json::MakeString (source.fileName));
 	root->Set ("source", sourceNode);
 
 	JsonPtr project = Json::MakeObject ();
@@ -329,8 +620,60 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 		intentNode->Set ("promptText", Json::MakeString (intent.promptText));
 	root->Set ("intent", intentNode);
 
-	root->Set ("camera", Json::MakeNull ());
-	root->Set ("geometry", Json::MakeNull ());
+	if (hasCamera) {
+		JsonPtr node = Json::MakeObject ();
+		node->Set ("space", Json::MakeString ("export"));
+		node->Set ("projection", Json::MakeString (camera.projection));
+		node->Set ("position", Vector (camera.position, kLength));
+		node->Set ("direction", Vector (camera.direction, kDirection));
+		node->Set ("up", Vector (camera.up, kDirection));
+		if (camera.projection == "perspective") {
+			JsonPtr fov = Json::MakeObject ();
+			fov->Set ("axis", Json::MakeString (camera.fovAxis));
+			fov->Set ("angle", Decimal (camera.fovAngle, kAngle));
+			node->Set ("fieldOfView", fov);
+		} else {
+			JsonPtr extent = Json::MakeObject ();
+			extent->Set ("halfWidth", Decimal (camera.halfWidth, kLength));
+			extent->Set ("halfHeight", Decimal (camera.halfHeight, kLength));
+			node->Set ("extent", extent);
+		}
+		JsonPtr clip = Json::MakeObject ();
+		clip->Set ("near", Decimal (camera.clipNear, kLength));
+		clip->Set ("far", camera.clipFar == 0.0 ? Json::MakeNull () : Decimal (camera.clipFar, kLength));
+		node->Set ("clip", clip);
+		if (camera.HasShift ()) {
+			JsonPtr shift = Json::MakeObject ();
+			shift->Set ("x", Decimal (camera.shiftX, kRatio));
+			shift->Set ("y", Decimal (camera.shiftY, kRatio));
+			node->Set ("shift", shift);
+		}
+		if (camera.HasResolution ()) {
+			JsonPtr resolution = Json::MakeObject ();
+			resolution->Set ("width", Json::MakeInt (camera.resolutionWidth));
+			resolution->Set ("height", Json::MakeInt (camera.resolutionHeight));
+			node->Set ("resolution", resolution);
+		}
+		root->Set ("camera", node);
+	} else {
+		root->Set ("camera", Json::MakeNull ());
+	}
+
+	if (hasGeometry) {
+		JsonPtr node = Json::MakeObject ();
+		node->Set ("assetPath", Json::MakeString (geometry.assetPath));
+		JsonPtr units = Json::MakeObject ();
+		units->Set ("sourceUnitScaleToMeter", Decimal (geometry.sourceUnitScaleToMeter, kRatio));
+		node->Set ("units", units);
+		JsonPtr axes = Json::MakeObject ();
+		axes->Set ("handedness", Json::MakeString (geometry.handedness));
+		axes->Set ("upAxis", Json::MakeString (geometry.upAxis));
+		node->Set ("axes", axes);
+		node->Set ("origin", Vector (geometry.origin, kLength));
+		root->Set ("geometry", node);
+	} else {
+		root->Set ("geometry", Json::MakeNull ());
+	}
 	root->Set ("contentHash", Json::MakeString (hash.Value ()));
 
 	JsonPtr assetArray = Json::MakeArray ();
@@ -343,14 +686,16 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 			node->Set ("mediaType", Json::MakeString (asset.mediaType));
 			node->Set ("byteSize", Json::MakeInt (asset.byteSize));
 			node->Set ("sha256", Json::MakeString (asset.sha256));
-			JsonPtr image = Json::MakeObject ();
-			image->Set ("width", Json::MakeInt (asset.image.width));
-			image->Set ("height", Json::MakeInt (asset.image.height));
-			image->Set ("colorSpace", Json::MakeString (asset.image.colorSpace));
-			image->Set ("bitDepth", Json::MakeInt (asset.image.bitDepth));
-			image->Set ("sampleFormat", Json::MakeString (asset.image.sampleFormat));
-			image->Set ("channels", Json::MakeString (asset.image.channels));
-			node->Set ("image", image);
+			if (asset.role != kModelRole) {
+				JsonPtr image = Json::MakeObject ();
+				image->Set ("width", Json::MakeInt (asset.image.width));
+				image->Set ("height", Json::MakeInt (asset.image.height));
+				image->Set ("colorSpace", Json::MakeString (asset.image.colorSpace));
+				image->Set ("bitDepth", Json::MakeInt (asset.image.bitDepth));
+				image->Set ("sampleFormat", Json::MakeString (asset.image.sampleFormat));
+				image->Set ("channels", Json::MakeString (asset.image.channels));
+				node->Set ("image", image);
+			}
 		}
 		if (!asset.note.empty ()) node->Set ("note", Json::MakeString (asset.note));
 		assetArray->Append (node);
