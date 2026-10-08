@@ -84,6 +84,20 @@ endif ()
 
 file (GLOB AddOnHeaderFiles ${AddOnSourcesFolder}/*.hpp ${AddOnSourcesFolder}/*.h)
 file (GLOB AddOnSourceFiles ${AddOnSourcesFolder}/*.cpp)
+
+# Messauftrag Archicad-Modellweg (RTX-A-010, #256): Prototyp eines GLB-Schreibers.
+# Nur mit `-DRTX_SPIKE_MODEL_GLB=ON`; das veröffentlichte Add-on (build.sh, CI,
+# dist.sh) enthält ihn nicht. Siehe `spike/model-glb/README.md`.
+option (RTX_SPIKE_MODEL_GLB "Prototyp des GLB-Schreibers einbauen (nur für den Messauftrag #256)" OFF)
+if (RTX_SPIKE_MODEL_GLB)
+	file (GLOB RtxSpikeFiles
+		${CMAKE_CURRENT_LIST_DIR}/../spike/model-glb/*.hpp
+		${CMAKE_CURRENT_LIST_DIR}/../spike/model-glb/GlbWriter.cpp
+		${CMAKE_CURRENT_LIST_DIR}/../spike/model-glb/ModelGlbSpike.cpp
+	)
+	list (APPEND AddOnSourceFiles ${RtxSpikeFiles})
+	message (STATUS "Messauftrag #256: Prototyp des GLB-Schreibers ist eingebaut.")
+endif ()
 source_group ("Sources" FILES ${AddOnHeaderFiles} ${AddOnSourceFiles})
 
 if (WIN32)
@@ -124,6 +138,9 @@ target_compile_features (AddOn PUBLIC cxx_std_17)
 # Der Git-Stand für „Über" und den Fuß der Palette (#281). Leer heißt
 # Entwicklungsbuild; `Version.hpp` setzt dann den Vorgabewert.
 set (RTX_BUILD_COMMIT "" CACHE STRING "Git-Stand des Builds (CI und scripts/build.sh).")
+if (RTX_SPIKE_MODEL_GLB)
+	target_compile_definitions (AddOn PRIVATE RTX_SPIKE_MODEL_GLB=1)
+endif ()
 if (RTX_BUILD_COMMIT MATCHES "^[0-9a-f]+(-dirty)?$")
 	target_compile_definitions (AddOn PRIVATE RTX_BUILD_COMMIT="${RTX_BUILD_COMMIT}")
 	message (STATUS "Build-Kennung: ${RTX_BUILD_COMMIT}")

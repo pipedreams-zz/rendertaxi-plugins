@@ -14,6 +14,10 @@
 #include "rtx/Sha256.hpp"
 #include "rtx/TransferStore.hpp"
 
+#ifdef RTX_SPIKE_MODEL_GLB
+#include "../spike/model-glb/ModelGlbSpike.hpp"
+#endif
+
 namespace rtxaddon {
 namespace {
 
@@ -263,6 +267,11 @@ GSErrCode InstallJsonCommands ()
 	if (err != NoError) return err;
 	err = ACAPI_AddOnAddOnCommunication_InstallAddOnCommandHandler (GS::NewOwned<InfoCommand> ());
 	if (err != NoError) return err;
+#ifdef RTX_SPIKE_MODEL_GLB
+	// Messauftrag #256, nicht im veröffentlichten Add-on.
+	err = spike::InstallModelGlbSpikeCommands ();
+	if (err != NoError) return err;
+#endif
 	return ACAPI_AddOnAddOnCommunication_InstallAddOnCommandHandler (GS::NewOwned<ProbeCommand> ());
 }
 
