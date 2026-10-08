@@ -51,18 +51,29 @@ std::vector<std::string> WrapText (const std::string& text, std::size_t width)
 	return lines;
 }
 
+std::string CanvasDefaultLabel (const CanvasDefault& canvas)
+{
+	if (!canvas.known) return "Canvas-Vorgabe";
+	return "Canvas-Vorgabe (" + canvas.aspectRatio + ", lange Kante " +
+		   std::to_string (canvas.longEdgePx) + " px)";
+}
+
 std::string TargetSizeText (bool sizeFromCapture, bool frameFollowsCapture,
-							const std::string& sceneSize)
+							const std::string& sceneSize, const CanvasDefault& canvas)
 {
 	if (sizeFromCapture && frameFollowsCapture) {
 		std::string line = sceneSize.empty () ? "Zielgröße: Aufnahmemaße"
 											  : "Zielgröße: Aufnahmemaße " + sceneSize;
-		return line + " (kürzer als 1536 lange Kante: Canvas-Vorgabe bleibt)";
+		// Die Untergrenze ist die lange Kante der Canvas-Vorgabe (ADR 0024 E10,
+		// ADR 0040) — die Zahl nennt der Server, nie das Add-on (RTX-P-015).
+		if (!canvas.known) return line + ", mindestens die lange Kante der Canvas-Vorgabe";
+		return line + ", mindestens " + std::to_string (canvas.longEdgePx) +
+			   " px lange Kante (Canvas-Vorgabe)";
 	}
 	if (sizeFromCapture)
 		return "Zielgröße: Aufnahmemaße eingestellt — wirkt erst mit „Rahmen an "
 			   "Aufnahme anpassen“";
-	return "Zielgröße: Canvas-Vorgabe — nur das Seitenverhältnis der Aufnahme";
+	return "Zielgröße: " + CanvasDefaultLabel (canvas) + " — nur das Seitenverhältnis der Aufnahme";
 }
 
 std::string PendingText (const std::string& createdAt, bool resumable)

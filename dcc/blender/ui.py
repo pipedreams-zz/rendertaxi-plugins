@@ -415,7 +415,7 @@ class RTX_Props(PropertyGroup):
     size_mode: EnumProperty(
         name="Rahmengröße",
         items=[("canvas-default", "Canvas-Vorgabe", "Nur das Seitenverhältnis der Aufnahme; die lange Kante bleibt"),
-               ("capture", "Render-Einstellung übernehmen", "Die Maße der Aufnahme; unter 1536 Pixel langer Kante bleibt die Canvas-Vorgabe")],
+               ("capture", "Render-Einstellung übernehmen", "Die Maße der Aufnahme, mindestens die lange Kante der Canvas-Vorgabe")],
         default="canvas-default",
     )
     capture_kind: EnumProperty(
@@ -1095,7 +1095,7 @@ def _aspect_hint(context, props: RTX_Props) -> str | None:
 
 
 def _size_text(props: RTX_Props) -> str:
-    return frame.size_text(props.target_mode == "CREATE", props.fit_to_capture, props.size_mode)
+    return frame.size_text(props.target_mode == "CREATE", props.fit_to_capture, props.size_mode, STATE.handshake)
 
 
 def _chosen_or_none(props: RTX_Props) -> ways.Plan | None:

@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "rtx/PluginApi.hpp"
+
 namespace rtx {
 
 /** Bytes, die eine Palettenzeile bei `SmallPlain` sicher trägt; darüber schneidet DG ab. */
@@ -27,9 +29,20 @@ std::string ShortenText (const std::string& text, std::size_t maxBytes);
  */
 std::vector<std::string> WrapText (const std::string& text, std::size_t width);
 
-/** Die Zeile „Zielgröße: …" — was die Rahmengröße für den Blickpunkt bewirkt (§7.2). */
+/**
+ * „Canvas-Vorgabe (3:2, lange Kante N px)" — mit der Angabe des Servers
+ * (RTX-P-015); nennt er keine, nur „Canvas-Vorgabe". Das Add-on schreibt nie
+ * eine eigene Zahl hin.
+ */
+std::string CanvasDefaultLabel (const CanvasDefault& canvas);
+
+/**
+ * Die Zeile „Zielgröße: …" — was die Rahmengröße für den Blickpunkt bewirkt
+ * (§7.2). Die lange Kante der Canvas-Vorgabe kommt aus dem Handshake; ohne sie
+ * steht der Satz ohne Zahl da.
+ */
 std::string TargetSizeText (bool sizeFromCapture, bool frameFollowsCapture,
-							const std::string& sceneSize);
+							const std::string& sceneSize, const CanvasDefault& canvas);
 
 /**
  * Der Hinweis auf einen offenen Vorgang. Er passt in **eine** Zeile, damit er

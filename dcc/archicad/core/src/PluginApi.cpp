@@ -166,6 +166,27 @@ static const char* const VersionMismatch =
 	"Add-on und Server passen nicht zusammen. Bitte die Add-on-Fassung verwenden, "
 	"die zur Webanwendung passt.";
 
+CanvasDefault ParseCanvasDefault (const JsonPtr& node)
+{
+	CanvasDefault canvas;
+	if (node == nullptr || node->GetKind () != Json::Kind::Object) return canvas;
+	const std::string ratio = TextField (node, "aspectRatio");
+	const std::size_t colon = ratio.find (':');
+	const bool digits =
+		colon != std::string::npos && colon > 0 && colon + 1 < ratio.size () &&
+		ratio.find_first_not_of ("0123456789:") == std::string::npos &&
+		ratio.find (':', colon + 1) == std::string::npos && ratio[0] != '0' && ratio[colon + 1] != '0';
+	const JsonPtr edge = node->Get ("longEdgePx");
+	if (!digits || edge == nullptr || edge->GetKind () != Json::Kind::Number) return canvas;
+	const std::int64_t longEdge = edge->IntOr (0);
+	if (longEdge <= 0 || longEdge > 1000000 || static_cast<double> (longEdge) != edge->NumberOr (0))
+		return canvas;
+	canvas.known = true;
+	canvas.aspectRatio = ratio;
+	canvas.longEdgePx = static_cast<int> (longEdge);
+	return canvas;
+}
+
 Status HandshakeInfo::RequireCaptureContract () const
 {
 	// **Der Server bewertet.** Der erste Durchgang rechnete selbst und meldete
@@ -509,6 +530,9 @@ Result<HandshakeInfo> PluginApiClient::Handshake (const DeviceIdentity& device,
 		info.updateMessage = TextField (update, "message");
 		info.updateUrl = TextField (update, "url");
 	}
+	// Seit 1.7.0 (RTX-P-015). Ein älterer Server nennt sie nicht; das ist
+	// kein Fehler, die Palette zeigt dann den Satz ohne Zahl.
+	info.canvasDefault = ParseCanvasDefault (node->Get ("canvasFrameDefault"));
 	return Result<HandshakeInfo>::Ok (info);
 }
 

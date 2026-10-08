@@ -165,6 +165,50 @@ RTX_TEST (HandshakeWirdVomServerBewertetUndNichtVomClientGeraten)
 	RTX_CHECK_EQ (handshake.Value ().contracts[1].availability, std::string ("planned"));
 }
 
+// --- RTX-P-015: die Canvas-Vorgabe kommt aus dem Handshake -------------------
+
+RTX_TEST (CanvasVorgabeKommtAusDemHandshakeOderFehlt)
+{
+	// Ein Server vor 1.7.0 nennt sie nicht: alles andere wie bisher.
+	{
+		Harness harness;
+		const Result<HandshakeInfo> handshake =
+			harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+		RTX_CHECK (handshake.IsOk ());
+		RTX_CHECK (!handshake.Value ().canvasDefault.known);
+		RTX_CHECK (handshake.Value ().RequireCaptureContract ().IsOk ());
+	}
+	// Ab 1.7.0 nennt er sie — das Add-on übernimmt sie unverändert.
+	{
+		Harness harness;
+		harness.platform.SetCanvasDefault ("3:2", 2048);
+		const Result<HandshakeInfo> handshake =
+			harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+		RTX_CHECK (handshake.IsOk ());
+		RTX_CHECK (handshake.Value ().canvasDefault.known);
+		RTX_CHECK_EQ (handshake.Value ().canvasDefault.aspectRatio, std::string ("3:2"));
+		RTX_CHECK_EQ (handshake.Value ().canvasDefault.longEdgePx, 2048);
+	}
+}
+
+RTX_TEST (UnbrauchbareCanvasVorgabeIstUnbekannt)
+{
+	// Regel 3: ein unlesbares Feld verhindert nichts — es ist nur keine Zahl.
+	for (const char* raw :
+		 {"null", "[]", "{}", R"({"aspectRatio":"3:2"})", R"({"longEdgePx":1536})",
+		  R"({"aspectRatio":"breit","longEdgePx":1536})", R"({"aspectRatio":"3:2","longEdgePx":"1536"})",
+		  R"({"aspectRatio":"3:2","longEdgePx":0})", R"({"aspectRatio":"3:2","longEdgePx":1536.5})",
+		  R"({"aspectRatio":"0:2","longEdgePx":1536})", R"({"aspectRatio":"3:2:1","longEdgePx":1536})"}) {
+		RTX_CHECK (!ParseCanvasDefault (Json::Parse (raw)).known);
+	}
+	RTX_CHECK (!ParseCanvasDefault (nullptr).known);
+	const CanvasDefault good =
+		ParseCanvasDefault (Json::Parse (R"({"aspectRatio":"21:9","longEdgePx":4096})"));
+	RTX_CHECK (good.known);
+	RTX_CHECK_EQ (good.aspectRatio, std::string ("21:9"));
+	RTX_CHECK_EQ (good.longEdgePx, 4096);
+}
+
 // --- F-02: Ein fehlerhafter Handshake beendet Archicad nicht -----------------
 
 RTX_TEST (FehlerhafterHandshakeBeendetDenProzessNicht)

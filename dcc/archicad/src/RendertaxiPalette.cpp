@@ -586,8 +586,13 @@ void RendertaxiPalette::RefreshSourceView ()
 	const bool sizeFromCapture = sizePopUp.GetSelectedItem () == 2;
 	const bool frameFollowsCapture =
 		!updateRadio.IsSelected () || fitFrameCheck.IsChecked ();
-	const std::string sizeLine =
-		rtx::TargetSizeText (sizeFromCapture, frameFollowsCapture, scene.known ? sceneSize : "");
+	rtx::CanvasDefault canvasDefault;
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		canvasDefault = shared.canvasDefault;
+	}
+	const std::string sizeLine = rtx::TargetSizeText (
+		sizeFromCapture, frameFollowsCapture, scene.known ? sceneSize : "", canvasDefault);
 
 	std::string targetLine;
 	std::string matchLine;
@@ -1259,6 +1264,11 @@ void RendertaxiPalette::StartSignIn ()
 			workerRunning.store (false);
 			return;
 		}
+		{
+			std::lock_guard<std::mutex> guard (shared.mutex);
+			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.dirty = true;
+		}
 
 		rtx::DeviceLogin login (*api, *tokens, serverUrl);
 		const rtx::Result<rtx::StoredCredential> credential = login.SignIn (
@@ -1379,8 +1389,13 @@ void RendertaxiPalette::RefreshProjectList ()
 	}
 	workerRunning.store (true);
 	worker = std::thread ([this] () {
+		// Eine wiederhergestellte Anmeldung kennt noch keinen Handshake: die
+		// Canvas-Vorgabe (RTX-P-015) kommt hier mit. Scheitert er, bleibt sie
+		// unbekannt und die Projekte laden trotzdem (Regel 3).
+		const rtx::Result<rtx::HandshakeInfo> handshake = api->Handshake (CurrentDevice (), &cancel);
 		const rtx::Result<std::vector<rtx::ProjectSummary>> projects = api->ListProjects (&cancel);
 		std::lock_guard<std::mutex> guard (shared.mutex);
+		if (handshake) shared.canvasDefault = handshake.Value ().canvasDefault;
 		if (projects) {
 			shared.projects = projects.Value ();
 			shared.projectsChanged = true;
@@ -2074,6 +2089,10 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 				message += " " + handshake.Value ().updateUrl;
 			stop (message);
 			return;
+		}
+		{
+			std::lock_guard<std::mutex> guard (shared.mutex);
+			shared.canvasDefault = handshake.Value ().canvasDefault;
 		}
 		const rtx::Status supported = handshake.Value ().RequireCaptureContract ();
 		if (!supported) {

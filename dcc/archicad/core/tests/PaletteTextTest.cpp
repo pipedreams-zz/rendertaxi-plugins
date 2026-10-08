@@ -66,11 +66,21 @@ std::vector<InfoParagraph> WorstCase (const std::string& sizeLine, const std::st
 const std::string kSceneSize = "10000 x 10000 · 1.778:1";
 const std::string kCreatedAt = "2026-09-25T12:34:56.789Z";
 
+/** Ein Server vor 1.7.0 und der breiteste Satz, den einer ab 1.7.0 hervorbringt (RTX-P-015). */
+const CanvasDefault kNoCanvas {};
+const CanvasDefault kWidestCanvas {true, "21:9", 4096};
+
 std::vector<std::string> AllSizeLines ()
 {
-	return {TargetSizeText (true, true, kSceneSize), TargetSizeText (true, true, ""),
-			TargetSizeText (true, false, kSceneSize), TargetSizeText (false, true, kSceneSize),
-			TargetSizeText (false, false, "")};
+	std::vector<std::string> lines;
+	for (const CanvasDefault& canvas : {kNoCanvas, kWidestCanvas}) {
+		for (const std::string& line :
+			 {TargetSizeText (true, true, kSceneSize, canvas), TargetSizeText (true, true, "", canvas),
+			  TargetSizeText (true, false, kSceneSize, canvas),
+			  TargetSizeText (false, true, kSceneSize, canvas), TargetSizeText (false, false, "", canvas)})
+			lines.push_back (line);
+	}
+	return lines;
 }
 
 } // namespace
@@ -114,7 +124,7 @@ RTX_TEST (WirksameAufnahmemasseStehenVollstaendigDa)
 {
 	// Der zweite Fall aus F-02: die Aufnahmemaße wirken, und die Zeile nennt
 	// sie samt Hinweis auf die Canvas-Vorgabe — zwei Zeilen, beide sichtbar.
-	const std::string size = TargetSizeText (true, true, "1920 x 1080 · 16:9");
+	const std::string size = TargetSizeText (true, true, "1920 x 1080 · 16:9", kNoCanvas);
 	const std::vector<std::string> wrapped = WrapText (size, kPaletteLineWidth);
 	RTX_CHECK_EQ (wrapped.size (), std::size_t (2));
 	const std::vector<std::string> lines =
@@ -128,7 +138,7 @@ RTX_TEST (GekuerzteAbsaetzeEndenSichtbarAufEllipse)
 {
 	// Wer eine Zeile verliert, zeigt es: „…" am Ende, nicht ein stummer Schnitt.
 	const std::vector<InfoParagraph> paragraphs =
-		WorstCase (TargetSizeText (true, false, kSceneSize), PendingText (kCreatedAt, false));
+		WorstCase (TargetSizeText (true, false, kSceneSize, kNoCanvas), PendingText (kCreatedAt, false));
 	// Der Fall ist wirklich zu lang: ungekürzt bräuchte er mehr als acht Zeilen.
 	std::size_t unshortened = 0;
 	for (const InfoParagraph& paragraph : paragraphs)
@@ -150,10 +160,34 @@ RTX_TEST (MitGenugPlatzBleibtAllesUngekuerzt)
 		LayoutInfoLines ({{"Ansicht: Fenstergröße, ohne Zuschnitt", false},
 						  {"", false},
 						  {"Zielrahmen: entsteht neu", false},
-						  {TargetSizeText (false, true, ""), true}},
+						  {TargetSizeText (false, true, "", kNoCanvas), true}},
 						 kPaletteLineWidth, kPaletteInfoRows);
 	// Eine, keine, eine und zwei Zeilen: der leere Absatz belegt nichts.
 	RTX_CHECK_EQ (lines.size (), std::size_t (4));
 	for (const std::string& line : lines)
 		RTX_CHECK (line.size () < 3 || line.compare (line.size () - 3, 3, "…") != 0);
+}
+
+RTX_TEST (ZielgroesseNenntDieCanvasVorgabeDesServers)
+{
+	// RTX-P-015 (#291): die Zahl kommt aus dem Handshake; ohne sie steht der
+	// Satz ohne Zahl da. Das Add-on schreibt keine eigene Zahl hin.
+	const CanvasDefault canvas {true, "3:2", 2048};
+	RTX_CHECK_EQ (CanvasDefaultLabel (canvas), std::string ("Canvas-Vorgabe (3:2, lange Kante 2048 px)"));
+	RTX_CHECK_EQ (CanvasDefaultLabel (kNoCanvas), std::string ("Canvas-Vorgabe"));
+	RTX_CHECK_EQ (TargetSizeText (false, true, "", canvas),
+				  std::string ("Zielgröße: Canvas-Vorgabe (3:2, lange Kante 2048 px) — nur das "
+							   "Seitenverhältnis der Aufnahme"));
+	RTX_CHECK_EQ (TargetSizeText (true, true, "1920 x 1080 · 16:9", canvas),
+				  std::string ("Zielgröße: Aufnahmemaße 1920 x 1080 · 16:9, mindestens 2048 px lange "
+							   "Kante (Canvas-Vorgabe)"));
+	RTX_CHECK_EQ (TargetSizeText (false, true, "", kNoCanvas),
+				  std::string ("Zielgröße: Canvas-Vorgabe — nur das Seitenverhältnis der Aufnahme"));
+	RTX_CHECK_EQ (TargetSizeText (true, true, "", kNoCanvas),
+				  std::string ("Zielgröße: Aufnahmemaße, mindestens die lange Kante der Canvas-Vorgabe"));
+	// Ohne Angabe des Servers keine Ziffer außer den Aufnahmemaßen.
+	for (const bool fromCapture : {true, false})
+		for (const bool follows : {true, false})
+			RTX_CHECK (TargetSizeText (fromCapture, follows, "", kNoCanvas).find_first_of ("0123456789") ==
+					   std::string::npos);
 }

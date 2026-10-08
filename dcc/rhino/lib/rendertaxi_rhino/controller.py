@@ -611,7 +611,8 @@ class Controller:
         return frame.viewpoint_size(self.state.desired.get(self.form.viewpoint_id or ""), self.document_size())
 
     def size_text(self) -> str:
-        return frame.size_text(self.form.target_mode == frame.CREATE, self.form.fit_to_capture, self.form.size)
+        return frame.size_text(self.form.target_mode == frame.CREATE, self.form.fit_to_capture, self.form.size,
+                               self.state.handshake)
 
     def aspect_hint(self) -> str | None:
         """Weicht bei „Rahmen behalten" das Ausgabeziel ab, sagt das Fenster es — es löst es nicht still auf."""

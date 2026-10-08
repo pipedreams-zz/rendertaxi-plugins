@@ -54,10 +54,12 @@ SOURCE_FILE_CONTRACT_VERSION = "1.5.0"
 # Kamera (``camera.resolution``) und die Capability ``modelOnlyCapture`` (RTX-P-014,
 # capture-manifest.md Abschnitt 14).
 MODEL_ONLY_CONTRACT_VERSION = "1.6.0"
+# 1.7.0 bringt kein Manifestfeld: der Handshake nennt seitdem die Canvas-Vorgabe (RTX-P-015). Geschrieben
+# wird deshalb höchstens 1.6.0; der Prüfer nimmt 1.7.0 an wie der Server.
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 PNG_MEDIA_TYPE = "image/png"
-IMPLEMENTED_MINOR = 6
+IMPLEMENTED_MINOR = 7
 PNG_SINCE_MINOR = 3
 CAMERA_LENS_SINCE_MINOR = 4
 SOURCE_FILE_NAME_SINCE_MINOR = 5

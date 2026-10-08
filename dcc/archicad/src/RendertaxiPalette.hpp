@@ -63,6 +63,12 @@ struct SharedState {
 	 * gelesen".
 	 */
 	std::string viewpointsProjectId;
+	/**
+	 * Die Canvas-Vorgabe aus dem jüngsten Handshake (RTX-P-015). Bis zum
+	 * ersten Handshake, und gegen einen Server vor 1.7.0, unbekannt: die
+	 * Zielgröße steht dann ohne Zahl da.
+	 */
+	rtx::CanvasDefault canvasDefault;
 	bool projectsChanged = false;
 	bool viewpointsChanged = false;
 	/**

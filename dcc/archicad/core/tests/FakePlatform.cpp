@@ -158,6 +158,13 @@ void FakePlatform::SetAlwaysExpire (bool value)
 	alwaysExpire = value;
 }
 
+void FakePlatform::SetCanvasDefault (std::string aspectRatio, int longEdgePx)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	canvasAspectRatio = std::move (aspectRatio);
+	canvasLongEdgePx = longEdgePx;
+}
+
 void FakePlatform::RejectNextFile ()
 {
 	std::lock_guard<std::mutex> guard (mutex);
@@ -759,6 +766,12 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 		update->Set ("message", rtx::Json::MakeNull ());
 		update->Set ("url", rtx::Json::MakeNull ());
 		root->Set ("update", update);
+		if (canvasLongEdgePx > 0) {
+			JsonPtr canvas = rtx::Json::MakeObject ();
+			canvas->Set ("aspectRatio", rtx::Json::MakeString (canvasAspectRatio));
+			canvas->Set ("longEdgePx", rtx::Json::MakeInt (canvasLongEdgePx));
+			root->Set ("canvasFrameDefault", canvas);
+		}
 		return Json200 (200, root->Serialize ());
 	}
 

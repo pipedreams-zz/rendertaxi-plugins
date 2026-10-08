@@ -50,6 +50,12 @@ public:
 	void ExpireSessions ();
 	/** Jede neue Session ist sofort abgelaufen — der Dauerablauf aus F-03. */
 	void SetAlwaysExpire (bool value);
+	/**
+	 * Der Handshake nennt die Canvas-Vorgabe (`canvasFrameDefault`, seit
+	 * 1.7.0, RTX-P-015). Ohne Aufruf antwortet er wie ein älterer Server: ohne
+	 * das Feld.
+	 */
+	void SetCanvasDefault (std::string aspectRatio, int longEdgePx);
 	/** Die nächste Prüfung einer Datei lehnt sie ab (`asset_hash_mismatch`). */
 	void RejectNextFile ();
 	/** Die nächsten `count` Tokenabfragen antworten `slow_down`. */
@@ -148,6 +154,8 @@ private:
 	bool deviceDenied = false;
 	bool autoApprove = false;
 	bool alwaysExpire = false;
+	std::string canvasAspectRatio;
+	int canvasLongEdgePx = 0;
 	bool rejectNextFile = false;
 	int slowDownRemaining = 0;
 	int rateLimitRemaining = 0;

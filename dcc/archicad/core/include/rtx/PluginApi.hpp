@@ -62,6 +62,25 @@ struct ContractSupport {
  * Durchgang selbst zu beantworten versuchte — und dabei immer
  * `unsupported_contract_major` meldete (V-01).
  */
+/**
+ * **Die Canvas-Vorgabe des Servers** (`canvasFrameDefault` im Handshake, seit
+ * Capture-Manifest 1.7.0, RTX-P-015): Seitenverhältnis und lange Kante, mit
+ * denen ein neuer Rahmen beginnt — die Einstellung aus dem Admin-Bereich, die
+ * die Übernahme anwendet (`canvas-default` hält die lange Kante, `capture`
+ * bleibt nie darunter). Das Add-on zeigt sie und ändert sie nicht.
+ *
+ * `known == false`: der Server nennt sie nicht (vor 1.7.0, oder er konnte sie
+ * nicht lesen) — die Palette zeigt dann ihren Satz ohne Zahl.
+ */
+struct CanvasDefault {
+	bool known = false;
+	std::string aspectRatio;
+	int longEdgePx = 0;
+};
+
+/** Liest `canvasFrameDefault`; fehlt das Feld oder ist es unbrauchbar, `known == false`. */
+CanvasDefault ParseCanvasDefault (const JsonPtr& node);
+
 struct HandshakeInfo {
 	std::string apiVersion;
 	std::string profile;
@@ -82,6 +101,9 @@ struct HandshakeInfo {
 	std::string updateStatus;
 	std::string updateMessage;
 	std::string updateUrl;
+
+	/** Seit 1.7.0 (RTX-P-015); ohne Feld `known == false`. */
+	CanvasDefault canvasDefault;
 
 	/**
 	 * Prüft das ausgehandelte Paar. Wertet ausschließlich `negotiation.result`

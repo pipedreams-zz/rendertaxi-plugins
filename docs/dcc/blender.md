@@ -159,8 +159,10 @@ Die Einstellung **Rahmengröße** gehört zum Ziel, nicht zur Aufnahme:
 - **Canvas-Vorgabe (Standard):** der Blickpunkt behält die Größe der
   Webanwendung; übernommen wird nur das Seitenverhältnis der Aufnahme.
 - **Render-Einstellung übernehmen:** der Rahmen bekommt die Maße der
-  Aufnahme. Ist die lange Kante kürzer als 1536 Pixel, bleibt die
-  Canvas-Vorgabe.
+  Aufnahme. Ist die lange Kante kürzer als die der Canvas-Vorgabe, bleibt
+  diese. Die Canvas-Vorgabe (Seitenverhältnis und lange Kante) stellt der
+  Betreiber der Webanwendung ein; das Plugin nennt sie mit Zahl, sobald der
+  Server sie mitteilt.
 
 Beim Aktualisieren eines bestehenden Blickpunkts ändert sich dessen Rahmen nur,
 wenn **Rahmen an Aufnahme anpassen** angehakt ist; sonst bleibt er, wie er ist.
