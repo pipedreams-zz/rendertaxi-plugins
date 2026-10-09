@@ -35,18 +35,14 @@ am Host gemessen ist nichts — die Messung ist die Abnahme am Mac.
   **Objekt-ID** (QC-05) über den Dateiweg (Multi-Pass speichern aus einer markierten Kopie der Voreinstellung);
   **Material-ID** (QC-06) liefern Standard und Physical nicht. Albedo (``VPBUFFER_REFLECTANCE_ALBEDO`` — ein
   ``VPBUFFER_ALBEDO`` gibt es in 2026 nicht) geht als lineares PNG aus den Floats.
-* **Corona** (RTX-C4D-004): die Engine ist der Videopost 1030480 (``CORONA``;
-  das c4d-Modul hat kein Symbol dafür — die ID stammt aus der Corona-Installation
-  und ist am Host gemessen, ``docs/measurements/*-corona.md``). **Beauty** geht
-  über denselben Weg wie jede andere Engine: ``RenderDocument`` auf der Kopie
-  der Rendervoreinstellung. **Datenpässe** gibt es mit Corona (noch) nicht: die
-  Corona-Pässe liegen im Scene-Hook 1037467, kommen als Ebenen mit ``USERID``
-  111 in die MultipassBitmap (nur über den Namen unterscheidbar), sind als
-  sRGB-kodierte Floats gespeichert, ihre Tiefenspanne ist in Python nicht
-  lesbar und ihre IDs sind Farbcodes — jede dieser Hürden ist ein eigener
-  Bildweg. Die Probe meldet sie deshalb als ``requires-user-action`` mit
-  Anleitung; sie ändert nichts am Dokument und ohne Corona fällt nur diese
-  Aussage weg.
+* **Corona** (RTX-C4D-004, RTX-C4D-009): die Engine ist der Videopost 1030480 (``CORONA``; das c4d-Modul hat kein
+  Symbol dafür — die ID stammt aus der Corona-Installation und ist am Host gemessen, ``docs/measurements/*-corona.md``).
+  **Beauty** geht über denselben Weg wie jede andere Engine. **Datenpässe** (seit 0.6.0) nur beim Rendern im Picture
+  Viewer: ``pictureviewer.Rendering`` legt mit ``corona.prepare`` eigene Corona-Pässe in die **Kopie** des Dokuments
+  (WorldPosition und Masken ohne Anti-aliasing, NormalsGeometry, SourceColor „Diffuse“); gelesen werden sie hier aus
+  dessen Bildspeicher, zurückgerechnet nach dem Farbmanagement des Dokuments (``corona.colour``), und mit denselben
+  Schreibern geschrieben wie unter Standard. Messung und Entscheidung je Rolle:
+  ``docs/measurements/2026-10-08-corona-multipass.md``.
 * **Farbe** (QC-12): Viewport und Beauty als PNG 8 Bit, gemeldet als
   ``srgb``. Ab 2026.2 fordert das Plugin das Einbacken der
   OCIO-Ansichtstransformation ausdrücklich an
@@ -73,7 +69,7 @@ from dataclasses import dataclass
 
 import c4d
 
-from . import host, pngwrite, tiffread, transient
+from . import corona, host, pngwrite, tiffread, transient
 from .rendertaxi_client import manifest as mf
 
 PNG = mf.PNG_MEDIA_TYPE
@@ -85,7 +81,7 @@ PHYSICAL = getattr(c4d, "RDATA_RENDERENGINE_PHYSICAL", None)
 VIEWPORT_RENDERER = getattr(c4d, "RDATA_RENDERENGINE_PREVIEWHARDWARE", None)
 REDSHIFT = getattr(c4d, "RDATA_RENDERENGINE_REDSHIFT", None)
 # Corona (Chaos): Videopost-ID der Engine, kein Symbol im c4d-Modul — am Host gemessen (RTX-C4D-004).
-CORONA = 1030480
+CORONA = corona.CORONA
 RENDERER_LABELS = {engine: label for engine, label in ((STANDARD, "Standard"), (PHYSICAL, "Physical"),
                                                        (VIEWPORT_RENDERER, "Viewport Renderer"),
                                                        (REDSHIFT, "Redshift"), (CORONA, "Corona"))
@@ -356,12 +352,36 @@ def position_pass_available() -> bool:
     return POST_EFFECTS is not None and c4d.plugins.FindPlugin(POSITION_VIDEOPOST, c4d.PLUGINTYPE_VIDEOPOST) is not None
 
 
+OBJECT_BUFFER_HINT = "An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1)."
+MATERIAL_ID_HINT = "In den Corona-Materialien unter „Advanced“ eine Material ID ab 1 vergeben."
+
+
+def corona_status(spec: PassSpec, doc) -> tuple[str, str]:
+    """Zustand eines Passes unter Corona (RTX-C4D-009): die Pässe legt das Plugin beim Rendern selbst an — in der Kopie.
+
+    Was der Nutzer tun muss, ist nur das, was Corona aus der Szene braucht: Objektpuffer für die Objekt-ID, Material-IDs
+    für die Material-ID, ein umkehrbares Farbmanagement für Tiefe und Normalen.
+    """
+    if not corona.available():
+        return "unavailable", "Der Corona-Multi-Pass fehlt in diesem Cinema 4D."
+    if spec.role in ("depth", "normal"):
+        colour = corona.colour(doc)
+        return ("available", "") if colour.decode is not None else ("requires-user-action", colour.problem or "")
+    if spec.role == "object-id":
+        return ("available", "") if object_buffer_ids(doc) else ("requires-user-action", OBJECT_BUFFER_HINT)
+    if spec.role == "material-id":
+        return ("available", "") if corona.material_ids(doc) else ("requires-user-action", MATERIAL_ID_HINT)
+    return "available", ""
+
+
 def pass_status(spec: PassSpec, doc) -> tuple[str, str]:
     """Zustand eines Passes in **diesem** Dokument und was der Nutzer einstellen muss."""
-    if spec.source == NOWHERE:
-        return "unavailable", spec.blocked_note or ""
     rd = doc.GetActiveRenderData()
     engine = rd[c4d.RDATA_RENDERENGINE]
+    if engine == CORONA:
+        return corona_status(spec, doc)
+    if spec.source == NOWHERE:
+        return "unavailable", spec.blocked_note or ""
     where = f"Rendervoreinstellungen › Multi-Pass › Kanal „{spec.channel}“"
     if spec.source == LAYER:
         then = f", dann {where} hinzufügen"
@@ -369,19 +389,15 @@ def pass_status(spec: PassSpec, doc) -> tuple[str, str]:
         then = ", dann an Objekten ein Compositing-Tag mit Objektpuffer vergeben"
     else:
         then = ""
-    if engine == CORONA:
-        return ("requires-user-action",
-                f"Mit Corona nicht übertragbar. Für Datenpässe Renderer Standard oder Physical wählen{then}.")
     if not MULTIPASS_RENDERERS or engine not in MULTIPASS_RENDERERS:
-        return ("requires-user-action", f"Renderer Standard oder Physical wählen (jetzt {renderer_label(engine)}){then}.")
+        return ("requires-user-action", f"Renderer Standard, Physical oder Corona wählen (jetzt {renderer_label(engine)}){then}.")
     if spec.source == POSITION:
         if not position_pass_available():
             return "unavailable", "Der Positions-Pass fehlt in diesem Cinema 4D."
         return "available", ""
     if spec.source == FILES:
         if not object_buffer_ids(doc):
-            return ("requires-user-action",
-                    "An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1).")
+            return "requires-user-action", OBJECT_BUFFER_HINT
         return "available", ""
     if not rd[c4d.RDATA_MULTIPASS_ENABLE]:
         return "requires-user-action", f"Multi-Pass einschalten und {where} hinzufügen."
@@ -581,14 +597,15 @@ def _find_layer(bitmap, buffer: int):
     return None
 
 
-def _layer_rows(layer, size: tuple[int, int], spec: PassSpec):
+def _layer_rows(layer, size: tuple[int, int], spec: PassSpec, decode=None):
     """Die Float-Werte der Ebene Zeile für Zeile (RGB je Pixel; bei Graustufen der erste Kanal).
 
     ``GetPixelCnt`` mit ``COLORMODE_RGBf`` und 12 Byte je Pixel liefert die rohen Werte der
     ``MultipassBitmap`` ohne Anzeigetransformation (am Host gemessen, 01.10.2026). ``spec.miss``: ein Pixel
     exakt (0, 0, 0) ist „kein Treffer“ (nie ein Einheitsvektor als (n + 1) / 2) und wird in der Datei dieser
     Wert; ``spec.mirror_z``: ``(n_z + 1) / 2`` wird ``1 − (n_z + 1) / 2`` — die Spiegelung nach dem Ersetzen,
-    ein Fehltreffer 0,5 bleibt 0,5.
+    ein Fehltreffer 0,5 bleibt 0,5. ``decode`` (Corona, ``corona.Colour``) macht aus dem Wert der Ebene zuerst wieder den
+    linearen Wert — vor allem anderen; (0, 0, 0) bleibt dabei (0, 0, 0).
     """
     width, height = size
     buffer = bytearray(12 * width)
@@ -600,6 +617,8 @@ def _layer_rows(layer, size: tuple[int, int], spec: PassSpec):
         if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
             raise CaptureError(f"GetPixelCnt meldet für Zeile {y} einen Lesefehler.")
         values = unpack(bytes(buffer))
+        if decode is not None:
+            values = tuple(v for i in range(0, len(values), 3) for v in decode(values[i:i + 3]))
         if spec.miss is not None or spec.mirror_z:
             red, green, blue = values[0::3], values[1::3], values[2::3]
             if spec.miss is not None and 0.0 in red:
@@ -611,7 +630,7 @@ def _layer_rows(layer, size: tuple[int, int], spec: PassSpec):
         yield values if spec.channels == pngwrite.RGB else values[0::3]
 
 
-def _save_pass(layer, path: str, size: tuple[int, int], spec: PassSpec, bit_depth: int) -> bool:
+def _save_pass(layer, path: str, size: tuple[int, int], spec: PassSpec, bit_depth: int, decode=None) -> bool:
     """Eine Ebene der MultipassBitmap als PNG mit 8 oder 16 Bit je Kanal — aus den Floats, ohne ``layer.Save``.
 
     Was geschrieben wird, liest danach ``describe_png`` aus dem IHDR — nicht aus der Wahl. ``False``, wenn die
@@ -620,7 +639,7 @@ def _save_pass(layer, path: str, size: tuple[int, int], spec: PassSpec, bit_dept
     """
     try:
         pngwrite.write_png(path, size[0], size[1], spec.channels, bit_depth,
-                           _layer_rows(layer, size, spec))
+                           _layer_rows(layer, size, spec, decode))
     except Exception:  # noqa: BLE001 — ein nicht lesbarer Pass wird planned, die Aufnahme läuft weiter (Regel 3)
         for stale in (path, path + ".part"):  # keine alte oder halbe Datei als Ergebnis
             try:
@@ -675,11 +694,11 @@ def _depth_range(camera, hits: list, meters: float) -> tuple[float, float, str]:
     return near, far, ", ".join(sources)
 
 
-def _write_depth(doc, layer, path: str, size: tuple[int, int], bit_depth: int) -> tuple[dict, str]:
+def _write_depth(doc, layer, path: str, size: tuple[int, int], bit_depth: int, decode=None) -> tuple[dict, str]:
     """Planare Tiefe aus der Positions-Ebene als Grau-PNG ``normalized-linear`` — ``(depth, Herkunft von near/far)``.
 
     ``d = (P − Kamera) · Blickrichtung`` in Einheiten des Dokuments, in Meter umgerechnet wie das Modell; kein Treffer
-    (0, 0, 0) wird 1 (Vertrag 1.3.0).
+    (0, 0, 0) wird 1 (Vertrag 1.3.0). ``decode``: Corona-WorldPosition zurück in die Weltposition (``corona.Colour``).
     """
     from . import export  # export importiert capture
 
@@ -702,12 +721,16 @@ def _write_depth(doc, layer, path: str, size: tuple[int, int], bit_depth: int) -
     depths: list = []
     for y in range(height):
         if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
-            raise PassMissing("Cinema 4D hat den Positions-Pass nicht lesbar geliefert.")
+            raise PassMissing("Cinema 4D hat die Weltposition nicht lesbar geliefert.")
         values = unpack(bytes(buffer))
         for x in range(width):
             px, py, pz = values[3 * x], values[3 * x + 1], values[3 * x + 2]
-            depths.append(None if (px == 0.0 and py == 0.0 and pz == 0.0)
-                          else (px - ox) * ax + (py - oy) * ay + (pz - oz) * az)
+            if px == 0.0 and py == 0.0 and pz == 0.0:
+                depths.append(None)
+                continue
+            if decode is not None:
+                px, py, pz = decode((px, py, pz))
+            depths.append((px - ox) * ax + (py - oy) * ay + (pz - oz) * az)
     hits = [d for d in depths if d is not None]
     if not hits:
         raise PassMissing("Im Bild ist keine Geometrie; die Tiefe bleibt leer.")
@@ -784,31 +807,74 @@ def object_id_problem(ids: list[int], bit_depth: int) -> str | None:
     return None
 
 
-def read_object_ids(folder: str, ids: list[int], path: str, size: tuple[int, int], bit_depth: int) -> None:
-    """Die Objektpuffer-Dateien aus ``folder`` als Grau-PNG: je Pixel die ID, 0 ohne — geprüft, sonst ``PassMissing``."""
+def material_id_problem(ids: list[int], bit_depth: int) -> str | None:
+    """Wie ``object_id_problem`` für die Material-IDs der Corona-Materialien."""
+    if not ids:
+        return MATERIAL_ID_HINT
+    top = (1 << bit_depth) - 1
+    if ids[-1] > top:
+        if bit_depth == 8 and ids[-1] <= 65535:
+            return f"Material ID {ids[-1]} passt nicht in 8 Bit; „16 Bit“ wählen oder Material IDs bis {top} vergeben."
+        return f"Material IDs bis {top} vergeben (gefunden: {ids[-1]})."
+    return None
+
+
+def _layer_gray(layer, size: tuple[int, int]) -> list[float]:
+    """Der erste Kanal einer Ebene, alle Pixel zeilenweise (Masken)."""
+    width, height = size
+    buffer = bytearray(12 * width)
+    unpack = struct.Struct(f"<{3 * width}f").unpack
+    values: list[float] = []
+    for y in range(height):
+        if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
+            raise PassMissing("Cinema 4D hat eine Maske nicht lesbar geliefert.")
+        values.extend(unpack(bytes(buffer))[0::3])
+    return values
+
+
+def _index_png(path: str, size: tuple[int, int], bit_depth: int, masks, unclear: str, overlap: str,
+               tolerance: float = 1e-6, zero: float = 0.0) -> None:
+    """Ein Indexbild aus Masken ``(Nummer, Werte)``: je Pixel die Nummer der Maske mit 1, 0 ohne — geprüft.
+
+    Eine Maske darf nur 0 und 1 tragen (Kantenglättung wäre ein Mischwert: ``unclear``), ein Pixel nur in einer Maske
+    liegen (``overlap``); sonst ``PassMissing`` mit diesem Grund. ``zero``/``tolerance``: was noch als 0 bzw. 1 gilt.
+    """
     top = (1 << bit_depth) - 1
     width, height = size
     index = [0] * (width * height)
-    for number in ids:
-        name = os.path.join(folder, f"{PASS_FILE_PREFIX}_object_{number}.tif")
-        if not os.path.isfile(name):
-            raise PassMissing(f"Cinema 4D hat den Objektpuffer {number} nicht geliefert.")
-        try:
-            w, h, values = tiffread.read_float_gray(name)
-        except (OSError, tiffread.TiffError):
-            raise PassMissing(f"Der Objektpuffer {number} ist nicht lesbar.") from None
-        if (w, h) != (width, height):
-            raise PassMissing(f"Der Objektpuffer {number} hat nicht die Bildgröße.")
+    for number, values in masks:
         for i, value in enumerate(values):
-            if value == 0.0:
+            if abs(value) <= zero:
                 continue
-            if abs(value - 1.0) > 1e-6:
-                raise PassMissing("Die Objektpuffer sind nicht eindeutig (Kantenglättung); die Objekt-ID bleibt geplant.")
+            if abs(value - 1.0) > tolerance:
+                raise PassMissing(unclear)
             if index[i]:
-                raise PassMissing("Ein Bildpunkt liegt in mehreren Objektpuffern; je Objekt nur einen Objektpuffer vergeben.")
+                raise PassMissing(overlap)
             index[i] = number
     pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
                        ([value / top for value in index[y * width:(y + 1) * width]] for y in range(height)))
+
+
+def read_object_ids(folder: str, ids: list[int], path: str, size: tuple[int, int], bit_depth: int) -> None:
+    """Die Objektpuffer-Dateien aus ``folder`` als Grau-PNG: je Pixel die ID, 0 ohne — geprüft, sonst ``PassMissing``."""
+    width, height = size
+
+    def masks():
+        for number in ids:
+            name = os.path.join(folder, f"{PASS_FILE_PREFIX}_object_{number}.tif")
+            if not os.path.isfile(name):
+                raise PassMissing(f"Cinema 4D hat den Objektpuffer {number} nicht geliefert.")
+            try:
+                w, h, values = tiffread.read_float_gray(name)
+            except (OSError, tiffread.TiffError):
+                raise PassMissing(f"Der Objektpuffer {number} ist nicht lesbar.") from None
+            if (w, h) != (width, height):
+                raise PassMissing(f"Der Objektpuffer {number} hat nicht die Bildgröße.")
+            yield number, values
+
+    _index_png(path, size, bit_depth, masks(),
+               "Die Objektpuffer sind nicht eindeutig (Kantenglättung); die Objekt-ID bleibt geplant.",
+               "Ein Bildpunkt liegt in mehreren Objektpuffern; je Objekt nur einen Objektpuffer vergeben.")
 
 
 def _write_object_ids(doc, rd, path: str, size: tuple[int, int], bit_depth: int, progress) -> list[int]:
@@ -834,6 +900,68 @@ def _remove(path: str) -> None:
             pass
 
 
+def _corona_pass(doc, spec: PassSpec, passes, bitmap, path: str, size: tuple[int, int], bit_depth: int, describe,
+                 passage: str) -> None:
+    """Eine Rolle aus den Corona-Ebenen, die ``corona.prepare`` in der Kopie angelegt hat — ``PassMissing`` mit Grund.
+
+    Jede Ebene wird zuerst nach dem Farbmanagement des Dokuments zurückgerechnet (``corona.Colour``), dann mit denselben
+    Schreibern wie unter Standard geschrieben (gemessen 08.10.2026, ``docs/measurements/2026-10-08-corona-multipass.md``).
+    """
+    if passes.problem:
+        raise PassMissing(passes.problem)
+    colour = passes.colour
+    if spec.role in ("depth", "normal") and colour.decode is None:
+        raise PassMissing(colour.problem or corona.COLOR_HINT)
+    origin = "nur in der Kopie des Dokuments angelegt"
+    if spec.role in ("object-id", "material-id"):
+        ids = passes.object_ids if spec.role == "object-id" else passes.material_ids
+        problem = (object_id_problem if spec.role == "object-id" else material_id_problem)(ids, bit_depth)
+        if problem:
+            raise PassMissing(problem)
+        names = passes.layers.get(spec.role) or {}
+
+        def masks():
+            for number in ids:
+                layer = corona.find_layer(bitmap, names.get(number, ""))
+                if layer is None:
+                    raise PassMissing(f"Corona hat die Maske für die ID {number} nicht geliefert.")
+                yield number, _layer_gray(layer, size)
+
+        what = "Objektpuffer" if spec.role == "object-id" else "Material IDs"
+        _index_png(path, size, bit_depth, masks(),
+                   f"Die Corona-Masken sind nicht eindeutig; die {spec.label} bleibt geplant.",
+                   f"Ein Bildpunkt liegt in mehreren Masken; je Objekt nur eine ID ({what}) vergeben.",
+                   tolerance=1e-4, zero=1e-4)
+        source = ("Objektpuffer der Compositing-Tags" if spec.role == "object-id"
+                  else "Material ID der Corona-Materialien")
+        describe(spec, path, lambda written, ids=ids, source=source: (
+            f"{spec.label} aus Corona-Masken je ID ({source}; IDs {', '.join(map(str, ids))}), Monochrom, "
+            f"Anti-aliasing aus, {origin}, {written}, Wert = ID, 0 = keine; {passage} (am Host gemessen)."))
+        return
+    layer = corona.find_layer(bitmap, passes.layers.get(spec.role, ""))
+    if layer is None:
+        raise PassMissing(f"Corona hat den Pass für {spec.label} nicht geliefert.")
+    if spec.role == "depth":
+        depth, near_far = _write_depth(doc, layer, path, size, bit_depth, colour.decode)
+        describe(spec, path, lambda written, depth=depth, near_far=near_far: (
+            f"Tiefe entlang der Blickachse (planar) aus Corona-WorldPosition (Anti-aliasing aus, {origin}; "
+            f"{colour.label}), {written}, normalized-linear zwischen near {depth['near']:g} m und far "
+            f"{depth['far']:g} m ({near_far}), kein Treffer = 1, {passage} (am Host gemessen)."), depth=depth)
+        return
+    decode = colour.decode if spec.role == "normal" else colour.albedo
+    if not _save_pass(layer, path, size, spec, bit_depth, decode):
+        raise PassMissing(f"Corona hat den Pass für {spec.label} nicht lesbar geliefert.")
+    if spec.role == "normal":
+        describe(spec, path, lambda written: (
+            f"Corona-NormalsGeometry ({origin}; {colour.label}), {written}, Weltnormalen im Exportraum des Manifests "
+            f"(wie Kamera und Modell, z → −z); (n + 1) / 2 je Komponente, kein Treffer 0,5; {passage} (am Host "
+            f"gemessen)."), normal={"space": spec.normal_space})
+        return
+    describe(spec, path, lambda written: (
+        f"Corona-SourceColor „Diffuse“: die diffuse Grundfarbe, die Corona rendert, linear im Renderraum wie die "
+        f"Albedo unter Standard ({origin}; {colour.label}), {written}; {passage} (am Host gemessen)."))
+
+
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
                   allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH,
                   rendered=None):
@@ -841,7 +969,9 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
 
     ``rendered``: das Ergebnis eines Renderns im Picture Viewer (``pictureviewer.Rendering``, RTX-C4D-010). Dann wird
     **nicht** gerendert: Beauty und Ebenen kommen aus dessen Bildspeicher, die Objekt-ID aus den Dateien seines zweiten
-    Durchgangs — mit denselben Schreibern wie unten, also mit derselben Kodierung.
+    Durchgangs — mit denselben Schreibern wie unten, also mit derselben Kodierung. Unter **Corona** kommen alle Pässe
+    aus den Ebenen, die ``corona.prepare`` in der Kopie angelegt hat (``_corona_pass``, RTX-C4D-009); ohne
+    ``rendered`` bleiben sie geplant.
 
     Gerendert wird mit dem aktiven Renderer auf einer Kopie des Containers der aktiven Rendervoreinstellung. Ein
     gewählter Pass wird ``planned`` mit Begründung, wenn Cinema 4D ihn nicht liefert (Material-ID), der Kanal nicht
@@ -871,7 +1001,7 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         spec = PASS_BY_ROLE[role]
         path = f"images/{role}.png"
         state, hint = pass_status(spec, doc) if spec.buffer is not None else ("unknown", "")
-        if spec.blocked_by:
+        if spec.blocked_by and rd[c4d.RDATA_RENDERENGINE] != CORONA:
             planned.append(mf.PlannedRole(role, path, PNG, spec.blocked_note))
         elif state != "available":
             planned.append(mf.PlannedRole(role, path, PNG, f"Pass nicht verfügbar: {hint}".strip()))
@@ -908,6 +1038,22 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         if image["bitDepth"] != bit_depth:
             written += f" (gewählt: {bit_depth} Bit; die Datei entscheidet)"
         files.append(mf.capture_file(path, root, spec.role, PNG, image, note(written), **extra))
+
+    if (rendered.engine if rendered is not None else rd[c4d.RDATA_RENDERENGINE]) == CORONA and wanted:
+        corona_specs, wanted = wanted, []
+        passes = getattr(rendered, "corona", None) if rendered is not None else None
+        for spec in corona_specs:
+            path = os.path.join(images, f"{spec.role}.png")
+            if passes is None:
+                missing(spec, "Mit Corona gehen die Pässe beim Rendern im Picture Viewer mit.")
+                continue
+            try:
+                _corona_pass(doc, spec, passes, rendered.bitmap, path, size, bit_depth, describe, passage)
+            except PassMissing as reason:
+                missing(spec, str(reason))
+            except corona.AmbiguousLayer:
+                missing(spec, "Mehrere Corona-Ebenen tragen den Namen des Passes; welche die richtige ist, ist nicht "
+                              "eindeutig. Corona-Pässe mit Namen, die mit „rendertaxi“ beginnen, umbenennen.")
 
     layered_specs = [spec for spec in wanted if spec.source in (LAYER, POSITION)]
     if layered_specs:

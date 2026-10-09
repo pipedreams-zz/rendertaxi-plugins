@@ -23,6 +23,9 @@ Fortschritt. Nur der **Viewport Renderer** rendert weiter direkt (schnell, unsic
   speichert: mit Alphakanal (``SAVEBIT_ALPHA``), wenn die Rendervoreinstellung ihn hat, sonst RGB — beides pixelgleich
   zur Datei, die der Renderer im selben Render schreibt (gemessen 08.10.2026, c4dpy). Die direkte Beauty (24 Bit)
   weicht davon um höchstens 1 von 255 ab.
+* **Corona** (RTX-C4D-009): die gewählten Pässe legt ``corona.prepare`` als eigene Corona-Pässe in den Pass-Baum der
+  **Kopie** (WorldPosition und Masken ohne Anti-aliasing); sie kommen im selben, einen Durchgang als Ebenen in den
+  Bildspeicher. Pass-Baum und Multi-Pass-Einstellungen des Nutzers bleiben, wie sie sind.
 * **Objekt-ID** braucht Antialiasing „Keines" und den Dateiweg: ein zweiter, unsichtbarer Durchgang im selben Faden,
   auf einer zweiten Kopie, deren Voreinstellung ``capture.object_render_data`` baut.
 * **Alterung.** Angeboten wird nur das jüngste Ergebnis, und nur solange Dokument, Renderer, Bildgröße und Kamera
@@ -42,7 +45,7 @@ import time
 import c4d
 from c4d.threading import C4DThread
 
-from . import capture
+from . import capture, corona
 
 CREATE_PICTUREVIEWER = getattr(c4d, "RENDERFLAGS_CREATE_PICTUREVIEWER", 0)
 OPEN_PICTUREVIEWER = getattr(c4d, "RENDERFLAGS_OPEN_PICTUREVIEWER", 0)
@@ -152,7 +155,8 @@ class Rendering:
     """Ein Rendern mit dem aktiven Renderer im Picture Viewer — ``start``, dann ``poll`` aus dem Timer, dann lesen.
 
     Was dabei herauskommt, liest ``capture.render_beauty(..., rendered=self)``: ``bitmap`` (Beauty und Ebenen),
-    ``position`` (Positions-Pass in der Kopie), ``object_folder`` und ``object_ids`` (Dateiweg der Objekt-ID).
+    ``position`` (Positions-Pass in der Kopie), ``object_folder`` und ``object_ids`` (Dateiweg der Objekt-ID),
+    ``corona`` (``corona.Passes``: die Corona-Pässe der Kopie, sonst ``None``).
     """
 
     def __init__(self, doc, size: tuple[int, int], roles: list[str], show: bool = True):
@@ -170,6 +174,7 @@ class Rendering:
         self.show = show
         self.problem: str | None = None
         self.position = False
+        self.corona: corona.Passes | None = None
         self.object_folder: str | None = None
         self._ids: list[int] = []
         self._id_problem: str | None = None
@@ -211,6 +216,8 @@ class Rendering:
                 self.position = True
             except Exception:  # noqa: BLE001 — Regel 3: ohne Positions-Pass bleibt die Tiefe geplant
                 self.position = False
+        if self.engine == capture.CORONA and self.roles and corona.available():
+            self.corona = corona.prepare(twin, self.roles, capture.object_buffer_ids(doc), corona.material_ids(doc))
         flags = capture.render_flags(True) | NO_DOCUMENT_CLONE
         if show:
             flags |= CREATE_PICTUREVIEWER | OPEN_PICTUREVIEWER

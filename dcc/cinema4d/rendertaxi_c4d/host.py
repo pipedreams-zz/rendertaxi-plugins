@@ -26,7 +26,7 @@ from . import rendertaxi_client as client
 
 # Registrierte Plugin-ID (vom Nutzer am 01.10.2026 genannt; die Entwicklungs-ID 1000001 entfällt).
 PLUGIN_ID = 1070762
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.6.0"
 HOST_MAJOR = 2026
 
 KEY = "cinema-4d"
@@ -42,8 +42,8 @@ HOST = client.configure(client.Host(
     plugin_version=PLUGIN_VERSION,
     roots=(PLUGIN_DIR,),
     # Tiefe (QC-03, Positions-Pass), Normalen (QC-04) und Objekt-ID (QC-05, Dateiweg) sind seit RTX-C4D-005 am Host
-    # gemessen. Die Material-ID liefern Standard und Physical nicht (QC-06, Produktentscheidung offen).
-    never_present={"material-id": "QC-06"},
+    # gemessen. Die Material-ID liefern Standard und Physical nicht (QC-06) — Corona schon (RTX-C4D-009, Masken je
+    # Material-ID, am Host gemessen): keine Rolle ist mehr „nie present“; unter Standard/Physical bleibt sie geplant.
 ))
 
 

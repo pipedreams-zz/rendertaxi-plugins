@@ -459,15 +459,15 @@ class RendertaxiDialog(gui.GeDialog):
                 notes.append((role, "In diesem Cinema 4D nicht erkannt."))
             elif state != "available":
                 notes.append((role, hint))
-            elif spec.blocked_by:
-                notes.append((role, spec.blocked_note or "Nicht übertragbar."))
             else:
                 offered.append(role)
         if offered and no_png:
             notes.append(("", "Dieser Server nimmt noch keine Pässe an; übertragen wird das Bild."))
         elif offered:
-            notes.append(("", f"Pässe als PNG {bit_depth} Bit: Tiefe von nah (0) bis fern (1), Objekt-ID je Pixel "
-                              "die ID des Objektpuffers, sonst linear."))
+            ids = "Objekt-ID je Pixel die ID des Objektpuffers"
+            if "material-id" in offered:
+                ids += ", Material-ID die Material ID des Corona-Materials"
+            notes.append(("", f"Pässe als PNG {bit_depth} Bit: Tiefe von nah (0) bis fern (1), {ids}, sonst linear."))
         self._lines(ID_PASS_NOTE, pass_notes(notes), PASS_NOTE_LINES)
 
     def _refresh_model(self, busy: bool) -> None:

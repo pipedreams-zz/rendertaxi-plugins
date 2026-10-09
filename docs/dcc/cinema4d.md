@@ -94,6 +94,12 @@ der Kanal eingeschaltet ist. Tiefe und Normalen bleiben „geplant" (im Manifest
 vermerkt, nicht übertragen), bis gemessen ist, wie Cinema 4D sie kodiert — das
 Fenster sagt es beim jeweiligen Pass.
 
+**Mit Corona** legt das Plugin die Pässe selbst an — nur für das Rendern im
+Picture Viewer; deine Multi-Pass-Einstellungen bleiben, wie sie sind. Tiefe,
+Normalen und Albedo gehen ohne weitere Einstellung. Die **Objekt-ID** braucht
+Compositing-Tags mit Objektpuffer, die **Material-ID** eine **Material ID** ab 1
+in den Corona-Materialien (unter „Advanced“).
+
 ## Modell mitsenden
 
 Unter **Bild übernehmen** schaltet **Modell mitsenden (GLB und Kamera)**
