@@ -288,10 +288,51 @@ def _overlays_hidden(area, hide: bool):
         overlay.show_overlays = saved
 
 
-def _save_png(scene, path: str) -> None:
+STANDARD_VIEW = "Standard"
+# Solid und Wireframe zeigt der Viewport mit der Ansicht „Standard", ohne den Transform der Szene
+# (AgX, Filmic, Look, Exposure, Gamma); Material Preview und Rendered folgen der Szene.
+SCENE_FREE_SHADING = ("SOLID", "WIREFRAME")
+
+
+@contextmanager
+def _view_override(scene, view_transform: str | None):
+    """Gibt zurück, ob der Override gilt; setzt die Farbverwaltung der Szene vorübergehend."""
+    state = {"applied": False}
+    if view_transform is None:
+        yield state
+        return
+    view = scene.view_settings
+    names = ("view_transform", "look", "exposure", "gamma", "use_curve_mapping")
+    saved = {name: getattr(view, name) for name in names}
+    try:
+        view.view_transform = view_transform  # TypeError, wenn die Farbverwaltung sie nicht kennt
+        state["applied"] = True
+    except TypeError:
+        yield state  # eigene OCIO-Konfiguration: wie bisher mit der Szene speichern
+        return
+    try:
+        view.look = "None"
+        view.exposure = 0.0
+        view.gamma = 1.0
+        view.use_curve_mapping = False
+        yield state
+    finally:
+        for name in names:
+            try:
+                setattr(view, name, saved[name])
+            except (TypeError, ValueError):
+                pass
+
+
+def _save_png(scene, path: str, view_transform: str | None = None) -> bool:
+    """Speichert das Render-Ergebnis als PNG; mit ``view_transform`` statt der Szenen-Farbverwaltung.
+
+    Gibt zurück, ob der Override galt (``False``, wenn keiner verlangt oder nicht möglich war).
+    """
     image = bpy.data.images["Render Result"]
-    with _image_settings(scene, "IMAGE", "PNG", "RGBA", "8"):
+    with _view_override(scene, view_transform) as state, _image_settings(scene, "IMAGE", "PNG", "RGBA", "8"):
         image.save_render(path, scene=scene)
+    return state["applied"]
 
 
 class CaptureError(RuntimeError):
@@ -320,10 +361,16 @@ def capture_viewport(context, root: str, size: tuple[int, int] | None, hide_over
             raise CaptureError(f"Blender hat die Viewport-Aufnahme abgelehnt: {error}") from None
         if "FINISHED" not in result:
             raise CaptureError("Blender hat die Viewport-Aufnahme nicht ausgeführt.")
-        _save_png(scene, path)
+        standard = _save_png(scene, path, STANDARD_VIEW if shading in SCENE_FREE_SHADING else None)
     engine = ENGINE_LABELS.get(scene.render.engine, scene.render.engine)
+    if standard:
+        saved = f"gespeichert mit der Ansicht „{STANDARD_VIEW}“ wie der Viewport"
+    elif shading in SCENE_FREE_SHADING:
+        saved = f"gespeichert mit der Farbverwaltung der Szene (die Ansicht „{STANDARD_VIEW}“ fehlt)"
+    else:
+        saved = "gespeichert mit der Farbverwaltung der Szene wie der Viewport"
     note = (f"Viewport Render (bpy.ops.render.opengl, view_context), {engine}, Shading {shading}; "
-            f"Overlays {'aus' if hide_overlays else 'an'}; {color_note(scene)}.")
+            f"Overlays {'aus' if hide_overlays else 'an'}; Szene: {color_note(scene)}; {saved}.")
     return mf.capture_file(path, root, "viewport", PNG, mf.describe_png(path), note)
 
 
