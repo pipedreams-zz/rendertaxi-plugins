@@ -189,7 +189,7 @@ CaptureManifest BaseManifest (const std::string& version)
 	manifest.source.hostVersion = "28.1";
 	manifest.source.hostBuild = "7006";
 	manifest.source.pluginIdentifier = "ai.rendertaxi.plugin.archicad";
-	manifest.source.pluginVersion = "1.2.1";
+	manifest.source.pluginVersion = "1.2.2";
 	manifest.sourceProjectKey = "archicad:project:test";
 	manifest.sourceViewKey = "archicad:view:3d";
 	manifest.viewDisplayName = "RTX Perspektive";

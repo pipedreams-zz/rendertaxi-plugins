@@ -4,6 +4,7 @@
 #include "ACAPinc.h"
 
 #if !defined (WINDOWS)
+#include <CoreFoundation/CoreFoundation.h>
 #include <sys/utsname.h>
 #endif
 
@@ -57,6 +58,21 @@ HostVersion ReadHostVersion ()
 		std::to_string (info.mainVersion) + "." + std::to_string (info.releaseVersion);
 	version.build = std::to_string (info.buildNum);
 	return version;
+}
+
+bool SystemAppearanceIsDark ()
+{
+#if defined (WINDOWS)
+	return false;
+#else
+	// Der Schlüssel fehlt im hellen Modus; „Dark“ steht nur im dunklen.
+	CFPropertyListRef style = CFPreferencesCopyAppValue (CFSTR ("AppleInterfaceStyle"), kCFPreferencesAnyApplication);
+	if (style == nullptr) return false;
+	const bool dark = CFGetTypeID (style) == CFStringGetTypeID () &&
+					  CFStringCompare (static_cast<CFStringRef> (style), CFSTR ("Dark"), kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+	CFRelease (style);
+	return dark;
+#endif
 }
 
 MachineInfo ReadMachineInfo ()

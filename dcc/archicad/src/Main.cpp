@@ -27,13 +27,20 @@ static void ShowOrHidePalette ()
 		RendertaxiPalette::EnsureShown ();
 }
 
+/**
+ * Welche der beiden „Palette“-Ressourcen gilt (RTX-P-019). Archicad 28 nimmt
+ * das Menüsymbol nur aus dem Text der Ressource; ein Wechsel der Erscheinung
+ * während der Sitzung erreicht es deshalb erst beim nächsten Start.
+ */
+static short paletteMenuResId = RtxMenuResId;
+
 static GSErrCode MenuCommandHandler (const API_MenuParams* menuParams)
 {
 	// **Zwei Ressourcen, ein flaches Menü.** Jede trägt genau einen Befehl;
 	// mehr als einer je Ressource erzwingt bei `MenuCode_UserDef` ein
 	// Untermenü (siehe `RINT/rendertaxi.grc`). Die Kennung der Ressource sagt
 	// deshalb, welcher Befehl gemeint ist, und der Index ist in beiden 1.
-	if (menuParams->menuItemRef.menuResID == RtxMenuResId) {
+	if (menuParams->menuItemRef.menuResID == paletteMenuResId) {
 		ShowOrHidePalette ();
 	} else if (menuParams->menuItemRef.menuResID == RtxAboutMenuResId) {
 		// **Was in einem Fehlerbericht stehen muss**: Fassung, Build, Kennung,
@@ -67,7 +74,8 @@ API_AddonType CheckEnvironment (API_EnvirParams* envir)
 
 GSErrCode RegisterInterface (void)
 {
-	GSErrCode err = ACAPI_MenuItem_RegisterMenu (RtxMenuResId, 0, MenuCode_UserDef, MenuFlag_Default);
+	paletteMenuResId = rtxaddon::SystemAppearanceIsDark () ? RtxMenuDarkResId : RtxMenuResId;
+	GSErrCode err = ACAPI_MenuItem_RegisterMenu (paletteMenuResId, 0, MenuCode_UserDef, MenuFlag_Default);
 	if (err != NoError) return err;
 	err = ACAPI_MenuItem_RegisterMenu (RtxAboutMenuResId, 0, MenuCode_UserDef, MenuFlag_Default);
 	if (err != NoError) return err;
@@ -80,7 +88,8 @@ GSErrCode Initialize (void)
 {
 	rtx::SetLogFile (rtxaddon::LogPath ());
 	rtx::LogLine ("rendertaxi-Add-on geladen.");
-	GSErrCode err = ACAPI_MenuItem_InstallMenuHandler (RtxMenuResId, MenuCommandHandler);
+	rtx::LogLine (std::string ("Menüsymbol: ") + (paletteMenuResId == RtxMenuDarkResId ? "dunkle" : "helle") + " Oberfläche.");
+	GSErrCode err = ACAPI_MenuItem_InstallMenuHandler (paletteMenuResId, MenuCommandHandler);
 	if (err != NoError) return err;
 	err = ACAPI_MenuItem_InstallMenuHandler (RtxAboutMenuResId, MenuCommandHandler);
 	if (err != NoError) return err;

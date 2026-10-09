@@ -38,7 +38,16 @@
    Vorgabefall". */
 'STR#' 32500 "Strings for the Menu" {
 /* [   ] */		"rdtx.ai"
-/* [  1] */			"Palette^E2^E3^ES^EE^EI^ED^EW^EL^ET^EM"
+/* [  1] */			"Palette^E2^E3^ES^EE^EI^ED^EW^EL^ET^EM^32100"
+}
+
+/* Derselbe Befehl mit dem hellen Zeichen für die dunkle Oberfläche
+   (RTX-P-019). Registriert wird je Start genau eine der beiden; das
+   Zeichen hängt als `^<GICN>` am Text wie im DevKit-Beispiel
+   `CurtainWall_Drawer`. */
+'STR#' 32502 "Strings for the Menu, dark appearance" {
+/* [   ] */		"rdtx.ai"
+/* [  1] */			"Palette^E2^E3^ES^EE^EI^ED^EW^EL^ET^EM^32101"
 }
 
 'STR#' 32501 "Strings for the Second Menu" {
@@ -153,7 +162,7 @@
 
 /* Die Build-Zeile, klein im Fuß: ein Screenshot zeigt so immer, welcher Stand
    lief (#281). Dieselbe Zeile steht in „Über". */
-/* [ 46] */ LeftText            20  924  388   16  SmallPlain  vCenter  ""
+/* [ 46] */ LeftText            42  924  366   16  SmallPlain  vCenter  ""
 
 /* **Bild, Modell oder beides** (RTX-A-012, #307) — wie Blender und Cinema 4D.
    Zwei Zeilen unter „Ansicht"; alles darunter rückt um 52 nach unten. Was
@@ -164,6 +173,12 @@
 /* [ 48] */ CheckBox           100  436  308   18  SmallPlain  "Modell mit Kamera"
 /* [ 49] */ CheckBox            20  460  260   18  SmallPlain  "Zusätzliche Kameras mitsenden"
 /* [ 50] */ Button             288  457  120   24  SmallPlain  "Kameras…"
+
+/* Das rdtx.ai-Zeichen im Fuß vor der Build-Zeile (RTX-P-019, #332). Der Kopf
+   einer schwebenden Palette zeigt in Archicad 28 kein Symbol (gemessen am
+   09.10.2026); hier ist es sichtbar. Hell oder dunkel setzt die Palette nach
+   der Erscheinung von Archicad. */
+/* [ 51] */ Icon                20  923   18   18  32100
 }
 
 'DLGH'  32500  DLG_32500_rendertaxi_Palette {
@@ -217,6 +232,7 @@
 48	""	CheckBox_model
 49	""	CheckBox_extraCameras
 50	""	Button_cameras
+51	""	Icon_mark
 }
 
 /* --- Neues Projekt --------------------------------------------------------

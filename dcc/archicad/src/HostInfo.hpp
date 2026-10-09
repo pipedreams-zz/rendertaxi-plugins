@@ -31,6 +31,16 @@ struct MachineInfo {
 
 MachineInfo ReadMachineInfo ();
 
+/**
+ * Wahr, wenn das System gerade dunkel erscheint (macOS „Dunkel“, auch über
+ * „Automatisch“). Danach richtet sich das Menüsymbol (RTX-P-019): die
+ * Menüleiste zeichnet macOS in der Erscheinung des Systems, auch wenn Archicad
+ * selbst hell eingestellt ist (gemessen am 09.10.2026). Die Palette folgt
+ * dagegen Archicad und fragt sich selbst (`DG::Panel::GetAppearanceType`).
+ * Windows: immer hell.
+ */
+bool SystemAppearanceIsDark ();
+
 /** Die aktuelle Quellansicht. */
 struct SourceView {
 	/** Stabiler Schlüssel oder leer, wenn Archicad 28 keinen hergibt. */

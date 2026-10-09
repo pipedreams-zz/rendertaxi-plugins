@@ -9,7 +9,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.2.1-2026.10.09.zip`) von der
+`rendertaxi-archicad28-1.2.2-2026.10.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
@@ -20,7 +20,8 @@ entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
 2. `macos/rendertaxi.bundle` nach
    `/Applications/Graphisoft/Archicad 28/Add-Ons/` kopieren. Alternativ in
    Archicad unter **Optionen › Add-On-Manager** hinzufügen.
-3. Archicad starten. Im Menü erscheint **rdtx.ai**.
+3. Archicad starten. Im Menü erscheint **rdtx.ai**, der Eintrag **Palette**
+   trägt das rdtx.ai-Zeichen.
 
 Das Bundle ist ad hoc signiert, aber **nicht notarisiert**. Lehnt macOS das
 Laden ab oder meldet Archicad, das Add-on sei beschädigt, einmal im Terminal

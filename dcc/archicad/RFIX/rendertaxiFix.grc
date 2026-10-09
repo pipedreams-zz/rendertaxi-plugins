@@ -15,3 +15,16 @@
 	963855185
 	1702429828
 }
+
+/* rdtx.ai-Zeichen (RTX-P-019, #332). Die SVGs in `Images/` schreibt
+   `integrations/_shared/icons/render.py archicad` aus der gemeinsamen Quelle;
+   ResConv rastert sie beim Bauen in 1x und 2x. Hell = Tinte für helle
+   Oberflächen, Dunkel = Papier für dunkle. Fehlt ein Bild, zeigt Archicad an
+   der Stelle nichts — das Laden hängt nicht daran. */
+'GICN' 32100 "rdtx.ai-Zeichen, helle Oberfläche" {
+	"RdtxaiLight"
+}
+
+'GICN' 32101 "rdtx.ai-Zeichen, dunkle Oberfläche" {
+	"RdtxaiDark"
+}

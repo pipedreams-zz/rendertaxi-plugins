@@ -258,6 +258,7 @@ RendertaxiPalette::RendertaxiPalette () :
 	projectRefreshButton (GetReference (), ProjectRefreshButtonId),
 	newProjectButton (GetReference (), NewProjectButtonId),
 	buildText (GetReference (), BuildTextId),
+	markIcon (GetReference (), MarkIconId),
 	imageCheck (GetReference (), ImageCheckId),
 	modelCheck (GetReference (), ModelCheckId),
 	extraCamerasCheck (GetReference (), ExtraCamerasCheckId),
@@ -358,6 +359,25 @@ RendertaxiPalette::RendertaxiPalette () :
 	savedViewsStale.store (false);
 	RefreshSourceView ();
 	RefreshFromState ();
+	UpdatePaletteIcon ();
+}
+
+void RendertaxiPalette::UpdatePaletteIcon ()
+{
+	// Archicad hat eine eigene Erscheinung, unabhängig vom System (gemessen am
+	// 09.10.2026: Palette hell bei dunklem System); sie kann während der Sitzung
+	// wechseln. Die Palette kennt sie, deshalb fragt der Leerlauf hier und nicht
+	// beim System. Ein fehlendes Bild lässt die Stelle leer, mehr nicht (Regel 3
+	// aus #332).
+	const int appearance = GetAppearanceType () == DarkAppearance ? 1 : 0;
+	if (appearance == shownAppearance) return;
+	shownAppearance = appearance;
+	const DG::Icon mark (ACAPI_GetOwnResModule (), appearance == 1 ? RtxMarkDarkIconId : RtxMarkLightIconId);
+	// Der Kopf zeigt es nur, wo Archicad Palettensymbole zeichnet; der Fuß immer.
+	SetIcon (mark);
+	markIcon.SetIcon (mark);
+	rtx::LogLine (std::string ("Palettensymbol: ") + (appearance == 1 ? "dunkle" : "helle") + " Oberfläche (System: " +
+				  (SystemAppearanceIsDark () ? "dunkel" : "hell") + ").");
 }
 
 RendertaxiPalette::~RendertaxiPalette ()
@@ -1065,6 +1085,7 @@ void RendertaxiPalette::RefreshFromState ()
 
 void RendertaxiPalette::PanelIdle (const DG::PanelIdleEvent&)
 {
+	UpdatePaletteIcon ();
 	if (!workerRunning.load () && worker.joinable ()) JoinWorker ();
 
 	// Das Leerlaufereignis kommt sehr oft. Die Anzeige aus dem gemeinsamen

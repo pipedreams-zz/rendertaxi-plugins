@@ -41,6 +41,11 @@
 // flaches Hauptmenü „rendertaxi.ai" (siehe `RINT/rendertaxi.grc`).
 #define RtxMenuResId 32500
 #define RtxAboutMenuResId 32501
+/** „Palette“ mit dem hellen Zeichen, für eine dunkle Oberfläche (RTX-P-019). */
+#define RtxMenuDarkResId 32502
+// Das rdtx.ai-Zeichen (`RFIX/rendertaxiFix.grc`): Tinte für helle, Papier für dunkle Oberflächen.
+#define RtxMarkLightIconId 32100
+#define RtxMarkDarkIconId 32101
 
 namespace rtxaddon {
 
@@ -168,7 +173,8 @@ private:
 		ImageCheckId = 47,
 		ModelCheckId = 48,
 		ExtraCamerasCheckId = 49,
-		CamerasButtonId = 50
+		CamerasButtonId = 50,
+		MarkIconId = 51
 	};
 
 	RendertaxiPalette ();
@@ -176,6 +182,8 @@ private:
 	void ButtonClicked (const DG::ButtonClickEvent& ev) override;
 	void TextEditChanged (const DG::TextEditChangeEvent& ev) override;
 	void PanelIdle (const DG::PanelIdleEvent& ev) override;
+	/** Setzt das rdtx.ai-Zeichen passend zur Erscheinung der Palette, nur bei Wechsel. */
+	void UpdatePaletteIcon ();
 	void PanelCloseRequested (const DG::PanelCloseRequestEvent& ev, bool* accepted) override;
 	/** Der Fokus kehrt auf die Palette zurück: Listen neu laden, höchstens alle 5 s. */
 	void PanelActivated (const DG::PanelActivateEvent& ev) override;
@@ -343,6 +351,8 @@ private:
 	DG::Button newProjectButton;
 	/** „Build … vom …" im Fuß, damit jeder Screenshot den Stand zeigt. */
 	DG::LeftText buildText;
+	/** Das rdtx.ai-Zeichen im Fuß (RTX-P-019). */
+	DG::IconItem markIcon;
 
 	/** Bild, Modell oder beides; zusätzliche Kameras (RTX-A-012). Gemerkt in `settings.json`. */
 	DG::CheckBox imageCheck;
@@ -436,6 +446,8 @@ private:
 	bool shownImage = true;
 	bool shownModel = false;
 	bool shownExtraCameras = false;
+	/** Erscheinung, zu der das Palettensymbol passt; -1 vor dem ersten Setzen (RTX-P-019). */
+	int shownAppearance = -1;
 	/** Archicad baut das 3D-Modell neu auf; die Übernahme startet danach von selbst (QA-09). */
 	rtx::ModelRebuildWait modelWait;
 	CaptureSource waitingSource = CaptureSource::CurrentWindow;
