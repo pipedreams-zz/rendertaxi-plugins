@@ -1,7 +1,9 @@
 """rdtx.ai für Rhino 8 — Einstieg des Befehls ``RdtxAI`` (``commands/RdtxAI.py``).
 
-``main()`` öffnet das Fenster (``panel.RdtxForm``) oder holt das offene nach vorn. Das Fenster lebt in
-``scriptcontext.sticky``: ein erneuter Befehl öffnet kein zweites.
+``main()`` öffnet die Palette als Rhino-Panel (``dock.py``, RTX-RH-004), holt sie nach vorn oder blendet sie
+aus, wenn sie schon der sichtbare Reiter ist. Eine ``Session`` je Rhino-Prozess hält den ``Controller`` in
+``scriptcontext.sticky``; jedes Panel, das Rhino erzeugt (je Dokumentfenster eines), zeichnet ihn
+(``panel.RdtxView``). Nimmt Rhino das Panel nicht an, öffnet dieselbe Palette als schwebendes Fenster.
 
 Protokoll: jede Zeile des Clients geht zusätzlich zur Konsole in die Datei ``rhino.log`` im Nutzerordner
 (0600, ab 1 MB eine Vorgängerdatei) und auf die Rhino-Kommandozeile (``log.add_sink``) — Rhino tauscht
@@ -9,7 +11,7 @@ Protokoll: jede Zeile des Clients geht zusätzlich zur Konsole in die Datei ``rh
 schreibt nie Token, Pfade oder Namen (``rendertaxi_client/log.py``); die Datei erbt das.
 
 Regel 3: kein gemerkter Zustand verhindert das Öffnen — ein Fehler beim Aufbau wird eine Meldung auf der
-Kommandozeile, nie ein Absturz von Rhino.
+Kommandozeile oder ein Satz im Panel, nie ein Absturz von Rhino.
 """
 
 from __future__ import annotations
@@ -70,41 +72,138 @@ def _sticky() -> dict:
     return scriptcontext.sticky
 
 
+class Session:
+    """Der eine ``Controller`` je Rhino-Prozess und die Paletten, die ihn zeichnen.
+
+    Eine Palette, die Rhino nur entlädt (Reiter ausgeblendet, Leiste zu), bleibt registriert und zeichnet nach dem
+    nächsten ``Load`` wieder mit (Review F-01). Erst eine entsorgte Palette (``RdtxView.disposed``: Panel
+    ``IsDisposed`` oder Fenster geschlossen) fällt heraus, ihr Zeitgeber steht.
+    """
+
+    def __init__(self, controller):
+        self.controller = controller
+        self._views = []
+        self.window = None
+
+    def add(self, view) -> None:
+        if view not in self._views:
+            self._views.append(view)
+
+    def views(self) -> list:
+        """Die geladenen Paletten; entsorgte werden dabei vergessen."""
+        kept = []
+        for view in self._views:
+            if view.disposed():
+                view.timer.Stop()
+            else:
+                kept.append(view)
+        self._views = kept
+        return [view for view in kept if view.alive]
+
+    def build(self, container) -> None:
+        """Inhalt eines Panels, das Rhino erzeugt — ein Fehler wird ein Satz im Panel (Regel 3)."""
+        try:
+            from . import panel
+
+            self.add(panel.RdtxView(self.controller, container, self.views))
+        except Exception as error:  # noqa: BLE001
+            from .rendertaxi_client.log import log_exception
+
+            log_exception("Palette ließ sich nicht aufbauen", error)
+            try:
+                import Eto.Forms as forms
+
+                label = forms.Label()
+                label.Text = f"Die Palette ließ sich nicht aufbauen ({type(error).__name__}). Einzelheiten im Protokoll."
+                container.Content = label
+            except Exception:  # noqa: BLE001
+                pass
+
+    def shutdown(self, *_args) -> None:
+        try:
+            self.controller.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _session():
+    """Die ``Session`` aus ``sticky`` oder eine neue — mit Protokoll, gemerkter Anmeldung und Abbruch beim Beenden."""
+    import Rhino
+
+    from . import rhinohost
+    from .controller import Controller
+    from .rendertaxi_client.log import log
+
+    sticky = _sticky()
+    session = sticky.get(STICKY)
+    if isinstance(session, Session):
+        return session
+    try:
+        install_log(rhinohost.user_dir())
+    except OSError:
+        pass  # ohne Nutzerordner bleibt die Konsole; die Palette sagt beim Verbinden, was fehlt
+    session = Session(Controller(rhinohost.RhinoAdapter()))
+    sticky[STICKY] = session
+    try:
+        Rhino.RhinoApp.Closing += session.shutdown
+    except Exception:  # noqa: BLE001 — ohne das Ereignis bricht Rhino eine Übertragung beim Beenden selbst ab
+        pass
+    log(f"Palette bereit ({host.PLUGIN_VERSION}, {host.build_text()}, Rhino {host.host_version()})")
+    session.controller.restore_session()
+    return session
+
+
+def _window(session) -> None:
+    """Ausweg ohne Panel: die Palette als schwebendes Fenster; ein zweiter Befehl holt es nach vorn."""
+    import Rhino
+
+    from . import panel
+
+    if session.window is not None:
+        try:
+            session.window.BringToFront()
+            return
+        except Exception:  # noqa: BLE001 — ein geschlossenes Fenster wird neu geöffnet
+            session.window = None
+    view = panel.RdtxView(session.controller, None, session.views)
+    session.add(view)
+    window = panel.RdtxWindow(view)
+    window.Owner = Rhino.UI.RhinoEtoApp.MainWindow
+
+    def closed(*_):
+        view.close()
+        session.window = None
+
+    window.Closed += closed
+    window.Show()
+    session.window = window
+
+
 def main() -> None:
-    """Befehl ``RdtxAI``: das Fenster öffnen oder nach vorn holen."""
+    """Befehl ``RdtxAI``: das Panel öffnen, nach vorn holen oder ausblenden."""
     import Rhino
 
     try:
         if not host.supported():
             Rhino.RhinoApp.WriteLine(host.unsupported_text())
             return
-        from . import panel, rhinohost
-        from .controller import Controller
-        from .rendertaxi_client.log import log
+        from . import dock, rhinohost
+        from .rendertaxi_client.log import log, log_exception
 
-        sticky = _sticky()
-        form = sticky.get(STICKY)
-        if form is not None:
-            try:
-                form.BringToFront()
-                return
-            except Exception:  # noqa: BLE001 — ein geschlossenes Fenster wird neu geöffnet
-                sticky[STICKY] = None
+        session = _session()
         try:
-            install_log(rhinohost.user_dir())
-        except OSError:
-            pass  # ohne Nutzerordner bleibt die Konsole; das Fenster sagt beim Verbinden, was fehlt
-        controller = Controller(rhinohost.RhinoAdapter())
-        form = panel.RdtxForm(controller)
-        form.Owner = Rhino.UI.RhinoEtoApp.MainWindow
-        form.Closed += lambda *_: sticky.__setitem__(STICKY, None)
-        form.Show()
-        sticky[STICKY] = form
-        log(f"Fenster geöffnet ({host.PLUGIN_VERSION}, {host.build_text()}, Rhino {host.host_version()})")
-        controller.restore_session()
-        form.refresh()
+            dock.panel_type(session.build)
+            shown = dock.show(rhinohost.user_dir())
+        except Exception as error:  # noqa: BLE001 — Panel nicht angenommen: Fenster statt nichts
+            log_exception("Panel ließ sich nicht registrieren", error)
+            shown = "hidden"
+        if shown == "hidden":
+            log("Panel nicht sichtbar — Palette als Fenster")
+            _window(session)
+        for view in session.views():
+            view.refresh()
     except Exception as error:  # noqa: BLE001 — nie ein Absturz von Rhino
         from .rendertaxi_client.log import log_exception
 
-        log_exception("Fenster ließ sich nicht öffnen", error)
-        Rhino.RhinoApp.WriteLine(f"{host.MARK}: Das Fenster ließ sich nicht öffnen ({type(error).__name__}).")
+        log_exception("Palette ließ sich nicht öffnen", error)
+        Rhino.RhinoApp.WriteLine(f"{host.MARK}: Die Palette ließ sich nicht öffnen ({type(error).__name__}).")

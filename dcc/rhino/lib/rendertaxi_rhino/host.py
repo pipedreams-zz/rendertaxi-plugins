@@ -5,6 +5,9 @@ Hier — und nur hier — stehen die Kennungen des Plugins:
 * ``PLUGIN_GUID`` — die feste Kennung des Rhino-Plugins (``rdtxai.rhproj``,
   Feld ``id``, und ``guid:`` im yak-Paket). Eine neue Kennung hieße für Rhino
   ein anderes Plugin; sie bleibt.
+* ``PANEL_GUID`` — die feste Kennung des Panels (RTX-RH-004). Unter ihr merkt
+  sich Rhino, wo das Panel angedockt ist; eine neue Kennung hieße für Rhino
+  ein anderes Panel.
 * ``PLUGIN_VERSION`` — die eine Quelle der Pluginversion;
   ``integrations/rhino/scripts/pack.sh`` und der öffentliche Spiegel lesen sie
   hier, ``rdtxai.rhproj`` trägt dieselbe Zahl (``tests/test_plugin.py`` prüft es).
@@ -23,7 +26,8 @@ import os
 from . import rendertaxi_client as client
 
 PLUGIN_GUID = "b47606d7-0da9-4f5b-86c4-43f5b32f1865"
-PLUGIN_VERSION = "0.2.1"
+PANEL_GUID = "5d0c8a3e-2f71-4b9a-9c6e-7a1f3b2d4e60"
+PLUGIN_VERSION = "0.3.0"
 HOST_MAJOR = 8
 
 KEY = "rhino"

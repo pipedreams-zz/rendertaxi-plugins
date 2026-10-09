@@ -1,21 +1,27 @@
-"""Das Fenster von rdtx.ai in Rhino — Eto.Forms, plattformübergreifend (Windows und macOS).
+"""Die Palette von rdtx.ai in Rhino — Eto.Forms, plattformübergreifend (Windows und macOS).
 
-Ein nicht modales ``Eto.Forms.Form`` mit dem Hauptfenster von Rhino als Besitzer (wie das gisloader-Plugin,
-das in Rhino 8 auf beiden Systemen läuft). Aufbau wie das Blender-Panel: Verbindung, Projekt, Blickpunkt,
-Bild, Modell, dann fest „Übernehmen"; im Fuß Version und Build-Kennung.
+``RdtxView`` baut den Inhalt in ein ``Eto.Forms.Panel``: das Rhino-Panel, das ``dock.py`` registriert (Rhino
+erzeugt es, je Dokumentfenster eines), oder — geht das nicht — ein schwebendes Fenster (``RdtxWindow``).
+Aufbau wie Rhinos eigene Paletten („Eigenschaften"): Abschnitte mit Überschrift, darin Zeilen mit Beschriftung
+links und Wert rechts, Bedienelemente in Rhinos Größe (macOS: 11 pt, Steuerelementgröße „Small", gemessen an
+„Eigenschaften" in Rhino 8.35). Bereiche: Verbindung (Einstellungen aufklappbar), Projekt, Blickpunkt, Bild,
+Modell, Übernehmen; im Fuß Version und Build-Kennung. Lange Sätze stehen im Tooltip, die Zeile ist kurz.
 
-Das Fenster zeichnet nur; jede Handlung geht an den ``Controller``. Listen wählen über Kennungen (``Key``),
-nie über Positionen. Jeder Klick läuft über ``_guarded``: eine Ausnahme wird ein Satz im Fenster, kein
+Die Palette zeichnet nur; jede Handlung geht an den ``Controller``. Listen wählen über Kennungen (``Key``),
+nie über Positionen. Jeder Klick läuft über ``_guarded``: eine Ausnahme wird ein Satz in der Palette, kein
 Traceback. pythonnet in Rhino 8 setzt keine Eigenschaften im Konstruktor — erst erzeugen, dann setzen.
 """
 
 from __future__ import annotations
 
+import sys
+
 import Eto.Drawing as drawing
 import Eto.Forms as forms
 
 from . import host
-from .controller import BEAUTY, CURRENT_VIEW, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT, Controller
+from .controller import (BEAUTY, CURRENT_VIEW, MAX_TRIANGLES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT,
+                         Controller)
 from .rendertaxi_client import frame, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
@@ -23,47 +29,150 @@ from .rendertaxi_client.log import log_exception
 NO_PROJECT = "— Projekt wählen —"
 NO_VIEWPOINT = "— Blickpunkt wählen —"
 WIDTH = 380
+# Rhinos Paletten unter macOS: Schrift 11 pt, Steuerelemente „Small" (Dropdown 22 px, Textfeld 19 px). Unter
+# Windows ist die Standardschrift von Eto schon die von Rhino; dort bleibt sie.
+FONT_SIZE = 11 if sys.platform == "darwin" else None
+LABEL_WIDTH = 82
+ROW_SPACING = 4
+SECTION_SPACING = 10
+PADDING = 8
+PASSES = (("depth", "Tiefe"), ("normal", "Normalen"), ("albedo", "Albedo"), ("object-id", "Objekt-ID"),
+          ("material-id", "Material-ID"))
+TARGETS = [(frame.CREATE, "Neuer Blickpunkt"), (frame.UPDATE, "Bestehenden aktualisieren")]
+SIZES = [(frame.SIZE_CANVAS_DEFAULT, "Vorgabe der Leinwand"), (frame.SIZE_CAPTURE, "wie die Aufnahme")]
+KINDS = [(VIEWPORT, "Ansicht (wie im Viewport)"), (BEAUTY, "Rendering (Rhino Render)")]
+RESOLUTIONS = [(RESOLUTION_DOCUMENT, "Rendereinstellungen"), (RESOLUTION_VIEWPOINT, "Größe des Blickpunkt-Rahmens")]
 
 
-def _label(text: str = "", wrap: bool = True):
+def _font(control, bold: bool = False):
+    """Schrift in Rhino-Größe; ein Fehler lässt die Standardschrift stehen (Regel 3)."""
+    if FONT_SIZE is None and not bold:
+        return control
+    try:
+        size = FONT_SIZE or drawing.SystemFonts.Default().Size
+        control.Font = drawing.SystemFonts.Bold(size) if bold else drawing.SystemFonts.Default(size)
+    except Exception:  # noqa: BLE001
+        pass
+    return control
+
+
+# Jede Beschriftung mit ihrem Umbruch: Rhino setzt beim Laden eines Panels für ``Label`` rechtsbündig und
+# Wortumbruch (gemessen in Rhino 8.35, macOS) — ``_align`` stellt beides nach dem Laden wieder her.
+_LABELS: list = []
+
+
+def _align(label, wrap: bool) -> None:
+    # pythonnet nennt den Enum-Wert „None" ``NONE``.
+    mode = forms.WrapMode.Word if wrap else getattr(forms.WrapMode, "NONE", None)
+    if mode is not None and label.Wrap != mode:
+        label.Wrap = mode
+    if label.TextAlignment != forms.TextAlignment.Left:
+        label.TextAlignment = forms.TextAlignment.Left
+
+
+def _label(text: str = "", wrap: bool = True, bold: bool = False):
     label = forms.Label()
     label.Text = text
-    if wrap:
-        label.Wrap = forms.WrapMode.Word
-    return label
+    label.VerticalAlignment = forms.VerticalAlignment.Center
+    _align(label, wrap)
+    _LABELS.append((label, wrap))
+    return _font(label, bold)
 
 
 def _button(text: str, handler):
     button = forms.Button()
     button.Text = text
     button.Click += handler
-    return button
+    return _font(button)
 
 
 def _check(text: str, handler):
     box = forms.CheckBox()
     box.Text = text
     box.CheckedChanged += handler
+    return _font(box)
+
+
+def _dropdown(handler=None):
+    dropdown = _font(forms.DropDown())
+    if handler is not None:
+        dropdown.SelectedIndexChanged += handler
+    return dropdown
+
+
+def _textbox(placeholder: str = ""):
+    box = _font(forms.TextBox())
+    box.PlaceholderText = placeholder
     return box
 
 
-def _stack(*controls, horizontal: bool = False):
+def _stack(*controls, horizontal: bool = False, spacing: int = ROW_SPACING):
     stack = forms.StackLayout()
     stack.Orientation = forms.Orientation.Horizontal if horizontal else forms.Orientation.Vertical
-    stack.Spacing = 6
+    stack.Spacing = spacing
     if not horizontal:
         stack.HorizontalContentAlignment = forms.HorizontalAlignment.Stretch
+    else:
+        stack.VerticalContentAlignment = forms.VerticalAlignment.Center
     for control in controls:
         stack.Items.Add(forms.StackLayoutItem(control, False))
     return stack
 
 
-def _group(title: str, *controls):
-    group = forms.GroupBox()
-    group.Text = title
-    group.Padding = drawing.Padding(8)
-    group.Content = _stack(*controls)
-    return group
+def _cell(control, scale: bool):
+    cell = forms.TableCell()
+    cell.Control = control
+    cell.ScaleWidth = scale
+    return cell
+
+
+def _row(title: str, *controls):
+    """Eine Zeile wie in „Eigenschaften": Beschriftung links (feste Breite), Werte rechts (füllen die Breite).
+
+    Eine eigene ``TableLayout`` je Zeile: so verschwindet mit ``Visible = False`` die ganze Zeile.
+    """
+    caption = _label(title, wrap=False)
+    caption.Width = LABEL_WIDTH
+    row = forms.TableRow()
+    row.Cells.Add(_cell(caption, False))
+    for index, control in enumerate(controls):
+        row.Cells.Add(_cell(control, index == 0))
+    table = forms.TableLayout()
+    table.Spacing = drawing.Size(6, 0)
+    table.Rows.Add(row)
+    return table
+
+
+def _grid(controls, columns: int = 2):
+    """Kontrollkästchen nebeneinander — die Pässe in zwei Spalten statt fünf Zeilen."""
+    table = forms.TableLayout()
+    table.Spacing = drawing.Size(8, 2)
+    for start in range(0, len(controls), columns):
+        row = forms.TableRow()
+        for index in range(columns):
+            control = controls[start + index] if start + index < len(controls) else forms.Label()
+            row.Cells.Add(_cell(control, True))
+        table.Rows.Add(row)
+    return table
+
+
+class Section:
+    """Ein senkrechter Stapel, der nur seine sichtbaren Teile trägt — eine ausgeblendete Zeile hinterlässt so
+    keinen Abstand (Eto rechnet den Abstand auch für unsichtbare Einträge, gemessen in Rhino 8.35)."""
+
+    def __init__(self, controls, spacing: int = ROW_SPACING):
+        self.controls = list(controls)
+        self.stack = _stack(*self.controls, spacing=spacing)
+        self._shown = list(self.controls)
+
+    def relayout(self) -> None:
+        shown = [control for control in self.controls if control.Visible]
+        if shown == self._shown:
+            return
+        self.stack.Items.Clear()
+        for control in shown:
+            self.stack.Items.Add(forms.StackLayoutItem(control, False))
+        self._shown = shown
 
 
 def _fill(dropdown, items, selected) -> None:
@@ -80,21 +189,58 @@ def _fill(dropdown, items, selected) -> None:
         dropdown.SelectedKey = selected
 
 
-class RdtxForm(forms.Form):
-    def __init__(self, controller: Controller):
-        super().__init__()
+def size_line(c: Controller) -> str:
+    """Die Zielgröße in einer kurzen Zeile („Zielgröße 16:9, <lange Kante> px"); der ganze Satz steht im Tooltip."""
+    form = c.form
+    known = frame.canvas_default(c.state.handshake)
+    if form.size == frame.SIZE_CAPTURE:
+        if form.target_mode != frame.CREATE and not form.fit_to_capture:
+            return "Zielgröße wie Aufnahme — nur mit Anpassen"
+        return f"Zielgröße wie Aufnahme, ab {known[1]} px" if known else "Zielgröße wie Aufnahme"
+    return f"Zielgröße {known[0]}, {known[1]} px" if known else "Zielgröße: Vorgabe der Leinwand"
+
+
+def model_line(c: Controller) -> str:
+    """Der Modellhinweis in einer Zeile — Dreiecke, Objekte, Dateigröße; Einzelheiten im Tooltip."""
+    problem = c.model_problem()
+    if problem:
+        return problem
+    estimate = c.model_estimate
+    cap = ((c.state.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
+    limit = f", bis {cap / 1048576:.0f} MB" if cap else ""
+    if estimate is None:
+        return f"Noch nicht gezählt{limit}"
+    triangles = f"{estimate.triangles:,}".replace(",", " ")
+    text = f"≈ {triangles} Dreiecke, {estimate.objects} Objekte{limit}"
+    return ("Zu groß: " if estimate.triangles > MAX_TRIANGLES else "") + text
+
+
+class RdtxView:
+    """Der Inhalt der Palette in einem ``Eto.Forms.Panel`` — ``container`` ist das Panel von Rhino."""
+
+    def __init__(self, controller: Controller, container=None, peers=None):
         self.controller = controller
+        self.container = container if container is not None else forms.Panel()
+        self._peers = peers or (lambda: [self])
         self._updating = False
         self._settings_shown = False
-        self.Title = f"{host.MARK} {host.PLUGIN_VERSION}"
-        self.Padding = drawing.Padding(10)
-        self.Resizable = True
-        self.MinimumSize = drawing.Size(WIDTH, 420)
+        self._connected_shown = None
+        self._sections = []
+        self._closed = False
+        self.alive = True
+        self.caption = host.MARK
+        del _LABELS[:]
         self._build()
+        self._labels = list(_LABELS)
+        del _LABELS[:]
         self.timer = forms.UITimer()
         self.timer.Interval = 0.2
         self.timer.Elapsed += self._tick
-        self.Closed += self._closed
+        try:
+            self.container.Load += self._load
+            self.container.UnLoad += self._unload
+        except Exception:  # noqa: BLE001 — ohne die Ereignisse läuft der Zeitgeber durch
+            pass
         self.refresh()
         self.timer.Start()
 
@@ -109,75 +255,78 @@ class RdtxForm(forms.Form):
         self.open_login = _button("Anmeldeseite öffnen", self._guarded(c.open_login))
         self.cancel_login = _button("Abbrechen", self._guarded(c.cancel))
         self.sign_out = _button("Abmelden", self._guarded(c.sign_out))
-        self.server = forms.TextBox()
-        self.device = forms.TextBox()
-        self.device.PlaceholderText = "Gerätename (optional)"
+        self.server = _textbox()
+        self.device = _textbox("optional")
         self.debug = _check("Ausführliches Protokoll", lambda *_: None)
         self.save = _button("Einstellungen sichern", self._guarded(self._save_settings))
-        self.connection = _group("Verbindung", self.status, self.code, _stack(self.open_login, self.cancel_login,
-                                 horizontal=True), _stack(self.connect, self.sign_out, horizontal=True),
-                                 _label("Server"), self.server, self.device, self.debug, self.save)
+        self.settings = forms.Expander()
+        self.settings.Header = _label("Einstellungen", wrap=False)
+        self.settings.Content = _stack(_row("Server", self.server), _row("Gerät", self.device),
+                                       _row("", self.debug), _row("", self.save))
+        self.login_row = _stack(self.open_login, self.cancel_login, horizontal=True)
+        self.connection = self._section("Verbindung", self.status, self.code, self.login_row,
+                                        _stack(self.connect, self.sign_out, horizontal=True), self.settings)
         # Projekt
-        self.project = forms.DropDown()
-        self.project.SelectedIndexChanged += self._on_project
+        self.project = _dropdown(self._on_project)
         self.refresh_button = _button("Aktualisieren", self._guarded(c.refresh))
         self.create_project = _button("Projekt anlegen …", self._guarded(c.new_project))
-        self.project_group = _group("Projekt", self.project, _stack(self.refresh_button, self.create_project,
-                                    horizontal=True))
+        self.project_group = self._section("Projekt", _row("", self.project),
+                                      _row("", _stack(self.refresh_button, self.create_project, horizontal=True)))
         # Blickpunkt
-        self.view = forms.DropDown()
-        self.view.SelectedIndexChanged += self._on_view
-        self.target_mode = forms.DropDown()
-        _fill(self.target_mode, [(frame.CREATE, "Neuer Blickpunkt"), (frame.UPDATE, "Bestehenden aktualisieren")],
-              frame.CREATE)
+        self.view = _dropdown(self._on_view)
+        self.target_mode = _dropdown()
+        _fill(self.target_mode, TARGETS, frame.CREATE)
         self.target_mode.SelectedIndexChanged += self._on_target_mode
-        self.viewpoint_name = forms.TextBox()
-        self.viewpoint_name.PlaceholderText = "Name des Blickpunkts"
+        self.viewpoint_name = _textbox("Name des Blickpunkts")
         self.viewpoint_name.TextChanged += self._on_name
-        self.viewpoint = forms.DropDown()
-        self.viewpoint.SelectedIndexChanged += self._on_viewpoint
+        self.viewpoint = _dropdown(self._on_viewpoint)
         self.fit = _check("Rahmen an Aufnahme anpassen", self._on_fit)
-        self.size = forms.DropDown()
-        _fill(self.size, [(frame.SIZE_CANVAS_DEFAULT, "Rahmengröße: Vorgabe der Leinwand"),
-                          (frame.SIZE_CAPTURE, "Rahmengröße: wie die Aufnahme")], frame.SIZE_CANVAS_DEFAULT)
+        self.size = _dropdown()
+        _fill(self.size, SIZES, frame.SIZE_CANVAS_DEFAULT)
         self.size.SelectedIndexChanged += self._on_size
-        self.size_text = _label("")
+        self.size_text = _label("", wrap=False)
         self.aspect = _label("")
-        self.viewpoint_group = _group("Blickpunkt", _label("Ansicht"), self.view, self.target_mode,
-                                      self.viewpoint_name, self.viewpoint, self.fit, self.size, self.size_text,
-                                      self.aspect)
+        self.name_row = _row("Name", self.viewpoint_name)
+        self.viewpoint_row = _row("Blickpunkt", self.viewpoint)
+        self.fit_row = _row("", self.fit)
+        self.viewpoint_group = self._section("Blickpunkt", _row("Ansicht", self.view),
+                                             _row("Ziel", self.target_mode), self.name_row, self.viewpoint_row,
+                                             self.fit_row, _row("Rahmen", self.size), _row("", self.size_text),
+                                             self.aspect)
         # Bild
         self.send_image = _check("Bild senden", self._on_send_image)
-        self.kind = forms.DropDown()
-        _fill(self.kind, [(VIEWPORT, "Ansicht (wie im Viewport)"), (BEAUTY, "Rendering (Rhino Render)")], VIEWPORT)
+        self.kind = _dropdown()
+        _fill(self.kind, KINDS, VIEWPORT)
         self.kind.SelectedIndexChanged += self._on_kind
-        self.resolution = forms.DropDown()
-        _fill(self.resolution, [(RESOLUTION_DOCUMENT, "Größe aus den Rendereinstellungen"),
-                                (RESOLUTION_VIEWPOINT, "Größe des Blickpunkt-Rahmens")], RESOLUTION_DOCUMENT)
+        self.resolution = _dropdown()
+        _fill(self.resolution, RESOLUTIONS, RESOLUTION_DOCUMENT)
         self.resolution.SelectedIndexChanged += self._on_resolution
-        self.frame_text = _label("")
+        self.resolution_row = _row("Größe", self.resolution)
+        self.frame_text = _label("", wrap=False)
         self.pass_checks = {}
-        pass_rows = []
-        for role, title in (("depth", "Tiefe"), ("normal", "Normalen"), ("albedo", "Albedo"),
-                            ("object-id", "Objekt-ID"), ("material-id", "Material-ID")):
+        for role, title in PASSES:
             box = _check(title, self._on_pass)
             box.Tag = role
             self.pass_checks[role] = box
-            pass_rows.append(box)
         self.pass_hint = _label("")
-        self.bit_depth = forms.DropDown()
+        self.bit_depth = _dropdown()
         _fill(self.bit_depth, [(str(value), text) for value, text in mf.DATA_PASS_BIT_DEPTH_OPTIONS],
               str(mf.DEFAULT_DATA_PASS_BIT_DEPTH))
         self.bit_depth.SelectedIndexChanged += self._on_bit_depth
-        self.passes = _stack(_label("Pässe (optional)"), *pass_rows, self.pass_hint,
-                             _label(mf.DATA_PASS_BIT_DEPTH_LABEL), self.bit_depth)
-        self.image_group = _group("Bild", self.send_image, self.kind, self.resolution, self.frame_text, self.passes)
+        self.bit_depth.ToolTip = mf.DATA_PASS_BIT_DEPTH_LABEL
+        self.pass_hint_row = _row("", self.pass_hint)
+        self.passes = self._section(None, _row("Pässe", _grid([self.pass_checks[role] for role, _ in PASSES])),
+                                    self.pass_hint_row, _row("Bittiefe", self.bit_depth))
+        self.image_group = self._section("Bild", _row("", self.send_image), _row("Art", self.kind),
+                                         self.resolution_row, _row("Ausschnitt", self.frame_text), self.passes)
         # Modell (RTX-RH-003)
         self.send_model = _check("Modell senden", self._on_send_model)
         self.model_colors = _check("Materialfarben mitsenden", self._on_model_colors)
-        self.model_hint = _label("")
+        self.model_hint = _label("", wrap=False)
         self.count = _button("Neu zählen", self._guarded(c.count_model))
-        self.model_group = _group("Modell", self.send_model, self.model_colors, self.model_hint, self.count)
+        self.model_row = _row("Größe", self.model_hint, self.count)
+        self.colors_row = _row("", self.model_colors)
+        self.model_group = self._section("Modell", _row("", self.send_model), self.colors_row, self.model_row)
         # Übernehmen
         self.summary = _label("")
         self.capture = _button("Bild übernehmen", self._guarded(c.capture))
@@ -191,18 +340,30 @@ class RdtxForm(forms.Form):
         self.cancel = _button("Abbrechen", self._guarded(c.cancel))
         self.message = _label("")
         self.open_result = _button("Im Browser öffnen", self._guarded(c.open_result))
-        self.transfer_group = _group("Übernehmen", self.summary, self.capture, self.pending_text,
-                                     _stack(self.resume, self.discard, horizontal=True), self.progress,
-                                     self.progress_text, self.cancel, self.message, self.open_result)
+        self.resume_row = _stack(self.resume, self.discard, horizontal=True)
+        self.transfer_group = self._section("Übernehmen", self.summary, self.capture, self.pending_text,
+                                            self.resume_row, self.progress, self.progress_text, self.cancel,
+                                            self.message, self.open_result)
         # Fuß
-        self.footer = _label(f"{host.MARK} {host.PLUGIN_VERSION} · {host.build_text()}")
+        self.footer = _label(f"{host.MARK} {host.PLUGIN_VERSION} · {host.build_text()}", wrap=False)
         self.about = _button("Über …", self._guarded(self._show_about))
 
-        body = _stack(self.connection, self.project_group, self.viewpoint_group, self.image_group,
-                      self.model_group, self.transfer_group, _stack(self.footer, self.about))
+        body = self._section(None, self.connection, self.project_group, self.viewpoint_group, self.image_group,
+                             self.model_group, self.transfer_group, _stack(self.footer, self.about, horizontal=True),
+                             spacing=SECTION_SPACING)
+        body.Padding = drawing.Padding(PADDING)
         scroll = forms.Scrollable()
+        scroll.Border = getattr(forms.BorderType, "NONE", scroll.Border)
+        scroll.ExpandContentWidth = True
         scroll.Content = body
-        self.Content = scroll
+        self.container.Content = scroll
+
+    def _section(self, title, *controls, spacing: int = ROW_SPACING):
+        """Ein Abschnitt mit Überschrift (wie „Viewport" in „Eigenschaften"); ``None``: ohne Überschrift."""
+        head = [_label(title, wrap=False, bold=True)] if title else []
+        section = Section(head + list(controls), spacing)
+        self._sections.append(section)
+        return section.stack
 
     # -- Ereignisse --------------------------------------------------------
 
@@ -210,10 +371,10 @@ class RdtxForm(forms.Form):
         def handler(*_args):
             try:
                 action()
-            except Exception as error:  # noqa: BLE001 — nie ein Traceback im Fenster
-                log_exception("Fehler im Fenster", error)
+            except Exception as error:  # noqa: BLE001 — nie ein Traceback in der Palette
+                log_exception("Fehler in der Palette", error)
                 self.controller._set_error(str(error) or "Unerwarteter Fehler — Einzelheiten stehen im Protokoll.")
-            self.refresh()
+            self._refresh_all()
         return handler
 
     def _changed(self, action):
@@ -273,7 +434,8 @@ class RdtxForm(forms.Form):
 
     def _save_settings(self) -> None:
         self.controller.save_settings(self.server.Text or "", self.device.Text or "", bool(self.debug.Checked))
-        self._settings_shown = False
+        for view in self._peers():
+            view._settings_shown = False
 
     def _show_about(self) -> None:
         c = self.controller
@@ -283,23 +445,45 @@ class RdtxForm(forms.Form):
             rhino = "unbekannt"
         lines = [f"{host.MARK} für Rhino", f"Fassung {host.PLUGIN_VERSION}", host.build_text(),
                  f"Kennung {host.CLIENT_ID}", f"Server {c.state.server or '—'}", f"Rhino {rhino}"]
-        forms.MessageBox.Show(self, "\n".join(lines), f"Über {host.MARK}")
+        forms.MessageBox.Show(self.container, "\n".join(lines), f"Über {host.MARK}")
 
     def _tick(self, *_):
         try:
             if self.controller.pump():
-                self.refresh()
+                self._refresh_all()
             elif self.controller.state.job is not None:
                 self.refresh()
         except Exception as error:  # noqa: BLE001
             log_exception("Fehler im Zeitgeber", error)
 
-    def _closed(self, *_):
+    def _load(self, *_):
+        if self.disposed():
+            return
+        self.alive = True
+        self.timer.Start()
+        self.refresh()
+
+    def _unload(self, *_):
+        # Rhino nimmt das Panel aus der Leiste (Reiter geschlossen, Dokumentfenster zu); eine laufende
+        # Übertragung läuft weiter und erscheint, sobald die Palette wieder offen ist.
+        self.alive = False
+        self.timer.Stop()
+
+    def close(self) -> None:
+        """Für immer zu (Fenster geschlossen): kein Zeitgeber, kein Zeichnen mehr."""
+        self._closed = True
+        self._unload()
+
+    def disposed(self) -> bool:
+        """Entsorgt — das Fenster ist zu, oder Rhino hat das Panel freigegeben (``IsDisposed``)."""
         try:
-            self.timer.Stop()
-            self.controller.shutdown()
-        except Exception:  # noqa: BLE001
-            pass
+            return self._closed or bool(getattr(self.container, "IsDisposed", False))
+        except Exception:  # noqa: BLE001 — im Zweifel weiter zeichnen
+            return self._closed
+
+    def _refresh_all(self) -> None:
+        for view in self._peers():
+            view.refresh()
 
     # -- Zeichnen ----------------------------------------------------------
 
@@ -307,7 +491,11 @@ class RdtxForm(forms.Form):
         self._updating = True
         try:
             self._refresh()
-        except Exception as error:  # noqa: BLE001 — Regel 3: ein Fehler beim Zeichnen schließt das Fenster nicht
+            for section in self._sections:
+                section.relayout()
+            for label, wrap in self._labels:
+                _align(label, wrap)
+        except Exception as error:  # noqa: BLE001 — Regel 3: ein Fehler beim Zeichnen schließt nichts
             log_exception("Fehler beim Zeichnen", error)
         finally:
             self._updating = False
@@ -334,14 +522,19 @@ class RdtxForm(forms.Form):
         else:
             self.status.Text = "Nicht verbunden"
             self.code.Text = state.server or ""
-        self.open_login.Visible = self.cancel_login.Visible = bool(state.code)
+        self.code.Visible = bool(self.code.Text)
+        self.login_row.Visible = self.open_login.Visible = self.cancel_login.Visible = bool(state.code)
         self.connect.Visible = not state.connected and not state.code
         self.connect.Enabled = not busy
         self.sign_out.Visible = state.connected
         self.sign_out.Enabled = not busy
         self.save.Enabled = not busy
-
         connected = state.connected
+        if self._connected_shown != connected:
+            # Einstellungen aufgeklappt, solange keine Verbindung steht; danach zu — der Nutzer kann sie öffnen.
+            self.settings.Expanded = not connected
+            self._connected_shown = connected
+
         for group in (self.project_group, self.viewpoint_group, self.image_group, self.model_group,
                       self.transfer_group):
             group.Visible = connected
@@ -357,33 +550,31 @@ class RdtxForm(forms.Form):
         # Blickpunkt
         _fill(self.view, c.views(), form.view_key)
         c.suggest_viewpoint_name()
-        _fill(self.target_mode, [(frame.CREATE, "Neuer Blickpunkt"), (frame.UPDATE, "Bestehenden aktualisieren")],
-              form.target_mode)
+        _fill(self.target_mode, TARGETS, form.target_mode)
         creating = form.target_mode == frame.CREATE
-        self.viewpoint_name.Visible = creating
+        self.name_row.Visible = self.viewpoint_name.Visible = creating
         if creating and self.viewpoint_name.Text != form.viewpoint_name:
             self.viewpoint_name.Text = form.viewpoint_name
         viewpoints = state.viewpoints.get(form.project_id or "", [])
         _fill(self.viewpoint, [("", NO_VIEWPOINT)] + list(viewpoints), form.viewpoint_id or "")
+        self.viewpoint_row.Visible = self.fit_row.Visible = not creating
         self.viewpoint.Visible = self.fit.Visible = not creating
         self.fit.Checked = form.fit_to_capture
-        _fill(self.size, [(frame.SIZE_CANVAS_DEFAULT, "Rahmengröße: Vorgabe der Leinwand"),
-                          (frame.SIZE_CAPTURE, "Rahmengröße: wie die Aufnahme")], form.size)
-        self.size_text.Text = c.size_text()
+        _fill(self.size, SIZES, form.size)
+        self.size_text.Text = size_line(c)
+        self.size_text.ToolTip = self.size.ToolTip = c.size_text()
         hint = c.aspect_hint()
         self.aspect.Text = hint or ""
         self.aspect.Visible = bool(hint)
 
         # Bild
         self.send_image.Checked = form.send_image
-        _fill(self.kind, [(VIEWPORT, "Ansicht (wie im Viewport)"), (BEAUTY, "Rendering (Rhino Render)")],
-              form.capture_kind)
-        self.resolution.Visible = form.target_mode == frame.UPDATE
-        _fill(self.resolution, [(RESOLUTION_DOCUMENT, "Größe aus den Rendereinstellungen"),
-                                (RESOLUTION_VIEWPOINT, "Größe des Blickpunkt-Rahmens")], form.resolution)
+        _fill(self.kind, KINDS, form.capture_kind)
+        self.resolution_row.Visible = self.resolution.Visible = form.target_mode == frame.UPDATE
+        _fill(self.resolution, RESOLUTIONS, form.resolution)
         try:
             width, height = c.capture_size() or c.document_size()
-            self.frame_text.Text = f"Ausschnitt {width} × {height}"
+            self.frame_text.Text = f"{width} × {height}"
         except Exception:  # noqa: BLE001 — ohne Dokument keine Größe
             self.frame_text.Text = "Kein Rhino-Dokument geöffnet."
         beauty = form.capture_kind == BEAUTY
@@ -396,24 +587,27 @@ class RdtxForm(forms.Form):
                     continue
                 box.Enabled = pass_state == "available"
                 box.Checked = spec.role in form.passes and pass_state == "available"
+                box.ToolTip = "" if pass_state == "available" else (pass_hint or "")
                 if pass_state != "available" and pass_hint and pass_hint not in hints:
                     hints.append(pass_hint)
             allowed = ((state.handshake or {}).get("limits") or {}).get("allowedMediaTypes")
             if allowed is not None and mf.PNG_MEDIA_TYPE not in allowed:
                 hints.append("Dieser Server nimmt noch keine Pässe an; übertragen wird das Bild.")
             self.pass_hint.Text = " ".join(hints)
-            self.pass_hint.Visible = bool(hints)
+            self.pass_hint_row.Visible = self.pass_hint.Visible = bool(hints)
             _fill(self.bit_depth, [(str(value), text) for value, text in mf.DATA_PASS_BIT_DEPTH_OPTIONS],
                   str(c.data_pass_bit_depth()))
 
         # Modell
         self.send_model.Checked = form.send_model
         self.model_colors.Checked = form.model_colors
-        self.model_colors.Visible = self.count.Visible = form.send_model
+        self.colors_row.Visible = self.model_colors.Visible = self.count.Visible = form.send_model
+        self.model_row.Visible = form.send_model
         self.count.Enabled = not busy
-        model_hint = c.model_hint()
-        self.model_hint.Text = model_hint
-        self.model_hint.Visible = bool(model_hint)
+        details = c.model_hint()
+        self.model_hint.Text = model_line(c) if form.send_model else ""
+        self.model_hint.ToolTip = details
+        self.model_hint.Visible = bool(self.model_hint.Text)
 
         # Übernehmen
         try:
@@ -428,7 +622,7 @@ class RdtxForm(forms.Form):
         pending = c.pending()
         self.capture.Visible = not pending
         self.capture.Enabled = can_capture and not busy
-        self.pending_text.Visible = self.resume.Visible = self.discard.Visible = bool(pending)
+        self.pending_text.Visible = self.resume_row.Visible = self.resume.Visible = self.discard.Visible = bool(pending)
         if pending:
             created = (pending.get("createdAt") or "")[:16].replace("T", " ")
             self.pending_text.Text = f"Offene Übernahme vom {created} UTC"
@@ -448,4 +642,17 @@ class RdtxForm(forms.Form):
             self.progress_text.Text = "Bitte warten …" if state.job is not None else ""
         self.cancel.Visible = state.job is not None and state.job.label in ("transfer", "connect")
         self.message.Text = state.error or state.message or ""
+        self.message.Visible = bool(self.message.Text)
         self.message.TextColor = drawing.Colors.Red if state.error else drawing.SystemColors.ControlText
+
+
+class RdtxWindow(forms.Form):
+    """Ausweg, wenn Rhino das Panel nicht annimmt: dieselbe Palette als schwebendes Fenster (wie bis 0.2.x)."""
+
+    def __init__(self, view: RdtxView):
+        super().__init__()
+        self.view = view
+        self.Title = f"{host.MARK} {host.PLUGIN_VERSION}"
+        self.Resizable = True
+        self.MinimumSize = drawing.Size(WIDTH, 420)
+        self.Content = view.container

@@ -11,7 +11,7 @@ Browser. Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: **Rhino 8** (macOS oder Windows). Ältere Fassungen werden nicht
 unterstützt — das Plugin lädt dort, sagt aber nur, dass es Rhino 8 braucht.
 Das Paket `rdtx.ai-<Version>+<Build>-rh8-any.yak` (etwa
-`rdtx.ai-0.2.0+28396-rh8-any.yak`) von der
+`rdtx.ai-0.3.0+38994-rh8-any.yak`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 
@@ -22,6 +22,20 @@ laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen*
 3. Befehl **RdtxAI** eingeben. Die Werkzeugleiste **rdtx.ai** (ein Knopf)
    erscheint nach der Installation; sonst unter **Optionen › Werkzeugleisten ›
    rdtx.ai** einschalten.
+
+## Palette andocken
+
+**RdtxAI** (oder der Knopf **rdtx.ai**) öffnet die Palette als **Panel**, wie
+**Eigenschaften** oder **Ebenen**. Beim ersten Mal erscheint sie als Reiter
+neben **Eigenschaften**.
+
+- **Andocken und Reiter:** den Reiter **rdtx.ai** wie jedes Rhino-Panel ziehen,
+  an den Rand andocken, schweben lassen oder zu anderen Reitern legen.
+- **Ein- und ausblenden:** **RdtxAI** holt die Palette nach vorn; ist sie schon
+  der sichtbare Reiter, blendet derselbe Befehl sie aus.
+- **Nach einem Neustart** von Rhino erscheint die Palette mit **RdtxAI** wieder
+  an ihrem Platz. Sie wartet auf den Befehl; von selbst öffnet sie sich nicht.
+- Lange Hinweise stehen im **Tooltip**: mit der Maus über die Zeile fahren.
 
 **Aktualisieren:** das neue Paket genauso installieren und Rhino neu starten.
 Anmeldung und Einstellungen bleiben erhalten (sie liegen nicht im Paket).
@@ -34,13 +48,14 @@ oder im Plugin **Abmelden**.
 
 ## Verbinden
 
-1. **RdtxAI** öffnet das Fenster von rdtx.ai.
-2. Unter **Verbindung** steht die Serveradresse (Vorgabe
+1. **RdtxAI** öffnet die Palette von rdtx.ai.
+2. Unter **Verbindung › Einstellungen** steht die Serveradresse (Vorgabe
    `https://dev.rendertaxi.ai`) — nur ändern, wenn euer Büro eine andere Adresse
-   nennt, dann **Einstellungen sichern**. Ein **Gerätename** hilft, Rhino später
+   nennt, dann **Einstellungen sichern**. Nach dem Verbinden sind die
+   Einstellungen zugeklappt; ein Klick auf **Einstellungen** öffnet sie. Ein **Gerätename** hilft, Rhino später
    wiederzuerkennen.
 3. **Verbinden** zeigt einen Code und öffnet den Browser. Dort mit dem
-   rendertaxi.ai-Konto anmelden und das Gerät bestätigen. Das Fenster zeigt
+   rendertaxi.ai-Konto anmelden und das Gerät bestätigen. Die Palette zeigt
    danach „Angemeldet als …".
 
 Das Plugin hat **kein Passwortfeld**. Es erhält nur ein widerrufbares Token und
@@ -62,7 +77,7 @@ legt es im Nutzerordner ab, nur für dich lesbar — **nie** in der `.3dm`-Datei
    - **Ansicht** — die Ansicht in ihrem Anzeigemodus, ohne Gitter und Achsen.
    - **Rendering** — mit dem aktuellen Renderer; die **Pässe** Tiefe, Normalen,
      Albedo, Objekt-ID und Material-ID liefert **Rhino Render**. Ist ein anderer
-     Renderer gewählt, sagt das Fenster es bei den Pässen.
+     Renderer gewählt, sagt die Palette es bei den Pässen.
 
    Die Größe kommt aus den Rendereinstellungen des Dokuments (Ausgabegröße);
    beim Aktualisieren lässt sich stattdessen die Größe des
@@ -70,7 +85,7 @@ legt es im Nutzerordner ab, nur für dich lesbar — **nie** in der `.3dm`-Datei
    Kanäle und Quelle nur für diesen einen Lauf; danach stehen deine
    Rendereinstellungen wieder genau wie vorher.
 5. **Bild übernehmen.** Das Rendern hält den Befehl für seine Dauer an (Esc im
-   Renderfenster bricht ab); das Fenster zeigt den Fortschritt. Danach läuft
+   Renderfenster bricht ab); die Palette zeigt den Fortschritt. Danach läuft
    die Übertragung im Hintergrund; **Abbrechen** hält sie an, **Fortsetzen**
    führt eine unterbrochene Übernahme zu Ende, **Verwerfen** verwirft sie.
 6. **Im Browser öffnen** springt zum Blickpunkt.
@@ -88,7 +103,7 @@ Unter **Modell** schaltet **Modell senden** das Modell zu. Unter **Bild** schalt
 - **Was mitgeht:** alles, was in der aktiven Ansicht sichtbar ist, als
   Dreiecksnetz — Polyflächen, Extrusionen, Flächen, SubD, Netze und Blöcke.
   Ausgeblendete Objekte und ausgeschaltete Ebenen gehen nicht mit. Kurven,
-  Punkte und Texte haben keine Fläche; das Fenster nennt ihre Zahl.
+  Punkte und Texte haben keine Fläche; die Palette nennt ihre Zahl.
 - **Maße:** Das Modell kommt in Metern an, gleich ob die Datei in mm, cm oder m
   ist. Eine Datei ohne Längeneinheit sendet kein Modell; dann unter
   **Dokumenteigenschaften › Einheiten** eine Einheit wählen.
@@ -98,7 +113,8 @@ Unter **Modell** schaltet **Modell senden** das Modell zu. Unter **Bild** schalt
   Ansicht, die Bildgröße aus den Rendereinstellungen oder dem Blickpunkt-Rahmen.
 - **Materialfarben mitsenden:** gibt jedem Objekt die Farbe seines
   Rendermaterials mit; ohne die Option kommt das Modell einfarbig an.
-- **Neu zählen:** zählt Objekte und Dreiecke. Grenzen (50 Mio. Dreiecke und die
+- **Neu zählen:** zählt Objekte und Dreiecke; die Zeile daneben zeigt Dreiecke,
+  Objekte und die größte Modelldatei, der Tooltip die Einzelheiten. Grenzen (50 Mio. Dreiecke und die
   Dateigröße, die der Server nennt) prüft das Plugin **vor** dem Senden.
 - **Schnittebenen** wirken nicht auf das Modell; es geht ganz mit.
 
@@ -112,15 +128,18 @@ Kopie, speichert nichts im Dokument und löscht die Modelldatei nach der
   Webanwendung; übernommen wird nur das Seitenverhältnis der Aufnahme.
 - **Wie die Aufnahme:** der Rahmen bekommt die Maße der Aufnahme.
 
+Die Zeile darunter nennt die Zielgröße kurz (etwa „Zielgröße 16:9, 1536 px“);
+der Tooltip erklärt, was die Wahl bewirkt.
+
 Beim Aktualisieren ändert sich der Rahmen nur, wenn **Rahmen an Aufnahme
 anpassen** angehakt ist. Weicht er vom Seitenverhältnis der Aufnahme ab, sagt
-das Fenster das.
+die Palette das.
 
 ## Abmelden
 
 **Abmelden** widerruft das Token beim Server **und** löscht es auf diesem
 Rechner. Ist der Server nicht erreichbar, wird das Token trotzdem gelöscht, und
-das Fenster nennt den Weg über **Verbundene Geräte** in der Webanwendung.
+die Palette nennt den Weg über **Verbundene Geräte** in der Webanwendung.
 
 ## Hinweise
 
