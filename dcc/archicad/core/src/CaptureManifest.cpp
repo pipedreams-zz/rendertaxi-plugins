@@ -704,6 +704,137 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 	return Result<JsonPtr>::Ok (root);
 }
 
+namespace {
+
+std::string Text (const JsonPtr& node, const char* key)
+{
+	const JsonPtr field = node ? node->Get (key) : nullptr;
+	return field != nullptr && field->GetKind () == Json::Kind::String ? field->StringOr ("") : std::string ();
+}
+
+bool Vector3 (const JsonPtr& node, double out[3])
+{
+	if (node == nullptr || node->GetKind () != Json::Kind::Array || node->Items ().size () != 3) return false;
+	for (int i = 0; i < 3; ++i) {
+		if (node->Items ()[i]->GetKind () != Json::Kind::Number) return false;
+		out[i] = node->Items ()[i]->NumberOr (0);
+	}
+	return true;
+}
+
+double Number (const JsonPtr& node, const char* key, double fallback = 0.0)
+{
+	const JsonPtr field = node ? node->Get (key) : nullptr;
+	return field != nullptr && field->GetKind () == Json::Kind::Number ? field->NumberOr (fallback) : fallback;
+}
+
+} // namespace
+
+Result<CaptureManifest> CaptureManifest::Parse (const std::string& text, const std::string& directory)
+{
+	const JsonPtr root = Json::Parse (text);
+	const auto fail = [] (const std::string& message) {
+		return Result<CaptureManifest>::Fail (errc::SchemaInvalid, message);
+	};
+	if (root == nullptr || root->GetKind () != Json::Kind::Object) return fail ("Das gespeicherte Manifest ist kein JSON-Objekt.");
+	if (Text (root, "contract") != kCaptureContract) return fail ("Das gespeicherte Manifest hat einen anderen contract.");
+
+	CaptureManifest m;
+	m.contractVersion = Text (root, "contractVersion");
+	m.captureId = Text (root, "captureId");
+	m.createdAt = Text (root, "createdAt");
+
+	const JsonPtr source = root->Get ("source");
+	const JsonPtr host = source ? source->Get ("host") : nullptr;
+	const JsonPtr plugin = source ? source->Get ("plugin") : nullptr;
+	const JsonPtr machine = source ? source->Get ("machine") : nullptr;
+	m.source.hostKey = Text (host, "key");
+	m.source.hostVersion = Text (host, "version");
+	m.source.hostBuild = Text (host, "build");
+	if (const JsonPtr capabilities = host ? host->Get ("capabilities") : nullptr)
+		for (const auto& [key, entry] : capabilities->Fields ()) m.source.capabilities.emplace_back (key, Text (entry, "state"));
+	m.source.pluginIdentifier = Text (plugin, "identifier");
+	m.source.pluginVersion = Text (plugin, "version");
+	m.source.os = Text (machine, "os");
+	m.source.osVersion = Text (machine, "osVersion");
+	m.source.architecture = Text (machine, "architecture");
+	m.source.fileName = Text (source, "fileName");
+
+	const JsonPtr project = root->Get ("project");
+	m.platformProjectId = Text (project, "platformProjectId");
+	m.sourceProjectKey = Text (project, "sourceProjectKey");
+	m.projectDisplayName = Text (project, "displayName");
+	const JsonPtr view = root->Get ("view");
+	m.sourceViewKey = Text (view, "sourceViewKey");
+	m.viewDisplayName = Text (view, "displayName");
+	const JsonPtr intentNode = root->Get ("intent");
+	m.intent.presetKey = Text (intentNode, "presetKey");
+	m.intent.recipeId = Text (intentNode, "recipeId");
+	m.intent.promptText = Text (intentNode, "promptText");
+
+	const JsonPtr camera = root->Get ("camera");
+	if (camera != nullptr && camera->GetKind () == Json::Kind::Object) {
+		m.hasCamera = true;
+		CaptureCamera& c = m.camera;
+		c.projection = Text (camera, "projection");
+		if (!Vector3 (camera->Get ("position"), c.position) || !Vector3 (camera->Get ("direction"), c.direction) ||
+			!Vector3 (camera->Get ("up"), c.up))
+			return fail ("Die Kamera des gespeicherten Manifests ist unvollständig.");
+		const JsonPtr fov = camera->Get ("fieldOfView");
+		c.fovAxis = fov ? Text (fov, "axis") : std::string ("horizontal");
+		c.fovAngle = Number (fov, "angle");
+		const JsonPtr extent = camera->Get ("extent");
+		c.halfWidth = Number (extent, "halfWidth");
+		c.halfHeight = Number (extent, "halfHeight");
+		const JsonPtr clip = camera->Get ("clip");
+		c.clipNear = Number (clip, "near");
+		c.clipFar = Number (clip, "far");
+		const JsonPtr shift = camera->Get ("shift");
+		c.shiftX = Number (shift, "x");
+		c.shiftY = Number (shift, "y");
+		const JsonPtr resolution = camera->Get ("resolution");
+		c.resolutionWidth = static_cast<int> (Number (resolution, "width"));
+		c.resolutionHeight = static_cast<int> (Number (resolution, "height"));
+	}
+	const JsonPtr geometry = root->Get ("geometry");
+	if (geometry != nullptr && geometry->GetKind () == Json::Kind::Object) {
+		m.hasGeometry = true;
+		m.geometry.assetPath = Text (geometry, "assetPath");
+		m.geometry.sourceUnitScaleToMeter = Number (geometry->Get ("units"), "sourceUnitScaleToMeter", 1.0);
+		m.geometry.handedness = Text (geometry->Get ("axes"), "handedness");
+		m.geometry.upAxis = Text (geometry->Get ("axes"), "upAxis");
+		if (!Vector3 (geometry->Get ("origin"), m.geometry.origin))
+			return fail ("Die Geometrie des gespeicherten Manifests ist unvollständig.");
+	}
+
+	const JsonPtr assets = root->Get ("assets");
+	if (assets == nullptr || assets->GetKind () != Json::Kind::Array) return fail ("Das gespeicherte Manifest hat keine Dateien.");
+	for (const JsonPtr& item : assets->Items ()) {
+		CaptureAsset asset;
+		asset.role = Text (item, "role");
+		asset.path = Text (item, "path");
+		asset.status = Text (item, "status");
+		asset.mediaType = Text (item, "mediaType");
+		asset.byteSize = item->Get ("byteSize") ? item->Get ("byteSize")->IntOr (0) : 0;
+		asset.sha256 = Text (item, "sha256");
+		asset.note = Text (item, "note");
+		if (const JsonPtr image = item->Get ("image")) {
+			asset.hasImage = true;
+			asset.image.width = static_cast<int> (Number (image, "width"));
+			asset.image.height = static_cast<int> (Number (image, "height"));
+			asset.image.colorSpace = Text (image, "colorSpace");
+			asset.image.bitDepth = static_cast<int> (Number (image, "bitDepth"));
+			asset.image.sampleFormat = Text (image, "sampleFormat");
+			asset.image.channels = Text (image, "channels");
+		}
+		if (asset.status == "present" && !directory.empty ()) asset.localPath = directory + "/" + asset.path;
+		m.assets.push_back (asset);
+	}
+	const Status valid = m.Validate ();
+	if (!valid) return Result<CaptureManifest>::Fail (valid.GetError ());
+	return Result<CaptureManifest>::Ok (m);
+}
+
 Result<std::string> CaptureManifest::Serialize () const
 {
 	const Result<JsonPtr> json = ToJson ();

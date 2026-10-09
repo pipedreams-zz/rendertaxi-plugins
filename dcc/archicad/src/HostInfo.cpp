@@ -12,6 +12,9 @@
 #include "rtx/Sha256.hpp"
 
 #include <atomic>
+#include <chrono>
+#include <iterator>
+#include <map>
 
 namespace rtxaddon {
 namespace {
@@ -108,6 +111,21 @@ std::string& LeftViewGuid ()
 	return value;
 }
 
+/** Ausschnitte, deren verspätete „geöffnet"-Meldung bis zur Frist überhört wird (`RestoreOpenedView`). */
+std::map<std::string, std::chrono::steady_clock::time_point>& MutedViewGuids ()
+{
+	static std::map<std::string, std::chrono::steady_clock::time_point> value;
+	return value;
+}
+
+bool IsMutedViewGuid (const std::string& guidText)
+{
+	auto& muted = MutedViewGuids ();
+	const auto now = std::chrono::steady_clock::now ();
+	for (auto it = muted.begin (); it != muted.end ();) it = it->second < now ? muted.erase (it) : std::next (it);
+	return muted.count (guidText) > 0;
+}
+
 /**
  * Archicad meldet hier jeden Ausschnitt, den jemand öffnet. Gespeichert wird
  * **Name und Datenbank**; die Datenbank entscheidet später, ob der Eintrag
@@ -135,9 +153,11 @@ GSErrCode ViewEventHandler (const API_NotifyViewEventType* viewEvent)
 	if (ACAPI_Navigator_GetNavigatorItem (&viewEvent->itemGuid, &item) != NoError) return NoError;
 
 	const std::string guidText = Utf8 (APIGuid2GSGuid (item.guid).ToUniString ());
+	const bool muted = IsMutedViewGuid (guidText);
 	rtx::LogLine ("Ausschnitt gemeldet als geöffnet: " + Utf8 (item.uName) +
-				  (guidText == LeftViewGuid () ? " (verlassen, überhört)" : ""));
-	if (guidText == LeftViewGuid ()) return NoError;
+				  (muted ? " (vom Add-on geöffnet, überhört)"
+						 : guidText == LeftViewGuid () ? " (verlassen, überhört)" : ""));
+	if (muted || guidText == LeftViewGuid ()) return NoError;
 	LeftViewGuid ().clear ();
 
 	OpenedView& last = LastOpenedView ();
@@ -347,6 +367,15 @@ std::string ProjectDisplayName ()
 	return Utf8 (*info.projectName);
 }
 
+std::string ProjectFilePath ()
+{
+	// Wie oben: der Destruktor von `API_ProjectInfo` räumt auf.
+	API_ProjectInfo info;
+	if (ACAPI_ProjectOperation_Project (&info) != NoError) return {};
+	if (info.untitled || info.projectPath == nullptr) return {};
+	return Utf8 (*info.projectPath);
+}
+
 std::string LocalProjectKey ()
 {
 	// Nur für den lokalen Zustandsspeicher. Er darf an den Dateipfad gebunden
@@ -484,6 +513,31 @@ std::string OpenedViewGuid ()
 {
 	const OpenedView& last = LastOpenedView ();
 	return last.known ? last.guidText : std::string ();
+}
+
+OpenedViewMark MarkOpenedView ()
+{
+	const OpenedView& last = LastOpenedView ();
+	OpenedViewMark mark;
+	mark.name = last.name;
+	mark.guidText = last.guidText;
+	mark.databaseText = Utf8 (APIGuid2GSGuid (last.database).ToUniString ());
+	mark.leftGuid = LeftViewGuid ();
+	mark.known = last.known;
+	return mark;
+}
+
+void RestoreOpenedView (const OpenedViewMark& mark, const std::vector<std::string>& openedMeanwhile)
+{
+	const auto until = std::chrono::steady_clock::now () + std::chrono::seconds (5);
+	for (const std::string& guid : openedMeanwhile)
+		if (guid != mark.guidText) MutedViewGuids ()[guid] = until;
+	OpenedView& last = LastOpenedView ();
+	last.name = mark.name;
+	last.guidText = mark.guidText;
+	last.database = APIGuidFromString (mark.databaseText.c_str ());
+	last.known = mark.known;
+	LeftViewGuid () = mark.leftGuid;
 }
 
 bool ConsumeViewMapChanged ()

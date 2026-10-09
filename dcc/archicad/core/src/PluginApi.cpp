@@ -467,6 +467,11 @@ Result<HttpResponse> PluginApiClient::Call (const std::string& method, const std
 		if (!lastRequestId.empty ())
 			LogLine ("  requestId " + lastRequestId + " -> " +
 					 std::to_string (response.Value ().status));
+		else
+			LogLine ("  ohne requestId -> " + std::to_string (response.Value ().status));
+	} else {
+		// Ohne Antwort stand bisher nichts im Protokoll — die Übernahme endete dann still (Abnahme RTX-A-012).
+		LogLine ("  keine Antwort: " + response.GetError ().code + " " + response.GetError ().message);
 	}
 	return response;
 }

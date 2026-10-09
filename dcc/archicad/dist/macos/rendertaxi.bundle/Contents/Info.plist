@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>rendertaxi</string>
 	<key>CFBundleGetInfoString</key>
-	<string>rendertaxi.ai für Archicad 28, 1.1.0</string>
+	<string>rdtx.ai für Archicad 28, 1.2.0</string>
 	<key>CFBundleIconFile</key>
 	<string>ArchiCADPlugin.icns</string>
 	<key>CFBundleIdentifier</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>rendertaxi</string>
+	<string>rdtx.ai</string>
 	<key>CFBundlePackageType</key>
 	<string>.APX</string>
 	<key>CFBundleShortVersionString</key>

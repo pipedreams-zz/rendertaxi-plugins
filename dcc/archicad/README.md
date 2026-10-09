@@ -1,14 +1,16 @@
 # rendertaxi.ai — Add-On für Archicad 28
 
-Übergibt die **aktuelle Ansicht als Bild** an rendertaxi.ai, ordnet sie einem
-Projekt und einem Blickpunkt zu — neu oder als ausdrückliches Update — und
-öffnet genau diesen Blickpunkt im Browser.
+Übergibt die **aktuelle Ansicht als Bild, als Modell mit Kamera oder beides**
+an rendertaxi.ai, ordnet die Aufnahme einem Projekt und einem Blickpunkt zu —
+neu oder als ausdrückliches Update — und öffnet genau diesen Blickpunkt im
+Browser. Ab 1.2.0 geht das Modell des 3D-Fensters als GLB mit der Kamera der
+Ansicht mit, auf Wunsch mit den Kameras weiterer gespeicherter 3D-Ansichten
+(siehe „Bild, Modell oder beides“).
 
 Der Weg ist der host-neutrale Vertrag aus
 [ADR 0009](../../../docs/adr/0009-host-neutraler-plugin-vertrag.md): derselbe,
-den Blender, Cinema 4D und Rhino später benutzen. Der Modellweg (Geometrie,
-GLB, Modellversion, Diff, Aktivierung) ist ausdrücklich **nicht** Teil dieses
-Add-Ons und wird von ihm auch nicht vorbereitet.
+den Blender, Cinema 4D und Rhino benutzen. Modellversionen, Diff und
+Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
 ## Bauen und installieren
 
@@ -117,6 +119,27 @@ Vier Bereiche, genau die aus Festlegung 3 des Auftrags:
 
 Generierung und Ergebnisbearbeitung bleiben in der Webanwendung. Es gibt
 deshalb kein Prompt-, Rezept- oder Auftragsfeld.
+
+## Bild, Modell oder beides
+
+Seit 1.2.0 (RTX-A-012, #307) trägt der Bereich „Übernehmen" zwei Häkchen,
+**Bild** und **Modell mit Kamera**, wie Blender und Cinema 4D. Die erste
+Infozeile sagt in einem Satz, was gesendet wird (`rtx::PlanSummary`). Die
+Wahl, „Zusätzliche Kameras mitsenden" und die Kamerawahl je Projekt stehen in
+`settings.json`; ein unlesbarer Wert ist die Vorgabe „nur Bild" (Regel 3).
+
+| Schritt        | Wo                              | Was                                                                                                                                                                                                                                                                                                           |
+| -------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Geometrie      | Hauptfaden, `ModelExport.cpp`   | Sicht des 3D-Fensters wählen, `ACAPI_Sight_GetSelectedSightModel`, je Element ein Knoten mit GUID (`rtx::GlbSceneBuilder`). **0 Körper ohne Fehler** heißt Neuaufbau (QA-09): die Palette wartet, fragt alle 2 s nach und startet dann selbst; nach 5 min gibt sie mit einem Satz auf. Nie ein leeres Modell. |
+| Bild           | Hauptfaden                      | wie bisher, nur wenn „Bild" gewählt ist                                                                                                                                                                                                                                                                       |
+| Kameras        | Hauptfaden                      | die Kamera des 3D-Fensters; mit „Zusätzliche Kameras" die der gewählten gespeicherten Ansichten (je `ACAPI_View_GoToView`, danach zurück zur Ausgangsansicht; nur mit gespeicherter Ansicht, `ViewStateGuard`)                                                                                                |
+| Fassung        | Arbeitsfaden nach dem Handshake | `rtx::PlanCapture`/`PlanContractVersion`; ein gemerktes „nur Modell" fällt gegen einen Server unter 1.6 mit Hinweis zurück                                                                                                                                                                                    |
+| Modelldatei    | Arbeitsfaden                    | `rtx::AssembleModel`: Kameras abbilden, Grenzen vor dem Senden (`maxGeometryBytes`, Dreiecke, Gliederung mit Rückfall je Material), `model/scene.glb` im Arbeitsverzeichnis — nach der Übertragung gelöscht                                                                                                   |
+| Wiederaufnahme | Hauptfaden                      | `CaptureManifest::Parse` liest das gespeicherte Manifest; nichts wird neu aufgenommen                                                                                                                                                                                                                         |
+
+Für Messungen über die Archicad-Schnittstelle schreibt
+`rendertaxi.ExportModel` dieselbe Modelldatei, ohne zu übertragen, und nennt
+Körper, Neuaufbau und Schnittebenen (QA-10).
 
 ## Der Ausschnitt kommt aus der Rendering-Szene
 

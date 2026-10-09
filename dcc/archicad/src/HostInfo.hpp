@@ -91,6 +91,24 @@ void ForgetOpenedView ();
 /** GUID des zuletzt aus der Mappe geöffneten Ausschnitts, leer ohne. */
 std::string OpenedViewGuid ();
 
+/** Der Merker des geöffneten Ausschnitts, wie er vor einer Folge eigener `GoToView`-Aufrufe stand. */
+struct OpenedViewMark {
+	std::string name;
+	std::string guidText;
+	std::string databaseText;
+	std::string leftGuid;
+	bool known = false;
+};
+OpenedViewMark MarkOpenedView ();
+
+/**
+ * Setzt den Merker zurück (F-02 an #318). Archicad stellt die „geöffnet"-Meldungen
+ * der dazwischen geöffneten Ausschnitte **verspätet** zu (Host, 08.10.2026: nach
+ * dem Ende der Kameralesung); sie werden einige Sekunden lang überhört, sonst
+ * spränge die Palette auf die zuletzt gelesene Zusatzansicht.
+ */
+void RestoreOpenedView (const OpenedViewMark& mark, const std::vector<std::string>& openedMeanwhile);
+
 /** Wahr einmal nach jeder Änderung der Mappe (neu, geändert, gelöscht) — dann neu lesen. */
 bool ConsumeViewMapChanged ();
 
@@ -151,5 +169,11 @@ std::string LocalProjectKey ();
 
 /** Anzeigename des Archicad-Projekts; reine Anzeige. */
 std::string ProjectDisplayName ();
+/**
+ * Pfad der gespeicherten Projektdatei, leer bei einem ungesicherten Projekt.
+ * Das Manifest bekommt davon **nur den Namen** (`rtx::SourceFileName`,
+ * `source.fileName` ab 1.5.0); der Pfad verlässt das Gerät nie.
+ */
+std::string ProjectFilePath ();
 
 } // namespace rtxaddon

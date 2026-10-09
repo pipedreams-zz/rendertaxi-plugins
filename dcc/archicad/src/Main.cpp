@@ -50,7 +50,8 @@ static GSErrCode MenuCommandHandler (const API_MenuParams* menuParams)
 			rtx::BuildLine (RTX_BUILD_COMMIT, RTX_ADDON_BUILD_DATE) +
 			"\nKennung " RTX_ADDON_IDENTIFIER "\nServer " + rtxaddon::ServerUrl () +
 			"\nArchicad " + host.version + " (Build " + host.build + ")";
-		DGAlert (DG_INFORMATION, GS::UniString ("rendertaxi.ai", CC_UTF8),
+		// Der Fenstertitel ist ein Etikett: `rdtx.ai` (texte.md, „Marke und Kurzmarke"); im Satz rendertaxi.ai.
+		DGAlert (DG_INFORMATION, GS::UniString ("rdtx.ai", CC_UTF8),
 				 GS::UniString ("rendertaxi.ai für Archicad", CC_UTF8),
 				 GS::UniString (details.c_str (), CC_UTF8), GS::UniString ("OK", CC_UTF8));
 	}

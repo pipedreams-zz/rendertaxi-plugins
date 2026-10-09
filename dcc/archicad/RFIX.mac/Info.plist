@@ -7,11 +7,11 @@
 	<key>CFBundleIdentifier</key>
 	<string>ai.rendertaxi.archicad</string>
 	<key>CFBundleName</key>
-	<string>rendertaxi</string>
+	<string>rdtx.ai</string>
 	<key>CFBundleExecutable</key>
 	<string>rendertaxi</string>
 	<key>CFBundleGetInfoString</key>
-	<string>rendertaxi.ai für Archicad 28, 1.1.0</string>
+	<string>rdtx.ai für Archicad 28, 1.2.0</string>
 	<key>CFBundleShortVersionString</key>
 	<string>rendertaxi</string>
 	<key>CFBundlePackageType</key>

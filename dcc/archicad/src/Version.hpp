@@ -8,7 +8,7 @@
 // übernehmen. Die Fassung ist eine Eigenschaft dieses Add-Ons, keine
 // Vertragsauslegung — sie wird hier gehoben und im Bericht genannt, nicht
 // stillschweigend.
-#define RTX_ADDON_VERSION "1.1.0"
+#define RTX_ADDON_VERSION "1.2.0"
 
 // **Wortgleich zu `client_id`** (§5.1: „`client_id` … wortgleich zu
 // `source.plugin.identifier` des Manifests"). Vorher standen hier zwei

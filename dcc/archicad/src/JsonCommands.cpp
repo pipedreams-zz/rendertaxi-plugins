@@ -6,8 +6,10 @@
 
 #include "CapabilityProbe.hpp"
 #include "HostInfo.hpp"
+#include "ModelExport.hpp"
 #include "Version.hpp"
 #include "ViewCapture.hpp"
+#include "rtx/Ids.hpp"
 #include "rtx/ImageCrop.hpp"
 #include "rtx/ImageFile.hpp"
 #include "rtx/Json.hpp"
@@ -229,6 +231,100 @@ public:
 	}
 };
 
+/**
+ * `rendertaxi.ExportModel` — das Modell des 3D-Fensters, wie die Palette es
+ * sendet, als Datei (RTX-A-012). Für Messung und Abnahme über die
+ * Archicad-Schnittstelle: Neuaufbau (QA-09), Schnittebenen (QA-10), Laufzeit.
+ * Es wird nichts übertragen.
+ *
+ * Parameter (alle optional):
+ *   `directory`   Zielverzeichnis; ohne Angabe ein Ordner im Arbeitsbereich
+ *   `savedViews`  `true`: dazu die Kameras aller gespeicherten 3D-Ansichten
+ *
+ * Antwort: Pfad, Bytes, Dreiecke, Kameras, Elemente, Körper, `rebuilding`
+ * (0 Körper ohne Fehler) und der Zustand der Schnittebenen.
+ */
+class ExportModelCommand : public API_AddOnCommand {
+public:
+	GS::String GetNamespace () const override { return kCommandNamespace; }
+	GS::String GetName () const override { return "ExportModel"; }
+	API_AddOnCommandExecutionPolicy GetExecutionPolicy () const override
+	{
+		return API_AddOnCommandExecutionPolicy::ScheduleForExecutionOnMainThread;
+	}
+	bool IsProcessWindowVisible () const override { return false; }
+	GS::Optional<GS::UniString> GetSchemaDefinitions () const override { return GS::NoValue; }
+	GS::Optional<GS::UniString> GetInputParametersSchema () const override { return GS::NoValue; }
+	GS::Optional<GS::UniString> GetResponseSchema () const override { return GS::NoValue; }
+	void OnResponseValidationFailed (const GS::ObjectState&) const override {}
+
+	GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const override
+	{
+		GS::ObjectState response;
+		std::string directory = Param (parameters, "directory");
+		if (directory.empty ()) directory = rtx::TransferStore::DefaultWorkDirectory () + "/model-" + rtx::RandomHex (6);
+		if (!rtx::EnsureDirectory (directory)) {
+			Fail (response, "Das Zielverzeichnis ließ sich nicht anlegen.");
+			return response;
+		}
+		bool savedViews = false;
+		parameters.Get ("savedViews", savedViews);
+
+		rtx::GlbSceneBuilder builder;
+		const ModelExtraction extraction = ExtractWindowModel (builder);
+		const CutPlanes cut = ReadCutPlanes ();
+		response.Add ("elements", extraction.elements);
+		response.Add ("bodies", static_cast<Int64> (extraction.bodies));
+		response.Add ("rebuilding", extraction.rebuilding);
+		response.Add ("readMs", extraction.milliseconds);
+		response.Add ("cutPlanesReadable", cut.readable);
+		response.Add ("cutPlanesEnabled", cut.enabled);
+		response.Add ("cutPlanes", static_cast<Int32> (cut.count));
+		if (!extraction.error.empty ()) {
+			Fail (response, extraction.error);
+			return response;
+		}
+		if (extraction.rebuilding) {
+			Fail (response, "Archicad baut das 3D-Modell neu auf.");
+			return response;
+		}
+		rtx::ModelInput input;
+		builder.Scene ().generator = std::string ("rdtx.ai Archicad add-on ") + RTX_ADDON_VERSION;
+		input.scene = std::move (builder.Scene ());
+		const rtx::Result<rtx::ArchicadProjection> projection = ReadWindowProjection ();
+		if (!projection) {
+			Fail (response, projection.GetError ().message);
+			return response;
+		}
+		input.current = {"Aktuelle Ansicht", "current", projection.Value ()};
+		const RenderScene scene = ReadCurrentRenderScene ();
+		if (scene.known) {
+			input.width = scene.width;
+			input.height = scene.height;
+		}
+		std::string viewWarning;
+		if (savedViews) {
+			SavedViewCameras read = ReadSavedViewCameras (ListSaved3DViews ());
+			input.extra = std::move (read.cameras);
+			viewWarning = read.warning;
+		}
+		const rtx::Result<rtx::ModelOutput> out = rtx::AssembleModel (input, directory, rtx::kCaptureHighestMinor, 0);
+		if (!out) {
+			Fail (response, out.GetError ().message);
+			return response;
+		}
+		response.Add ("succeeded", true);
+		response.Add ("path", GS::UniString (out.Value ().asset.localPath.c_str (), CC_UTF8));
+		response.Add ("byteSize", static_cast<Int64> (out.Value ().asset.byteSize));
+		response.Add ("triangles", static_cast<Int64> (out.Value ().stats.triangles));
+		response.Add ("meshes", static_cast<Int64> (out.Value ().stats.meshes));
+		response.Add ("cameras", static_cast<Int32> (out.Value ().cameras));
+		response.Add ("mergedByMaterial", out.Value ().mergedByMaterial);
+		response.Add ("viewWarning", GS::UniString (viewWarning.c_str (), CC_UTF8));
+		return response;
+	}
+};
+
 /** `rendertaxi.Probe` — die Messung aus Stufe B, als Befehl. */
 class ProbeCommand : public API_AddOnCommand {
 public:
@@ -266,6 +362,8 @@ GSErrCode InstallJsonCommands ()
 		GS::NewOwned<CaptureViewCommand> ());
 	if (err != NoError) return err;
 	err = ACAPI_AddOnAddOnCommunication_InstallAddOnCommandHandler (GS::NewOwned<InfoCommand> ());
+	if (err != NoError) return err;
+	err = ACAPI_AddOnAddOnCommunication_InstallAddOnCommandHandler (GS::NewOwned<ExportModelCommand> ());
 	if (err != NoError) return err;
 #ifdef RTX_SPIKE_MODEL_GLB
 	// Messauftrag #256, nicht im veröffentlichten Add-on.

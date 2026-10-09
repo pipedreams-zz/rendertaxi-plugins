@@ -12,6 +12,7 @@
 #endif
 
 #include "HostInfo.hpp"
+#include "ModelExport.hpp"
 #include "Settings.hpp"
 #include "Version.hpp"
 #include "ViewCapture.hpp"
@@ -106,6 +107,67 @@ private:
 	DG::TextEdit nameEdit;
 };
 
+/**
+ * „Kameras" (RTX-A-012): die gespeicherten 3D-Ansichten mit Häkchen. Ein Klick
+ * auf eine Zeile setzt oder nimmt das Häkchen; „Übernehmen" merkt die Wahl.
+ */
+class CamerasDialog final : public DG::ModalDialog,
+							public DG::PanelObserver,
+							public DG::ButtonItemObserver,
+							public DG::ListBoxObserver {
+public:
+	explicit CamerasDialog (std::vector<rtx::CameraPick> picks) :
+		DG::ModalDialog (ACAPI_GetOwnResModule (), RtxCamerasDialogResId, ACAPI_GetOwnResModule ()),
+		acceptButton (GetReference (), 1),
+		cancelButton (GetReference (), 2),
+		list (GetReference (), 4),
+		picks (std::move (picks))
+	{
+		list.SetTabFieldCount (1);
+		list.SetTabFieldProperties (1, 0, static_cast<short> (list.GetItemWidth ()), DG::ListBox::Left,
+									DG::ListBox::EndTruncate, false);
+		for (const rtx::CameraPick& pick : this->picks) {
+			list.AppendItem ();
+			list.SetTabItemText (list.GetItemCount (), 1, GS::UniString (rtx::CameraPickLine (pick).c_str (), CC_UTF8));
+		}
+		Attach (*this);
+		acceptButton.Attach (*this);
+		cancelButton.Attach (*this);
+		list.Attach (*this);
+	}
+
+	~CamerasDialog () override
+	{
+		list.Detach (*this);
+		acceptButton.Detach (*this);
+		cancelButton.Detach (*this);
+		Detach (*this);
+	}
+
+	const std::vector<rtx::CameraPick>& Picks () const { return picks; }
+
+private:
+	void ButtonClicked (const DG::ButtonClickEvent& ev) override
+	{
+		if (ev.GetSource () == &acceptButton) PostCloseRequest (DG::ModalDialog::Accept);
+		else if (ev.GetSource () == &cancelButton) PostCloseRequest (DG::ModalDialog::Cancel);
+	}
+
+	void ListBoxClicked (const DG::ListBoxClickEvent&) override
+	{
+		const short row = list.GetSelectedItem ();
+		if (row < 1 || row > static_cast<short> (picks.size ())) return;
+		rtx::CameraPick& pick = picks[static_cast<std::size_t> (row - 1)];
+		pick.checked = !pick.checked;
+		list.SetTabItemText (row, 1, GS::UniString (rtx::CameraPickLine (pick).c_str (), CC_UTF8));
+	}
+
+	DG::Button acceptButton;
+	DG::Button cancelButton;
+	DG::SingleSelListBox list;
+	std::vector<rtx::CameraPick> picks;
+};
+
 GSErrCode NotificationHandler (API_NotifyEventID notifID, Int32)
 {
 	if (notifID == APINotify_Quit) RendertaxiPalette::DestroyInstance ();
@@ -195,7 +257,11 @@ RendertaxiPalette::RendertaxiPalette () :
 	viewRefreshButton (GetReference (), ViewRefreshButtonId),
 	projectRefreshButton (GetReference (), ProjectRefreshButtonId),
 	newProjectButton (GetReference (), NewProjectButtonId),
-	buildText (GetReference (), BuildTextId)
+	buildText (GetReference (), BuildTextId),
+	imageCheck (GetReference (), ImageCheckId),
+	modelCheck (GetReference (), ModelCheckId),
+	extraCamerasCheck (GetReference (), ExtraCamerasCheckId),
+	camerasButton (GetReference (), CamerasButtonId)
 {
 	rtx::SetLogFile (LogPath ());
 
@@ -221,6 +287,16 @@ RendertaxiPalette::RendertaxiPalette () :
 	projectRefreshButton.Disable ();
 	newProjectButton.Disable ();
 	buildText.SetText (U (rtx::BuildLine (RTX_BUILD_COMMIT, RTX_ADDON_BUILD_DATE)));
+	// Gemerkte Wahl der Wege (RTX-A-012). Ein unlesbarer Wert ist die Vorgabe „nur Bild" (Regel 3).
+	{
+		const WayChoice ways = Ways ();
+		shownImage = ways.image;
+		shownModel = ways.model;
+		shownExtraCameras = ExtraCameras ();
+		imageCheck.SetState (shownImage);
+		modelCheck.SetState (shownModel);
+		extraCamerasCheck.SetState (shownExtraCameras);
+	}
 
 	// Projektwechsel machen Projektname und Projektschlüssel ungültig. Ohne
 	// diese Benachrichtigung müsste der Leerlauf beides bei jedem Tick neu
@@ -244,6 +320,7 @@ RendertaxiPalette::RendertaxiPalette () :
 	viewRefreshButton.Attach (*this);
 	projectRefreshButton.Attach (*this);
 	newProjectButton.Attach (*this);
+	camerasButton.Attach (*this);
 	// Für den Tooltip mit dem vollen Namen; die Liste selbst endet auf „…".
 	projectPopUp.Attach (*this);
 	viewpointPopUp.Attach (*this);
@@ -726,6 +803,32 @@ void RendertaxiPalette::RefreshSourceView ()
 		}
 	}
 
+	// **Was gesendet wird, in einem Satz** (RTX-A-012) — zuerst, und immer ganz.
+	// Vor der Sperre: `CurrentPlan` sperrt `shared.mutex` selbst, und die Sperre
+	// ist nicht rekursiv — darunter blieb die Palette beim Öffnen stehen.
+	std::string waysLine;
+	{
+		const rtx::Result<rtx::CapturePlan> plan = CurrentPlan ();
+		if (!plan) {
+			waysLine = plan.GetError ().message;
+		} else {
+			waysLine = rtx::PlanSummary (plan.Value ());
+			if (!plan.Value ().hint.empty ()) waysLine += " " + plan.Value ().hint;
+			if (plan.Value ().model && !view.is3D)
+				waysLine += " Das Modell kommt aus dem 3D-Fenster.";
+			if (plan.Value ().model && extraCamerasCheck.IsChecked () && selectedViewGuid.empty ()) {
+				// F-02 an #318: eine freie Ansicht wird nie verlassen — vorher sagen, nicht erst danach.
+				waysLine += " Zusätzliche Kameras nur mit einer gespeicherten Ansicht.";
+			} else if (plan.Value ().model && extraCamerasCheck.IsChecked ()) {
+				const std::size_t count =
+					rtx::CheckedGuids (rtx::BuildCameraPicks (savedViews, CameraViews (cachedLocalProjectKey),
+															  selectedViewGuid))
+						.size ();
+				waysLine += " Zusätzliche Kameras: " + std::to_string (count) + ".";
+			}
+		}
+	}
+
 	std::lock_guard<std::mutex> guard (shared.mutex);
 	const auto put = [this] (std::string& slot, const std::string& value) {
 		if (slot == value) return;
@@ -746,7 +849,8 @@ void RendertaxiPalette::RefreshSourceView ()
 	// Zeilen und enden auf „…"; die Regel und ihr ungünstigster Fall stehen
 	// im Kern und sind dort geprüft.
 	const std::vector<std::string> lines = rtx::LayoutInfoLines (
-		{{capture, false},
+		{{waysLine, true},
+		 {capture, false},
 		 {renderLine, false},
 		 {targetLine, false},
 		 {matchLine, false},
@@ -940,7 +1044,12 @@ void RendertaxiPalette::RefreshFromState ()
 		nameEdit.SetStatus (!busy && signedIn);
 		sizePopUp.SetStatus (!busy && signedIn);
 		serverEdit.SetStatus (!busy && !signedIn);
+		imageCheck.SetStatus (!busy);
+		modelCheck.SetStatus (!busy);
+		extraCamerasCheck.SetStatus (!busy);
 	}
+	// „Kameras…" nur, wenn zusätzliche Kameras überhaupt mitgehen.
+	camerasButton.SetStatus (!busy && modelCheck.IsChecked () && extraCamerasCheck.IsChecked ());
 	openButton.SetStatus (!url.empty ());
 	// Nur beim Update gibt es einen Rahmen, der angepasst werden könnte. Das
 	// folgt dem Moduswechsel und nicht nur dem Anmeldezustand.
@@ -984,6 +1093,9 @@ void RendertaxiPalette::PanelIdle (const DG::PanelIdleEvent&)
 			break;
 		}
 	}
+
+	ReadWayChecks ();
+	PollModelRebuild ();
 
 	const auto now = std::chrono::steady_clock::now ();
 	if (now - lastSourceViewCheck > std::chrono::milliseconds (500)) {
@@ -1040,6 +1152,8 @@ void RendertaxiPalette::ButtonClicked (const DG::ButtonClickEvent& ev)
 			StartRefreshLists ();
 	} else if (ev.GetSource () == &newProjectButton) {
 		StartCreateProject ();
+	} else if (ev.GetSource () == &camerasButton) {
+		ChooseCameras ();
 	}
 }
 
@@ -1183,8 +1297,134 @@ void RendertaxiPalette::ProposeUpdateForSelectedView ()
 
 void RendertaxiPalette::CancelRunningJob ()
 {
+	if (modelWait.Active ()) {
+		// Warten auf den Neuaufbau ist kein Faden: es endet hier, und nichts wird gesendet.
+		modelWait.Stop ();
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.busy = false;
+		shared.progressText = "Abgebrochen.";
+		shared.dirty = true;
+		return;
+	}
 	cancel.Cancel ();
 	shared.SetProgress ("Abbruch angefordert…");
+}
+
+// --- Bild, Modell oder beides (RTX-A-012) ------------------------------------
+
+rtx::Result<rtx::CapturePlan> RendertaxiPalette::CurrentPlan () const
+{
+	int minor = -1;
+	{
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		minor = shared.highestMinor;
+	}
+	return rtx::PlanCapture (imageCheck.IsChecked (), modelCheck.IsChecked (), minor);
+}
+
+void RendertaxiPalette::ReadWayChecks ()
+{
+	const bool image = imageCheck.IsChecked ();
+	const bool model = modelCheck.IsChecked ();
+	const bool extra = extraCamerasCheck.IsChecked ();
+	if (image != shownImage || model != shownModel) {
+		shownImage = image;
+		shownModel = model;
+		// Beides aus ist keine Wahl, die sich merken ließe; „Bitte … wählen" steht dann in der Infozeile.
+		if (image || model) SetWays ({image, model});
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.dirty = true;
+	}
+	if (extra != shownExtraCameras) {
+		shownExtraCameras = extra;
+		SetExtraCameras (extra);
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.dirty = true;
+	}
+}
+
+void RendertaxiPalette::ChooseCameras ()
+{
+	RefreshProjectCache ();
+	std::vector<rtx::CameraPick> picks =
+		rtx::BuildCameraPicks (savedViews, CameraViews (cachedLocalProjectKey), selectedViewGuid);
+	if (picks.empty ()) {
+		shared.SetProgress ("Die Ausschnittsmappe hat keine weitere gespeicherte 3D-Ansicht.");
+		return;
+	}
+	CamerasDialog dialog (std::move (picks));
+	if (!dialog.Invoke ()) return;
+	SetCameraViews (cachedLocalProjectKey, rtx::CheckedGuids (dialog.Picks ()));
+	std::lock_guard<std::mutex> guard (shared.mutex);
+	shared.dirty = true;
+}
+
+void RendertaxiPalette::PollModelRebuild ()
+{
+	if (!modelWait.Active ()) return;
+	const auto now = std::chrono::steady_clock::now ();
+	if (modelWait.Expired (now)) {
+		modelWait.Stop ();
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.busy = false;
+		shared.progressText = rtx::kModelRebuildGaveUp;
+		shared.dirty = true;
+		rtx::LogLine ("Modell: Neuaufbau nicht abgeschlossen, Frist abgelaufen.");
+		return;
+	}
+	if (!modelWait.Due (now)) return;
+	// **Nur die angeforderte Übernahme startet von selbst** (F-01 an #318): Hat der Nutzer beim
+	// Warten eine andere Ansicht geöffnet, das Projekt gewechselt oder Ziel und Wahl geändert,
+	// endet der Vorgang ohne Upload — das fertige Modell gehörte zu etwas anderem.
+	const std::string changed = modelWait.Changed (CurrentWaitIdentity (waitingSource));
+	if (!changed.empty ()) {
+		modelWait.Stop ();
+		rtx::LogLine ("Modell: Warten auf den Neuaufbau beendet, " + changed + "; nichts gesendet.");
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		shared.busy = false;
+		shared.progressText = rtx::ModelWaitAbandonedText (changed);
+		shared.dirty = true;
+		return;
+	}
+	const Int32 bodies = CountWindowBodies ();
+	if (bodies > 0) {
+		rtx::LogLine ("Modell: Neuaufbau abgeschlossen (" + std::to_string (bodies) + " Körper), Übernahme startet.");
+		modelWait.Stop ();
+		{
+			std::lock_guard<std::mutex> guard (shared.mutex);
+			shared.busy = false;
+			shared.dirty = true;
+		}
+		// Die Ansicht ist schon geöffnet; ein zweites Öffnen stieße den nächsten Neuaufbau an.
+		retryAfterRebuild = true;
+		StartCapture (waitingSource);
+		retryAfterRebuild = false;
+		return;
+	}
+	shared.SetProgress (modelWait.Text (now));
+}
+
+rtx::ModelWaitIdentity RendertaxiPalette::CurrentWaitIdentity (CaptureSource source)
+{
+	rtx::ModelWaitIdentity id;
+	// Ein unbenanntes Projekt hat keinen Pfad; der Name unterscheidet es dann noch.
+	id.projectKey = LocalProjectKey () + "|" + ProjectDisplayName ();
+	id.sourceKey = SourceViewFor (source).key;
+	id.viewGuid = selectedViewGuid;
+	id.openedViewGuid = OpenedViewGuid ();
+	// Das Ziel wie in `StartCapture`: aufgelöst gegen die dargestellten Listen.
+	const rtx::ResolvedTarget resolved =
+		rtx::ResolveTarget (shownProjects, projectPopUp.GetSelectedItem (), shownViewpoints,
+							viewpointPopUp.GetSelectedItem (), updateRadio.IsSelected ());
+	if (!resolved.problem.empty ())
+		id.targetKey = "problem|" + resolved.problem;
+	else if (updateRadio.IsSelected ())
+		id.targetKey = resolved.project.id + "|update|" + resolved.viewpoint.id;
+	else
+		id.targetKey = resolved.project.id + "|create";
+	id.image = imageCheck.IsChecked ();
+	id.model = modelCheck.IsChecked ();
+	return id;
 }
 
 void RendertaxiPalette::OpenResultInBrowser ()
@@ -1267,6 +1507,8 @@ void RendertaxiPalette::StartSignIn ()
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
+			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 			shared.dirty = true;
 		}
 
@@ -1395,7 +1637,11 @@ void RendertaxiPalette::RefreshProjectList ()
 		const rtx::Result<rtx::HandshakeInfo> handshake = api->Handshake (CurrentDevice (), &cancel);
 		const rtx::Result<std::vector<rtx::ProjectSummary>> projects = api->ListProjects (&cancel);
 		std::lock_guard<std::mutex> guard (shared.mutex);
-		if (handshake) shared.canvasDefault = handshake.Value ().canvasDefault;
+		if (handshake) {
+			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
+			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
+		}
 		if (projects) {
 			shared.projects = projects.Value ();
 			shared.projectsChanged = true;
@@ -1778,13 +2024,14 @@ std::vector<std::string> RendertaxiPalette::SourceKeysForCurrentView () const
 
 void RendertaxiPalette::StartCapture (CaptureSource source)
 {
-	if (workerRunning.load ()) return;
+	if (workerRunning.load () || modelWait.Active ()) return;
 
 	// --- 1. Alles, was Archicad braucht, im Hauptfaden erledigen -------------
 	// Eine gewählte gespeicherte Ansicht wird **vor** der Aufnahme noch einmal
 	// geöffnet: aufgenommen wird die Ansicht, nicht das, was seither im
-	// Fenster gedreht wurde.
-	if (const rtx::SavedView* saved = SelectedSavedView ()) {
+	// Fenster gedreht wurde. Nach einem abgewarteten Neuaufbau steht sie schon
+	// (QA-09); ein zweites Öffnen stieße den nächsten an.
+	if (const rtx::SavedView* saved = SelectedSavedView (); saved != nullptr && !retryAfterRebuild) {
 		const std::string error = OpenSavedView (*saved);
 		if (!error.empty ()) {
 			shared.SetProgress (error);
@@ -1806,6 +2053,22 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			return;
 		}
 	}
+	// **Was gesendet wird** (RTX-A-012): Bild, Modell oder beides, gegen die
+	// Fassung aus dem jüngsten Handshake. Der Handshake vor der Übertragung
+	// prüft das noch einmal.
+	const rtx::Result<rtx::CapturePlan> chosen = CurrentPlan ();
+	if (!chosen) {
+		shared.SetProgress (chosen.GetError ().message);
+		return;
+	}
+	const rtx::CapturePlan plan = chosen.Value ();
+	// Das Modell kommt aus dem 3D-Fenster — auch beim Rendering, das dieses Fenster rechnet.
+	if (plan.model && !ReadCurrentView ().is3D) {
+		shared.SetProgress ("Das Modell kommt aus dem 3D-Fenster. Bitte das 3D-Fenster öffnen oder eine "
+							"gespeicherte 3D-Ansicht wählen.");
+		return;
+	}
+
 	// **Das Ziel ist, was sichtbar gewählt ist** (F-01 an PR #292). Aufgelöst
 	// wird gegen die dargestellten Listen, nie gegen die geladenen: die ersetzt
 	// der Arbeitsfaden, bevor die Auswahl neu aufgebaut ist, und eine Stelle
@@ -1825,7 +2088,9 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	// Die Rahmengröße gilt für beide Modi; ob sie mitreist, entscheidet
 	// `SendsSize()` — bei `update` nur zusammen mit `fit-to-capture` (§7.2).
 	target.viewpoint.size = SelectedFrameSize ();
-	// `baseImageRole` steht **innerhalb** von `target.viewpoint` (§7.2).
+	// `baseImageRole` steht **innerhalb** von `target.viewpoint` (§7.2). Ohne
+	// Bild nimmt der Kern sie heraus: ein Update nur mit Modell lässt das
+	// Basisbild stehen.
 	target.viewpoint.baseImageRole = "viewport";
 	std::string viewpointDisplayName;
 	if (updateRadio.IsSelected ()) {
@@ -1844,7 +2109,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		if (name.empty ()) name = "Archicad-Ansicht";
 		if (name.size () > 120) name.resize (120);
 		target.viewpoint.name = name;
-		// Ein **neuer** Blickpunkt übernimmt das Seitenverhältnis der Bilddatei
+		// Ein **neuer** Blickpunkt übernimmt das Seitenverhältnis der Aufnahme
 		// serverseitig: `fit-to-capture` ist bei `create` implizit, `keep`
 		// wäre dort ein `400` (§7.2). Der Client sendet das Feld hier nicht,
 		// nennt den wirksamen Wert aber richtig.
@@ -1857,10 +2122,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	const std::string viewKey = view.key.empty () ? "archicad:view:unknown" : view.key;
 
 	// **Ein Vorgang ohne lokalen Bestand wird verworfen, bevor neue
-	// Aufnahmebytes entstehen** (Issue #88, Punkt 16). Fehlt seine Bild- oder
-	// Manifestdatei, gibt es nichts fortzusetzen. Blieb er stehen, landete die
-	// neue Aufnahme in seinem Verzeichnis, ergab ein anderes Manifest, und
-	// der Client meldete `idempotency_conflict` gegen sich selbst.
+	// Aufnahmebytes entstehen** (Issue #88, Punkt 16). Fehlt seine Bild-,
+	// Modell- oder Manifestdatei, gibt es nichts fortzusetzen.
 	//
 	// Lokal wird hier geräumt, im Hauptfaden und ohne Netz; die Session bricht
 	// der Arbeitsfaden danach auch serverseitig ab.
@@ -1879,153 +2142,220 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	const std::string directory =
 		pending.IsEmpty () ? workRoot + "/" + rtx::RandomHex (8) : pending.directory;
 
-	// **Eine Wiederaufnahme nimmt nichts neu auf.**
-	//
-	// Der erste Anlauf tat genau das: er belichtete das 3D-Fenster noch einmal
-	// in dasselbe Verzeichnis und baute ein frisches Manifest mit neuem
-	// `createdAt`. Beides ändert die Bytes, über die `manifestSha256` läuft —
-	// der angefangene Vorgang wurde damit zu einem anderen Vorgang, und der
-	// Client meldete `idempotency_conflict` gegen sich selbst. Ein Vorgang ist
-	// über seinen **Inhalt** identifiziert; wer ihn fortsetzt, muss denselben
-	// Inhalt schicken.
-	//
-	// Ein Vorgang, der hier noch steht, hat seinen lokalen Bestand: der
-	// verwaiste ist oben schon geräumt.
-	const std::string pendingImage = directory + "/viewport.png";
+	// **Eine Wiederaufnahme nimmt nichts neu auf.** Ein Vorgang ist über
+	// seinen **Inhalt** identifiziert; wer ihn fortsetzt, muss dieselben Bytes
+	// schicken. Deshalb liest sie das gespeicherte Manifest samt Bild- und
+	// Modelldatei, statt Ansicht, Modell und Kamera neu zu erzeugen
+	// (RTX-A-012: Kamera und Modell ergäben andere Bytes, sobald jemand das
+	// Fenster bewegt hat). Ein Vorgang, der hier noch steht, hat seinen
+	// lokalen Bestand: der verwaiste ist oben schon geräumt.
 	const bool resuming = !pending.IsEmpty ();
 
 	// Der Ausschnitt ist der Schutzbereich der Rendering-Szene — das, was der
 	// Nutzer im 3D-Fenster gesehen hat. Gibt es keine Szene, wird nicht
-	// zugeschnitten; dann folgt das Format dem Bild.
+	// zugeschnitten; dann folgt das Format dem Bild. Die Kamera des Modells
+	// beschreibt denselben Ausschnitt (`rtx::MapArchicadCamera`).
 	const RenderScene scene = ReadCurrentRenderScene ();
 	// **Ein Rendering trägt seinen Ausschnitt schon.** Archicad hat es mit
 	// genau diesen Maßen und, wenn angehakt, mit angewandtem Schutzbereich
 	// gerechnet. Ein zweiter Zuschnitt könnte nur schaden.
 	const bool cropToScene = scene.known && !view.isRendering && !resuming;
 
-	std::string imagePath = pendingImage;
+	rtx::CaptureManifest manifest;
+	int imageWidth = 0;
+	int imageHeight = 0;
+	bool haveModel = false;
+	std::string viewWarning;   // Ansichtsstand nach den Zusatzkameras (F-02 an #318)
+	rtx::ModelInput model;
 	if (resuming) {
-		shared.SetProgress ("Angefangene Übernahme wird fortgesetzt — dasselbe Bild, "
+		shared.SetProgress ("Angefangene Übernahme wird fortgesetzt — dieselben Dateien, "
 							"derselbe Vorgang.");
+		std::string text;
+		rtx::ReadTextFile (directory + "/capture-manifest.json", text);
+		const rtx::Result<rtx::CaptureManifest> stored = rtx::CaptureManifest::Parse (text, directory);
+		if (!stored) {
+			shared.SetProgress ("Die angefangene Übernahme ließ sich nicht fortsetzen. Bitte verwerfen und neu "
+								"übernehmen.");
+			rtx::LogLine ("Fortsetzen: gespeichertes Manifest unlesbar: " + stored.GetError ().code + " " +
+						  stored.GetError ().pointer);
+			return;
+		}
+		manifest = stored.Value ();
+		for (const rtx::CaptureAsset& asset : manifest.assets)
+			if (asset.status == "present" && asset.hasImage) {
+				imageWidth = asset.image.width;
+				imageHeight = asset.image.height;
+			}
 	} else {
-		shared.SetProgress (
-			fromRendering
-				? "Archicad rendert in der eingestellten Auflösung — das kann dauern…"
-				: (cropToScene ? "Ansicht wird gesichert und zugeschnitten…"
-							   : "Ansicht wird als Bild gesichert…"));
-		const rtx::Result<ViewCaptureResult> captured =
-			fromRendering ? RenderCurrentViewAsPng (directory, "viewport.png")
-						  : CaptureCurrentViewAsPng (directory, "viewport.png");
-		if (!captured) {
-			shared.SetProgress (captured.GetError ().message);
-			return;
-		}
-		imagePath = captured.Value ().filePath;
-	}
-	if (cropToScene) {
-		const std::string croppedPath = directory + "/viewport-cropped.png";
-		const rtx::Result<rtx::CropResult> cropped =
-			rtx::CropImageToAspect (imagePath, croppedPath, scene.width, scene.height);
-		if (!cropped) {
-			shared.SetProgress (cropped.GetError ().message);
-			return;
-		}
-		if (cropped.Value ().cropped) {
-			// Ersetzen statt erst löschen, dann umbenennen: scheitert es, bleibt
-			// die Aufnahme erhalten (#164, F-01). Über UTF-8-Pfade, auch unter
-			// Windows (`rtx/Platform.hpp`).
-			if (!rtx::RenameReplacing (croppedPath, imagePath)) {
-				shared.SetProgress ("Das zugeschnittene Bild ließ sich nicht ablegen.");
+		// --- Modell (RTX-A-012) ------------------------------------------------
+		// Reihenfolge: zuerst die Geometrie — steht das 3D-Modell noch nicht, wird
+		// gewartet, bevor ein Bild umsonst entsteht —, dann das Bild, zuletzt die
+		// zusätzlichen Kameras: das Öffnen gespeicherter Ansichten wechselt Ebenen
+		// und Ausschnitt des Fensters (gemessen, QA-09).
+		if (plan.model) {
+			shared.SetProgress ("Modell wird aus dem 3D-Fenster gelesen…");
+			rtx::GlbSceneBuilder builder;
+			const ModelExtraction extraction = ExtractWindowModel (builder);
+			if (!extraction.error.empty ()) {
+				shared.SetProgress (extraction.error);
 				return;
 			}
+			if (extraction.rebuilding) {
+				// **Nie ein leeres Modell senden** (QA-09): warten, nachfragen, dann von selbst neu starten.
+				waitingSource = source;
+				modelWait.Start (std::chrono::steady_clock::now (), CurrentWaitIdentity (source));
+				rtx::LogLine ("Modell: 0 Körper ohne Fehler — Archicad baut das 3D-Modell neu auf, warte.");
+				std::lock_guard<std::mutex> guard (shared.mutex);
+				shared.busy = true;
+				shared.progressText = modelWait.Text (std::chrono::steady_clock::now ());
+				shared.dirty = true;
+				return;
+			}
+			builder.Scene ().generator = std::string ("rdtx.ai Archicad add-on ") + RTX_ADDON_VERSION;
+			model.scene = std::move (builder.Scene ());
+
+			const rtx::Result<rtx::ArchicadProjection> projection = ReadWindowProjection ();
+			if (!projection) {
+				shared.SetProgress (projection.GetError ().message);
+				return;
+			}
+			const rtx::SavedView* saved = SelectedSavedView ();
+			model.current.name = saved != nullptr ? saved->name : view.displayName;
+			if (model.current.name.empty ()) model.current.name = "Aktuelle Ansicht";
+			model.current.source = saved != nullptr ? "view:" + saved->guid : "current";
+			model.current.projection = projection.Value ();
+			// Die Bildgröße der Kamera: die Rendering-Szene, sonst das 3D-Fenster.
+			if (scene.known) {
+				model.width = scene.width;
+				model.height = scene.height;
+			}
 		}
-	}
 
-	const rtx::Result<rtx::ImageInfo> image = rtx::ReadImageInfo (imagePath);
-	if (!image) {
-		shared.SetProgress (image.GetError ().message);
-		return;
-	}
-	bool hashed = false;
-	const std::string sha = rtx::Sha256OfFile (imagePath, &hashed);
-	if (!hashed) {
-		shared.SetProgress ("Das erzeugte Bild ließ sich nicht lesen.");
-		return;
-	}
+		// --- Bild ------------------------------------------------------------
+		if (plan.image) {
+			shared.SetProgress (
+				fromRendering
+					? "Archicad rendert in der eingestellten Auflösung — das kann dauern…"
+					: (cropToScene ? "Ansicht wird gesichert und zugeschnitten…"
+								   : "Ansicht wird als Bild gesichert…"));
+			const rtx::Result<ViewCaptureResult> captured =
+				fromRendering ? RenderCurrentViewAsPng (directory, "viewport.png")
+							  : CaptureCurrentViewAsPng (directory, "viewport.png");
+			if (!captured) {
+				shared.SetProgress (captured.GetError ().message);
+				return;
+			}
+			const std::string imagePath = captured.Value ().filePath;
+			if (cropToScene) {
+				const std::string croppedPath = directory + "/viewport-cropped.png";
+				const rtx::Result<rtx::CropResult> cropped =
+					rtx::CropImageToAspect (imagePath, croppedPath, scene.width, scene.height);
+				if (!cropped) {
+					shared.SetProgress (cropped.GetError ().message);
+					return;
+				}
+				if (cropped.Value ().cropped) {
+					// Ersetzen statt erst löschen, dann umbenennen: scheitert es, bleibt
+					// die Aufnahme erhalten (#164, F-01). Über UTF-8-Pfade, auch unter
+					// Windows (`rtx/Platform.hpp`).
+					if (!rtx::RenameReplacing (croppedPath, imagePath)) {
+						shared.SetProgress ("Das zugeschnittene Bild ließ sich nicht ablegen.");
+						return;
+					}
+				}
+			}
+			const rtx::Result<rtx::ImageInfo> image = rtx::ReadImageInfo (imagePath);
+			if (!image) {
+				shared.SetProgress (image.GetError ().message);
+				return;
+			}
+			bool hashed = false;
+			const std::string sha = rtx::Sha256OfFile (imagePath, &hashed);
+			if (!hashed) {
+				shared.SetProgress ("Das erzeugte Bild ließ sich nicht lesen.");
+				return;
+			}
+			rtx::CaptureAsset asset;
+			asset.role = "viewport";
+			asset.path = "viewport.png";
+			asset.status = "present";
+			asset.mediaType = image.Value ().mediaType;
+			asset.byteSize = rtx::FileSize (imagePath);
+			asset.sha256 = sha;
+			asset.localPath = imagePath;
+			asset.hasImage = true;
+			asset.image.width = image.Value ().width;
+			asset.image.height = image.Value ().height;
+			asset.image.colorSpace = "srgb";
+			asset.image.bitDepth = image.Value ().bitDepth;
+			asset.image.sampleFormat = image.Value ().sampleFormat;
+			asset.image.channels = image.Value ().channels;
+			manifest.assets.push_back (asset);
+			imageWidth = asset.image.width;
+			imageHeight = asset.image.height;
 
-	const HostVersion host = ReadHostVersion ();
-	const MachineInfo machine = ReadMachineInfo ();
-	const std::string projectKey = ReadOrCreateProjectKey ();
+			// `beauty` ist in Archicad 28 nicht ohne Umweg zu haben: PhotoRender kennt
+			// kein PNG und startet einen vollständigen Renderlauf (capabilities.md,
+			// Abschnitt 3). Der Vertrag verlangt dafür `planned`, nicht Weglassen.
+			rtx::CaptureAsset beauty;
+			beauty.role = "beauty";
+			beauty.path = "beauty.png";
+			beauty.status = "planned";
+			// Gemessen am 20.09.2026: PhotoRender liefert kein PNG und rendert in der
+			// Aufloesung der Rendering-Einstellungen (1024x768) statt in der der
+			// Quellansicht (1071x905) — also einen anderen Bildausschnitt.
+			beauty.note = "PhotoRender rendert in der Aufloesung der Rendering-Einstellungen und liefert "
+						  "damit einen anderen Bildausschnitt als die Quellansicht.";
+			manifest.assets.push_back (beauty);
+		}
 
-	rtx::CaptureManifest manifest;
-	// Ein wiederaufgenommener Vorgang behält **die Kennung und den Zeitpunkt
-	// seines Manifests** — beide gehen in die Bytes ein, über die
-	// `manifestSha256` läuft. Nicht zu verwechseln mit `pending.captureId`:
-	// das ist die Kennung der **Session**, die der Server vergibt (§7.6).
-	manifest.captureId = resuming ? pending.manifestCaptureId : rtx::NewUuidV7 ();
-	manifest.createdAt = resuming ? pending.manifestCreatedAt : rtx::NowTimestampUtc ();
-	manifest.source.hostKey = "archicad";
-	manifest.source.hostVersion = host.version;
-	manifest.source.hostBuild = host.build;
-	manifest.source.pluginIdentifier = RTX_ADDON_IDENTIFIER;
-	manifest.source.pluginVersion = RTX_ADDON_VERSION;
-	manifest.source.os = machine.os;
-	manifest.source.osVersion = machine.osVersion;
-	manifest.source.architecture = machine.architecture;
-	manifest.platformProjectId = project.id;
-	manifest.sourceProjectKey = projectKey;   // leer heißt im Manifest `null`
-	manifest.projectDisplayName = cachedProjectName;
-	manifest.sourceViewKey = view.key;
-	manifest.viewDisplayName = view.displayName;
+		if (plan.model) {
+			if (extraCamerasCheck.IsChecked ()) {
+				std::vector<rtx::SavedView> views;
+				const std::vector<std::string> wanted = rtx::CheckedGuids (
+					rtx::BuildCameraPicks (savedViews, CameraViews (localProjectKey), selectedViewGuid));
+				for (const std::string& guid : wanted)
+					for (const rtx::SavedView& candidate : savedViews)
+						if (candidate.guid == guid) views.push_back (candidate);
+				if (!views.empty ()) {
+					shared.SetProgress ("Kameras der gespeicherten Ansichten werden gelesen…");
+					SavedViewCameras read = ReadSavedViewCameras (views);
+					model.extra = std::move (read.cameras);
+					for (const std::string& name : read.skipped)
+						rtx::LogLine ("Kamera ausgelassen, Ansicht nicht lesbar: " + name);
+					// Sichtbar bis zum Ergebnis: Bild und Modell sind schon gelesen, sie stimmen; das Fenster
+					// danach vielleicht nicht (F-02 an #318).
+					viewWarning = read.warning;
+					if (!viewWarning.empty ()) shared.SetProgress (viewWarning);
+				}
+			}
+			haveModel = true;
+			const CutPlanes cut = ReadCutPlanes ();
+			if (cut.readable && cut.enabled)
+				rtx::LogLine ("Modell: 3D-Schnittebenen eingeschaltet (" + std::to_string (cut.count) + ") — QA-10.");
+		}
 
-	rtx::CaptureAsset asset;
-	asset.role = "viewport";
-	asset.path = "viewport.png";
-	asset.status = "present";
-	asset.mediaType = image.Value ().mediaType;
-	asset.byteSize = rtx::FileSize (imagePath);
-	asset.sha256 = sha;
-	asset.localPath = imagePath;
-	asset.hasImage = true;
-	asset.image.width = image.Value ().width;
-	asset.image.height = image.Value ().height;
-	asset.image.colorSpace = "srgb";
-	asset.image.bitDepth = image.Value ().bitDepth;
-	asset.image.sampleFormat = image.Value ().sampleFormat;
-	asset.image.channels = image.Value ().channels;
-	manifest.assets.push_back (asset);
-
-	// `beauty` ist in Archicad 28 nicht ohne Umweg zu haben: PhotoRender kennt
-	// kein PNG und startet einen vollständigen Renderlauf (capabilities.md,
-	// Abschnitt 3). Der Vertrag verlangt dafür `planned`, nicht Weglassen.
-	rtx::CaptureAsset beauty;
-	beauty.role = "beauty";
-	beauty.path = "beauty.png";
-	beauty.status = "planned";
-	// Gemessen am 20.09.2026: PhotoRender liefert kein PNG und rendert in der
-	// Aufloesung der Rendering-Einstellungen (1024x768) statt in der der
-	// Quellansicht (1071x905) — also einen anderen Bildausschnitt.
-	beauty.note = "PhotoRender rendert in der Aufloesung der Rendering-Einstellungen und liefert "
-				  "damit einen anderen Bildausschnitt als die Quellansicht.";
-	manifest.assets.push_back (beauty);
-
-	// --- 2. Lokal prüfen, bevor irgendetwas das Gerät verlässt --------------
-	const rtx::Status valid = manifest.Validate ();
-	if (!valid) {
-		shared.SetProgress ("Die Aufnahme ließ sich nicht vollständig zusammenstellen und wird nicht "
-							"hochgeladen. Einzelheiten stehen im Protokoll.");
-		rtx::LogLine ("Manifest ungültig: " + valid.GetError ().code + " " +
-					  valid.GetError ().pointer);
-		return;
-	}
-	const rtx::Result<std::string> manifestText = manifest.Serialize ();
-	if (!manifestText) {
-		shared.SetProgress (manifestText.GetError ().message);
-		return;
-	}
-	if (!rtx::WriteTextFile (directory + "/capture-manifest.json", manifestText.Value ())) {
-		shared.SetProgress ("Die Aufnahme ließ sich nicht schreiben.");
-		return;
+		const HostVersion host = ReadHostVersion ();
+		const MachineInfo machine = ReadMachineInfo ();
+		// Ein wiederaufgenommener Vorgang behielte **die Kennung und den Zeitpunkt
+		// seines Manifests**; hier entsteht ein neuer.
+		manifest.captureId = rtx::NewUuidV7 ();
+		manifest.createdAt = rtx::NowTimestampUtc ();
+		manifest.source.hostKey = "archicad";
+		manifest.source.hostVersion = host.version;
+		manifest.source.hostBuild = host.build;
+		manifest.source.pluginIdentifier = RTX_ADDON_IDENTIFIER;
+		manifest.source.pluginVersion = RTX_ADDON_VERSION;
+		manifest.source.os = machine.os;
+		manifest.source.osVersion = machine.osVersion;
+		manifest.source.architecture = machine.architecture;
+		// Nur der Name der Projektdatei, nie der Pfad (ab 1.5.0; der Arbeitsfaden nimmt ihn sonst heraus).
+		manifest.source.fileName = rtx::SourceFileName (ProjectFilePath ());
+		manifest.platformProjectId = project.id;
+		manifest.sourceProjectKey = ReadOrCreateProjectKey ();   // leer heißt im Manifest `null`
+		manifest.projectDisplayName = cachedProjectName;
+		manifest.sourceViewKey = view.key;
+		manifest.viewDisplayName = view.displayName;
 	}
 
 	rtx::TransferRequest request;
@@ -2038,7 +2368,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	request.projectDisplayName = project.name;
 	request.viewpointDisplayName = viewpointDisplayName;
 
-	// --- 3. Ab hier ohne Archicad: eigener Faden, Palette bleibt bedienbar ---
+	// --- 2. Ab hier ohne Archicad: eigener Faden, Palette bleibt bedienbar ---
 	// Das Ziel steht in der Palette, bevor die Übertragung beginnt: eine
 	// Übernahme, die ihren Blickpunkt nicht nennt, wäre eine stille Zuordnung.
 	std::string targetLine =
@@ -2047,8 +2377,9 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			: "Neuer Blickpunkt „" + viewpointDisplayName + "“ in " + project.name;
 	// Die Aufnahmemaße sind **nicht** die Zielgröße der Ausgabe. Sie stehen
 	// hier als Angabe über die Datei und nirgends als Ausgabeziel.
-	targetLine += "  ·  Aufnahme " + std::to_string (image.Value ().width) + " x " +
-				  std::to_string (image.Value ().height) + " Pixel";
+	if (imageWidth > 0)
+		targetLine += "  ·  Aufnahme " + std::to_string (imageWidth) + " x " + std::to_string (imageHeight) +
+					  " Pixel";
 	targetLine += target.viewpoint.EffectiveFrame () == "fit-to-capture"
 					  ? ", Rahmen wird an die Aufnahme angepasst"
 					  : ", Rahmen und Ausschnitt bleiben";
@@ -2063,12 +2394,15 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 	}
 
 	workerRunning.store (true);
-	worker = std::thread ([this, request, targetLine, orphaned] () {
+	const bool update = target.viewpoint.mode == "update";
+	worker = std::thread ([this, request, targetLine, orphaned, resuming, plan, haveModel, model = std::move (model),
+						   update, viewWarning] () mutable {
 		// **F-02:** Kein Zweig hier beendet den Prozess.
 		const rtx::Result<rtx::HandshakeInfo> handshake =
 			api->Handshake (CurrentDevice (), &cancel);
-		const auto stop = [this] (const std::string& message) {
-			shared.SetProgress (message);
+		const auto stop = [this, viewWarning] (const std::string& message) {
+			rtx::LogLine ("Übernahme beendet ohne Übertragung: " + message);
+			shared.SetProgress (viewWarning.empty () ? message : message + " " + viewWarning);
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.busy = false;
 			shared.dirty = true;
@@ -2090,14 +2424,74 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			stop (message);
 			return;
 		}
+		const int minor = rtx::HighestCaptureMinor (handshake.Value ());
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.highestMinor = minor;
+			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 		}
 		const rtx::Status supported = handshake.Value ().RequireCaptureContract ();
 		if (!supported) {
 			stop (supported.GetError ().message);
 			return;
+		}
+
+		// --- Fassung und Modell nach dem Handshake (RTX-A-012) ------------------
+		if (!resuming) {
+			// Die Wahl gegen den Server, wie er jetzt antwortet. **Regel 3:** ein gemerktes
+			// „nur Modell" gegen einen Server unter 1.6 bricht nichts ab — es fehlt dann nur das
+			// Bild, das ohne diese Antwort nicht aufgenommen wurde.
+			const rtx::CapturePlan now =
+				rtx::PlanCapture (plan.image, plan.model, minor).Value ();
+			if (now.image && !plan.image) {
+				stop (std::string (rtx::kModelOnlyFallback) + " Bitte noch einmal übernehmen.");
+				return;
+			}
+			rtx::CaptureManifest& manifest = request.manifest;
+			manifest.contractVersion = rtx::PlanContractVersion (now, minor);
+			const int written = rtx::ContractMinor (manifest.contractVersion);
+			manifest.source.capabilities = rtx::ArchicadCapabilities (written);
+			if (written < 5) manifest.source.fileName.clear ();
+			std::string note;
+			if (now.model && haveModel) {
+				shared.SetProgress ("Modell wird zusammengestellt…");
+				const rtx::Result<rtx::ModelOutput> out =
+					rtx::AssembleModel (model, request.directory, written, handshake.Value ().limits.maxGeometryBytes);
+				if (!out) {
+					stop (out.GetError ().message);
+					return;
+				}
+				manifest.assets.push_back (out.Value ().asset);
+				manifest.hasGeometry = true;
+				manifest.geometry.assetPath = out.Value ().asset.path;
+				manifest.hasCamera = out.Value ().hasCamera;
+				manifest.camera = out.Value ().camera;
+				for (const std::string& line : out.Value ().notes) {
+					rtx::LogLine ("Modell: " + line);
+					note += (note.empty () ? "" : " ") + line;
+				}
+				rtx::LogLine ("Modell zusammengestellt: " + std::to_string (out.Value ().stats.triangles) +
+							  " Dreiecke, " + std::to_string (out.Value ().asset.byteSize) + " Byte, " +
+							  std::to_string (out.Value ().cameras) + " Kameras.");
+			} else if (plan.model) {
+				note = now.hint;
+			}
+			const rtx::Status valid = manifest.Validate ();
+			if (!valid) {
+				rtx::LogLine ("Manifest ungültig: " + valid.GetError ().code + " " + valid.GetError ().pointer +
+							  " " + valid.GetError ().message);
+				stop ("Die Aufnahme ließ sich nicht vollständig zusammenstellen und wird nicht hochgeladen. "
+					  "Einzelheiten stehen im Protokoll.");
+				return;
+			}
+			const rtx::Result<std::string> manifestText = manifest.Serialize ();
+			if (!manifestText ||
+				!rtx::WriteTextFile (request.directory + "/capture-manifest.json", manifestText.Value ())) {
+				stop ("Die Aufnahme ließ sich nicht schreiben.");
+				return;
+			}
+			if (!note.empty ()) shared.SetProgress (note);
 		}
 
 		rtx::CaptureTransfer transfer (*api, *store);
@@ -2117,7 +2511,9 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		shared.busy = false;
 		if (result) {
 			shared.progressText = "Fertig.";
-			shared.resultText = targetLine + " — übernommen.";
+			// Was angekommen ist, je Weg — bei einem Update auch, was stehen blieb.
+			shared.resultText = targetLine + " — " + rtx::PlanResultText (result.Value (), update);
+			if (!viewWarning.empty ()) shared.resultText += " " + viewWarning;
 			shared.openUrl = result.Value ().openUrl;
 			// Nach einer Anlage gibt es einen Blickpunkt mehr. Die Zuordnung
 			// fällt weg, und der Leerlauf liest die Liste neu — sonst wäre
@@ -2130,6 +2526,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			shared.resetNameSuggestion = true;
 		} else {
 			shared.progressText = result.GetError ().message;
+			if (!viewWarning.empty ()) shared.progressText += " " + viewWarning;
 			if (result.GetError ().code == rtx::errc::Unauthorized) {
 				shared.signedIn = false;
 				shared.connectionText = "Die Verbindung wurde beendet. Bitte neu anmelden.";

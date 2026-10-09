@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,8 +23,10 @@
 
 #include "HostInfo.hpp"
 #include "rtx/CaptureTransfer.hpp"
+#include "rtx/CaptureWays.hpp"
 #include "rtx/DeviceLogin.hpp"
 #include "rtx/Http.hpp"
+#include "rtx/ModelCapture.hpp"
 #include "rtx/PluginApi.hpp"
 #include "rtx/ProjectList.hpp"
 #include "rtx/TokenStore.hpp"
@@ -32,6 +35,8 @@
 #define RtxPaletteResId 32500
 /** Der Dialog „Neues Projekt" (`RINT/rendertaxi.grc`, #281). */
 #define RtxNewProjectDialogResId 32510
+/** Der Dialog „Kameras": zusätzliche Kameras aus gespeicherten 3D-Ansichten (RTX-A-012). */
+#define RtxCamerasDialogResId 32520
 // Zwei Menüressourcen mit je **einem** Befehl; zusammen ergeben sie ein
 // flaches Hauptmenü „rendertaxi.ai" (siehe `RINT/rendertaxi.grc`).
 #define RtxMenuResId 32500
@@ -69,6 +74,14 @@ struct SharedState {
 	 * Zielgröße steht dann ohne Zahl da.
 	 */
 	rtx::CanvasDefault canvasDefault;
+	/**
+	 * Die höchste Fassung des Capture-Manifests und die Grenze der Modelldatei
+	 * aus dem jüngsten Handshake (RTX-A-012). Bis zum ersten Handshake −1 und 0:
+	 * dann gilt die Wahl der Palette, wie sie ist, und der Handshake vor der
+	 * Übertragung entscheidet.
+	 */
+	int highestMinor = -1;
+	std::int64_t maxGeometryBytes = 0;
 	bool projectsChanged = false;
 	bool viewpointsChanged = false;
 	/**
@@ -151,7 +164,11 @@ private:
 		ViewRefreshButtonId = 43,
 		ProjectRefreshButtonId = 44,
 		NewProjectButtonId = 45,
-		BuildTextId = 46
+		BuildTextId = 46,
+		ImageCheckId = 47,
+		ModelCheckId = 48,
+		ExtraCamerasCheckId = 49,
+		CamerasButtonId = 50
 	};
 
 	RendertaxiPalette ();
@@ -207,6 +224,16 @@ private:
 	/** Woher das Bild kommt: aus dem aktiven Fenster oder aus dem Rendering. */
 	enum class CaptureSource { CurrentWindow, Rendering };
 	void StartCapture (CaptureSource source = CaptureSource::CurrentWindow);
+	/** Die Wahl „Bild" und „Modell" gegen die bekannte Fassung des Servers (`rtx::PlanCapture`). */
+	rtx::Result<rtx::CapturePlan> CurrentPlan () const;
+	/** Liest die Häkchen „Bild", „Modell", „Zusätzliche Kameras" und sichert eine Änderung. */
+	void ReadWayChecks ();
+	/** Der Dialog „Kameras": welche gespeicherten 3D-Ansichten ihre Kamera mitsenden. */
+	void ChooseCameras ();
+	/** Wartet die Palette auf den Neuaufbau des 3D-Modells, fragt sie hier nach (QA-09). */
+	void PollModelRebuild ();
+	/** Wofür gewartet wird — beim Beginn und bei jeder Abfrage an dieser einen Stelle gelesen (F-01 an #318). */
+	rtx::ModelWaitIdentity CurrentWaitIdentity (CaptureSource source);
 
 	/**
 	 * Die Quellansicht für eine der beiden Quellen — **die einzige Stelle**,
@@ -317,6 +344,12 @@ private:
 	/** „Build … vom …" im Fuß, damit jeder Screenshot den Stand zeigt. */
 	DG::LeftText buildText;
 
+	/** Bild, Modell oder beides; zusätzliche Kameras (RTX-A-012). Gemerkt in `settings.json`. */
+	DG::CheckBox imageCheck;
+	DG::CheckBox modelCheck;
+	DG::CheckBox extraCamerasCheck;
+	DG::Button camerasButton;
+
 	std::unique_ptr<rtx::HttpClient> http;
 	std::unique_ptr<rtx::TokenStore> tokens;
 	std::unique_ptr<rtx::PluginApiClient> api;
@@ -398,6 +431,16 @@ private:
 	short shownViewIndex = 1;
 	/** Ansicht und Blickpunkt, für die der Wechsel auf „aktualisieren" schon geschah. */
 	std::string proposedUpdateFor;
+
+	/** Zuletzt gesicherte Wahl der Wege; nur Änderungen werden geschrieben. */
+	bool shownImage = true;
+	bool shownModel = false;
+	bool shownExtraCameras = false;
+	/** Archicad baut das 3D-Modell neu auf; die Übernahme startet danach von selbst (QA-09). */
+	rtx::ModelRebuildWait modelWait;
+	CaptureSource waitingSource = CaptureSource::CurrentWindow;
+	/** Die Wiederholung nach dem Neuaufbau öffnet die gespeicherte Ansicht nicht noch einmal. */
+	bool retryAfterRebuild = false;
 
 	static GS::Ref<RendertaxiPalette> instance;
 	/** Setzt die Projektbenachrichtigung; der Leerlauf liest und löscht sie. */

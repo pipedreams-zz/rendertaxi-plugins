@@ -21,6 +21,7 @@ add_library (rtxcore STATIC
 	src/ImageFile.cpp
 	src/Json.cpp
 	src/Log.cpp
+	src/ModelCapture.cpp
 	src/Numbers.cpp
 	src/PaletteText.cpp
 	src/Platform.cpp

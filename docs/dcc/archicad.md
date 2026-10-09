@@ -1,14 +1,15 @@
 # rendertaxi.ai für Archicad 28
 
-Das Add-on übergibt die **aktuelle Ansicht als Bild** an rendertaxi.ai,
-ordnet sie einem Projekt und einem Blickpunkt zu — neu oder als ausdrückliches
-Update — und öffnet genau diesen Blickpunkt im Browser. Generierung und
+Das Add-on übergibt die **aktuelle Ansicht als Bild**, das **Modell mit der
+Kamera der Ansicht** oder beides an rendertaxi.ai, ordnet es einem Projekt und
+einem Blickpunkt zu — neu oder als ausdrückliches Update — und öffnet genau
+diesen Blickpunkt im Browser. Generierung und
 Ergebnisbearbeitung bleiben in der Webanwendung.
 
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.1.0-2026.10.08.zip`) von der
+`rendertaxi-archicad28-1.2.0-2026.10.08.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
@@ -19,7 +20,7 @@ entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
 2. `macos/rendertaxi.bundle` nach
    `/Applications/Graphisoft/Archicad 28/Add-Ons/` kopieren. Alternativ in
    Archicad unter **Optionen › Add-On-Manager** hinzufügen.
-3. Archicad starten. Im Menü erscheint **rendertaxi.ai**.
+3. Archicad starten. Im Menü erscheint **rdtx.ai**.
 
 Das Bundle ist ad hoc signiert, aber **nicht notarisiert**. Lehnt macOS das
 Laden ab oder meldet Archicad, das Add-on sei beschädigt, einmal im Terminal
@@ -41,7 +42,7 @@ xattr -dr com.apple.quarantine "/Applications/Graphisoft/Archicad 28/Add-Ons/ren
 3. `win/rendertaxi.apx` nach `C:\Program Files\Graphisoft\Archicad 28\Add-Ons\`
    kopieren (Windows fragt nach Administratorrechten) oder die Datei an einem
    beliebigen Ort ablegen und unter **Optionen › Add-On-Manager** hinzufügen.
-4. Archicad starten. Im Menü erscheint **rendertaxi.ai**.
+4. Archicad starten. Im Menü erscheint **rdtx.ai**.
 
 Die Anmeldung läuft wie unter macOS über den Browser (siehe
 [Verbinden](#verbinden)); das Token liegt unter Windows in der
@@ -60,7 +61,7 @@ starten.
 
 ## Verbinden
 
-1. Menü **rendertaxi.ai › Palette** öffnet die Palette. Sie lässt sich
+1. Menü **rdtx.ai › Palette** öffnet die Palette. Sie lässt sich
    andocken.
 2. Im Bereich **Verbindung** steht die Serveradresse (Vorgabe
    `https://dev.rendertaxi.ai`). Nur ändern, wenn euer Büro eine andere
@@ -75,7 +76,19 @@ Keychain, Windows: Anmeldeinformationsverwaltung). Angemeldete
 Geräte lassen sich in der Webanwendung unter **Verbundene Geräte** (`/geraete`) einsehen und
 abmelden.
 
-## Bild übernehmen
+## Bild, Modell oder beides übernehmen
+
+Bild und Modell sind zwei Wege; sie laufen einzeln oder zusammen. Im Bereich
+**Übernehmen** stehen dafür zwei Häkchen:
+
+- **Bild** — die Ansicht als Bild, wie bisher.
+- **Modell mit Kamera** — die sichtbare Geometrie des 3D-Fensters als
+  Modelldatei (glTF) mit der Kamera der Ansicht. **Nur Modell** (Bild aus,
+  Modell an) rendert nicht und nimmt kein Bild auf.
+
+Was gesendet wird, steht als erste Zeile darunter, etwa „Gesendet wird: nur
+Modell und Kamera — ohne Rendern.“ Die Wahl bleibt gemerkt. Ein Update nur mit
+Modell lässt das Bild des Blickpunkts stehen, eines nur mit Bild das Modell.
 
 1. Im Bereich **Projekt und Blickpunkt** das Projekt wählen.
 2. Entweder **Neuer Blickpunkt** mit Namen oder **Bestehenden Blickpunkt
@@ -86,7 +99,8 @@ abmelden.
    3D-Fenster als Render-Schutzbereich zeigt, und genau auf diesen Ausschnitt
    schneidet das Add-on das Bild zu. Die Palette nennt ihn vor der Übernahme,
    etwa „Ausschnitt 1024 x 768“.
-4. **Aktuelle Ansicht übernehmen** nimmt das 3D-Fenster auf.
+4. **Aktuelle Ansicht übernehmen** nimmt das 3D-Fenster auf (Bild) und liest
+   das Modell (Modell).
    **Rendern und übernehmen** rendert stattdessen mit der aktuellen Szene und
    übernimmt das fertige Rendering.
 5. Der Fortschritt steht in der Palette. **Abbrechen** hält eine laufende
@@ -94,6 +108,35 @@ abmelden.
    fortgesetzt oder lässt sich mit **Angefangene Übernahme verwerfen**
    verwerfen.
 6. **Blickpunkt im Browser öffnen** springt zum Ergebnis in der Webanwendung.
+
+## Modell senden
+
+- **Woher:** das Modell kommt aus dem **3D-Fenster** — genau das, was es
+  zeigt: Ebenen, 3D-Ausschnitt und Ansichtseinstellungen wirken. Für eine
+  gespeicherte 3D-Ansicht unter **Ansicht** wählen; das Add-on öffnet sie vor
+  der Übernahme.
+- **Wie:** Meter im Projektursprung, Oberflächen mit ihrer Farbe und
+  Transparenz, ein Element je Knoten. Texturen gehen noch nicht mit.
+- **Kamera:** die Kamera der Ansicht — Perspektive, Zweifluchtpunkt und
+  Axonometrie — im Ausschnitt der Rendering-Szene. In der Webanwendung zeigt
+  **Modell im Rahmen** das Modell aus genau dieser Kamera.
+- **Zusätzliche Kameras:** mit **Zusätzliche Kameras mitsenden** und
+  **Kameras…** gehen die Kameras weiterer gespeicherter 3D-Ansichten in die
+  Modelldatei; im Blickpunkt lassen sie sich unter „Kameras im Modell“
+  übernehmen. Die Wahl gilt je Projekt. Das Add-on öffnet dafür jede gewählte
+  Ansicht kurz und öffnet danach wieder die Ansicht, von der die Aufnahme
+  stammt. Deshalb gibt es zusätzliche Kameras nur, wenn in der Palette eine
+  **gespeicherte Ansicht** gewählt ist; bei „Aktuelle Modellansicht“ bleibt
+  das Fenster unangetastet, und die Palette sagt das.
+- **Wechsel beim Warten:** wer während des Neuaufbaus eine andere Ansicht
+  öffnet, das Projekt wechselt oder Ziel und Auswahl ändert, beendet die
+  wartende Übernahme; gesendet wird dann nichts.
+- **Neuaufbau:** nach einem Ansichtswechsel baut Archicad das 3D-Modell im
+  Hintergrund neu auf. Die Palette sagt das, wartet und startet die Übernahme
+  danach von selbst; **Abbrechen** beendet das Warten.
+- **Grenzen:** vor dem Senden prüft das Add-on Größe und Dreiecke gegen den
+  Server. Ist das Modell zu groß, sagt die Palette, um wie viel — den
+  3D-Ausschnitt verkleinern und erneut übernehmen.
 
 ## Rahmengröße
 

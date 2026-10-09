@@ -178,6 +178,18 @@ struct CaptureManifest {
 	Result<JsonPtr> ToJson () const;
 	/** Eingerückter Manifesttext mit abschließendem Zeilenvorschub. */
 	Result<std::string> Serialize () const;
+
+	/**
+	 * Liest ein Manifest, das dieser Kern geschrieben hat, wieder ein — für die
+	 * Wiederaufnahme eines angefangenen Vorgangs (RTX-A-012). Fortsetzen heißt
+	 * **dieselben Bytes** senden; wer das Manifest neu zusammenstellte, müsste
+	 * Bild, Modell und Kamera neu erzeugen und bekäme andere Bytes.
+	 *
+	 * `directory` wird jedem Asset als `localPath` vorangestellt. Das Ergebnis
+	 * ist geprüft (`Validate`); ein fremdes oder kaputtes Dokument ist ein
+	 * Fehler, keine Ausnahme.
+	 */
+	static Result<CaptureManifest> Parse (const std::string& text, const std::string& directory);
 };
 
 } // namespace rtx

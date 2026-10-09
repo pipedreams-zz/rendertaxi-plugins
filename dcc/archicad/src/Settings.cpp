@@ -81,6 +81,71 @@ bool SetFrameSize (const std::string& value)
 	return WriteSettings (node);
 }
 
+namespace {
+
+bool Flag (const rtx::JsonPtr& node, const char* key, bool fallback)
+{
+	const rtx::JsonPtr field = node->Get (key);
+	return field != nullptr && field->GetKind () == rtx::Json::Kind::Bool ? field->BoolOr (fallback) : fallback;
+}
+
+} // namespace
+
+WayChoice Ways ()
+{
+	const rtx::JsonPtr node = ReadSettings ();
+	WayChoice ways;
+	ways.image = Flag (node, "sendImage", true);
+	ways.model = Flag (node, "sendModel", false);
+	if (!ways.image && !ways.model) ways.image = true;
+	return ways;
+}
+
+bool SetWays (const WayChoice& ways)
+{
+	rtx::JsonPtr node = ReadSettings ();
+	node->Set ("sendImage", rtx::Json::MakeBool (ways.image));
+	node->Set ("sendModel", rtx::Json::MakeBool (ways.model));
+	return WriteSettings (node);
+}
+
+bool ExtraCameras ()
+{
+	return Flag (ReadSettings (), "extraCameras", false);
+}
+
+bool SetExtraCameras (bool value)
+{
+	rtx::JsonPtr node = ReadSettings ();
+	node->Set ("extraCameras", rtx::Json::MakeBool (value));
+	return WriteSettings (node);
+}
+
+std::vector<std::string> CameraViews (const std::string& projectKey)
+{
+	std::vector<std::string> guids;
+	const rtx::JsonPtr all = ReadSettings ()->Get ("cameraViews");
+	const rtx::JsonPtr list = all != nullptr ? all->Get (projectKey) : nullptr;
+	if (list == nullptr || list->GetKind () != rtx::Json::Kind::Array) return guids;
+	for (const rtx::JsonPtr& item : list->Items ())
+		if (item->GetKind () == rtx::Json::Kind::String && !item->StringOr ("").empty ())
+			guids.push_back (item->StringOr (""));
+	return guids;
+}
+
+bool SetCameraViews (const std::string& projectKey, const std::vector<std::string>& guids)
+{
+	if (projectKey.empty ()) return false;
+	rtx::JsonPtr node = ReadSettings ();
+	rtx::JsonPtr all = node->Get ("cameraViews");
+	if (all == nullptr || all->GetKind () != rtx::Json::Kind::Object) all = rtx::Json::MakeObject ();
+	rtx::JsonPtr list = rtx::Json::MakeArray ();
+	for (const std::string& guid : guids) list->Append (rtx::Json::MakeString (guid));
+	all->Set (projectKey, list);
+	node->Set ("cameraViews", all);
+	return WriteSettings (node);
+}
+
 std::string LogPath ()
 {
 	const std::string directory = rtx::LogDirectory ();

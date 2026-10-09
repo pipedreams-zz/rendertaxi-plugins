@@ -24,6 +24,7 @@
 #include "rtx/Glb.hpp"
 #include "rtx/Ids.hpp"
 #include "rtx/Json.hpp"
+#include "rtx/ModelCapture.hpp"
 #include "rtx/Numbers.hpp"
 #include "rtx/PluginApi.hpp"
 #include "rtx/Platform.hpp"
@@ -1015,4 +1016,174 @@ RTX_TEST (BegrenzteZahlenAusFremdemText)
 	const DesiredOutput exact = ParseDesiredOutput (Json::Parse (R"({"kind":"exact","width":1920,"height":1080})"));
 	RTX_CHECK (exact.known);
 	RTX_CHECK_EQ (exact.aspectWidth, 16);
+}
+
+// --- Teil 2: Wiederaufnahme, Zusammenstellen, Kameraauswahl, Neuaufbau -----------------------
+
+RTX_TEST (GespeichertesManifestLiestSichBytegleichZurueck)
+{
+	// Fortsetzen heißt dieselben Bytes senden: Parse und Serialize ergeben genau den Text von vorher.
+	for (const bool withImage : {false, true}) {
+		const CaptureManifest manifest = ModelManifest ("1.6.0", withImage);
+		const std::string text = manifest.Serialize ().Value ();
+		const Result<CaptureManifest> parsed = CaptureManifest::Parse (text, "/arbeit/vorgang");
+		RTX_CHECK (parsed.IsOk ());
+		if (!parsed) continue;
+		RTX_CHECK_EQ (parsed.Value ().Serialize ().Value (), text);
+		RTX_CHECK_EQ (parsed.Value ().assets.back ().localPath, std::string ("/arbeit/vorgang/model/scene.glb"));
+	}
+	// Ein Bildweg-Manifest von 1.1 (Fassung 1.0.0) ebenso.
+	CaptureManifest old = BaseManifest ("1.0.0");
+	old.assets.push_back (ImageAsset ());
+	const std::string oldText = old.Serialize ().Value ();
+	RTX_CHECK_EQ (CaptureManifest::Parse (oldText, "").Value ().Serialize ().Value (), oldText);
+	// Kaputt oder fremd: ein Fehler, keine Ausnahme.
+	RTX_CHECK (!CaptureManifest::Parse ("{", "x"));
+	RTX_CHECK (!CaptureManifest::Parse (R"({"contract":"anders"})", "x"));
+	RTX_CHECK (!CaptureManifest::Parse ("[]", "x"));
+}
+
+RTX_TEST (ModellWirdNachDemHandshakeZusammengestellt)
+{
+	const std::string directory = TransferStore::DefaultWorkDirectory () + "/test-model-" + RandomHex (6);
+	EnsureDirectory (directory);
+	ModelInput input;
+	input.scene = TestScene ();
+	input.current = {"RTX Zweifluchtpunkt", "current", Perspective (24, -12, 1.6, 8, 4, 6, 60, 0, true)};
+	input.extra.push_back ({"RTX Perspektive", "view:A", Perspective (5, -15, 1.6, 5, 2, 1.5, 60, 0, false)});
+	input.extra.push_back ({"RTX Perspektive", "view:B", Perspective (5, -15, 1.6, 5, 2, 1.5, 60, 10, false)});
+	ArchicadProjection broken = Perspective (1, 1, 1, 1, 1, 1, 60, 0, false);
+	input.extra.push_back ({"Kaputt", "view:C", broken});
+	input.width = 1024;
+	input.height = 768;
+
+	const Result<ModelOutput> out = AssembleModel (input, directory, 6, 209715200);
+	RTX_CHECK (out.IsOk ());
+	if (!out) return;
+	RTX_CHECK_EQ (out.Value ().cameras, 3);
+	RTX_CHECK (out.Value ().hasCamera);
+	RTX_CHECK_EQ (out.Value ().camera.resolutionWidth, 1024);
+	RTX_CHECK_EQ (out.Value ().asset.path, std::string (kModelPath));
+	RTX_CHECK_EQ (FileSize (out.Value ().asset.localPath), static_cast<long long> (out.Value ().asset.byteSize));
+	// Die ausgelassene Kamera steht als Satz da, gleichnamige sind unterscheidbar.
+	RTX_CHECK_EQ (out.Value ().notes.size (), std::size_t (1));
+	std::string bytes;
+	ReadTextFile (out.Value ().asset.localPath, bytes);
+	const JsonPtr json = GlbJson (std::vector<std::uint8_t> (bytes.begin (), bytes.end ()));
+	const auto& nodes = json->Get ("nodes")->Items ();
+	RTX_CHECK_EQ (nodes[3]->Get ("name")->StringOr (""), std::string ("RTX Zweifluchtpunkt"));
+	RTX_CHECK_EQ (nodes[5]->Get ("name")->StringOr (""), std::string ("RTX Perspektive #2"));
+
+	// Unter 1.4 entfällt der Kamerablock mit Shift; die Datei trägt die Kamera weiter.
+	const Result<ModelOutput> older = AssembleModel (input, directory, 3, 209715200);
+	RTX_CHECK (older.IsOk ());
+	RTX_CHECK (!older.Value ().hasCamera);
+	// Ohne Geometrie nie ein Modell.
+	ModelInput empty = input;
+	empty.scene = GlbScene {};
+	RTX_CHECK_EQ (AssembleModel (empty, directory, 6, 0).GetError ().code, std::string (kModelEmpty));
+	// Die Grenze des Servers greift vor dem Senden.
+	RTX_CHECK_EQ (AssembleModel (input, directory, 6, 100).GetError ().code, std::string (errc::LimitExceeded));
+	RemoveDirectory (directory);
+
+	// Die Hülle stimmt mit der Testszene überein.
+	const SceneBox box = SceneBoxOf (TestScene ());
+	RTX_CHECK (Near (box.min[0], -5, 1e-12) && Near (box.min[1], 0, 1e-12) && Near (box.max[1], 21, 1e-12));
+	RTX_CHECK (Near (box.max[2], 6, 1e-12));
+}
+
+RTX_TEST (SelbstauskunftFolgtDerFassung)
+{
+	RTX_CHECK (ArchicadCapabilities (0).empty ());
+	RTX_CHECK_EQ (ArchicadCapabilities (5).size (), std::size_t (3));
+	RTX_CHECK_EQ (ArchicadCapabilities (7).back ().first, std::string ("modelOnlyCapture"));
+}
+
+RTX_TEST (KameraauswahlVerliertGeloeschteAnsichtStill)
+{
+	std::vector<SavedView> views = {{"G1", "Süd", {"Außen"}, false},
+									{"G2", "Nord", {"Außen"}, false},
+									{"G3", "Halle", {"Innen"}, false}};
+	// Gemerkt: G2 und eine gelöschte Ansicht G9. Ausgeschlossen: G1, die übertragene Ansicht.
+	const std::vector<CameraPick> picks = BuildCameraPicks (views, {"G2", "G9"}, "G1");
+	RTX_CHECK_EQ (picks.size (), std::size_t (2));
+	RTX_CHECK_EQ (picks[0].guid, std::string ("G2"));
+	RTX_CHECK (picks[0].checked);
+	RTX_CHECK (!picks[1].checked);
+	const std::vector<std::string> checked = CheckedGuids (picks);
+	RTX_CHECK_EQ (checked.size (), std::size_t (1));
+	RTX_CHECK_EQ (checked.front (), std::string ("G2"));
+	RTX_CHECK_EQ (CameraPickLine (picks[0]).substr (0, 4), std::string ("\xE2\x98\x91 "));
+	// Ohne Ansichten keine Zeilen, und nichts verhindert das Laden.
+	RTX_CHECK (BuildCameraPicks ({}, {"G2"}).empty ());
+}
+
+RTX_TEST (NeuaufbauStartetNurDieAngeforderteUebernahme)
+{
+	// F-01 an PR #318: während des Wartens auf Ansicht A öffnet der Nutzer B.
+	ModelWaitIdentity a;
+	a.projectKey = "archicad:local:abc";
+	a.sourceKey = "archicad:window:3d";
+	a.viewGuid = "GUID-A";
+	a.openedViewGuid = "GUID-A";
+	a.targetKey = "proj-1|update|vp-7";
+	a.image = true;
+	a.model = true;
+
+	using Clock = ModelRebuildWait::Clock;
+	ModelRebuildWait wait;
+	const Clock::time_point t0 = Clock::now ();
+	RTX_CHECK (wait.Changed (a).empty ());   // ohne Warten nichts zu vergleichen
+	wait.Start (t0, a);
+	// Ohne Wechsel startet die Übernahme weiter von selbst.
+	RTX_CHECK (wait.Changed (a).empty ());
+
+	ModelWaitIdentity b = a;
+	b.openedViewGuid = "GUID-B";   // Doppelklick in der Mappe
+	RTX_CHECK (wait.Changed (b) == "Ansicht gewechselt");
+	b.viewGuid = "GUID-B";         // die Palette folgt der Wahl
+	RTX_CHECK (wait.Changed (b) == "Ansicht gewechselt");
+
+	ModelWaitIdentity rendering = a;
+	rendering.sourceKey = "archicad:window:rendering";
+	RTX_CHECK (wait.Changed (rendering) == "Ansicht gewechselt");
+
+	ModelWaitIdentity other = b;
+	other.projectKey = "archicad:local:def";   // Projekt gewechselt geht vor
+	RTX_CHECK (wait.Changed (other) == "Projekt gewechselt");
+
+	ModelWaitIdentity target = a;
+	target.targetKey = "proj-1|create|";
+	RTX_CHECK (wait.Changed (target) == "Ziel geändert");
+
+	ModelWaitIdentity ways = a;
+	ways.image = false;
+	RTX_CHECK (wait.Changed (ways) == "Auswahl Bild/Modell geändert");
+
+	const std::string text = ModelWaitAbandonedText ("Ansicht gewechselt");
+	RTX_CHECK (text.find ("Ansicht gewechselt") != std::string::npos);
+	RTX_CHECK (text.find ("Nichts wurde gesendet") != std::string::npos);
+
+	wait.Stop ();
+	RTX_CHECK (wait.Changed (b).empty ());
+}
+
+RTX_TEST (NeuaufbauWirdAbgewartetUndGibtNachDerFristAuf)
+{
+	using Clock = ModelRebuildWait::Clock;
+	ModelRebuildWait wait (std::chrono::seconds (10), std::chrono::milliseconds (2000));
+	const Clock::time_point t0 = Clock::now ();
+	RTX_CHECK (!wait.Due (t0));
+	wait.Start (t0);
+	RTX_CHECK (wait.Active ());
+	RTX_CHECK (!wait.Due (t0 + std::chrono::milliseconds (1999)));
+	RTX_CHECK (wait.Due (t0 + std::chrono::milliseconds (2000)));
+	RTX_CHECK (!wait.Due (t0 + std::chrono::milliseconds (2500)));
+	RTX_CHECK (wait.Due (t0 + std::chrono::milliseconds (4100)));
+	RTX_CHECK (!wait.Expired (t0 + std::chrono::seconds (9)));
+	RTX_CHECK (wait.Expired (t0 + std::chrono::seconds (10)));
+	RTX_CHECK (wait.Text (t0 + std::chrono::seconds (7)).find ("(7 s)") != std::string::npos);
+	wait.Stop ();
+	RTX_CHECK (!wait.Due (t0 + std::chrono::seconds (20)));
+	RTX_CHECK (!wait.Expired (t0 + std::chrono::seconds (20)));
 }
