@@ -8,9 +8,16 @@ und kommt mit dem Layout zurück (``RestoreLayout``).
 Älter als Cinema 4D ``host.HOST_MAJOR``: das Plugin lädt trotzdem, meldet im
 Protokoll, dass die Fassung nicht passt, und der Befehl zeigt dieselbe Meldung
 (``c4d.gui.MessageDialog``) statt des Fensters — kein Fehler beim Laden.
+
+Symbol (RTX-P-019, #332): das rdtx.ai-Zeichen aus ``res/``, von
+``integrations/_shared/icons/render.py`` erzeugt — Papier auf dunkler, Tinte auf
+heller Oberfläche, gewählt beim Laden nach ``COLOR_BG``. Fehlt die Datei oder
+scheitert das Lesen, meldet sich der Befehl ohne Symbol (Cinema-4D-Standard).
 """
 
 from __future__ import annotations
+
+import os
 
 import c4d
 
@@ -19,6 +26,31 @@ from .rendertaxi_client.log import log, log_exception
 
 TITLE = "rendertaxi.ai"
 HELP = "Ansicht oder Rendering an rendertaxi.ai übergeben"
+RES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "res")
+ICONS = {"dark": "rdtxai-dark.png", "light": "rdtxai-light.png"}
+
+
+def surface() -> str:
+    """``dark`` oder ``light`` nach der Hintergrundfarbe der Oberfläche; im Zweifel dunkel (Standard von Cinema 4D)."""
+    try:
+        color = c4d.gui.GetGuiWorldColor(c4d.COLOR_BG)
+        return "light" if 0.2126 * color.x + 0.7152 * color.y + 0.0722 * color.z > 0.5 else "dark"
+    except Exception:
+        return "dark"
+
+
+def icon():
+    """Das Zeichen als ``BaseBitmap`` — oder ``None``, dann zeigt Cinema 4D sein Standardsymbol (Regel 3)."""
+    path = os.path.join(RES, ICONS[surface()])
+    try:
+        bitmap = c4d.bitmaps.BaseBitmap()
+        result, _movie = bitmap.InitWith(path)
+        if result == c4d.IMAGERESULT_OK:
+            return bitmap
+        log(f"Symbol nicht lesbar (Fehlercode {result}), Befehl ohne Symbol.")  # nie der Pfad: Nutzername
+    except Exception as error:
+        log_exception("Symbol", error)
+    return None
 
 
 class UnsupportedCommand(c4d.plugins.CommandData):
@@ -64,10 +96,10 @@ def register() -> bool:
     global COMMAND
     if not host.supported():
         log(host.unsupported_text())
-        return bool(c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=None,
+        return bool(c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=icon(),
                                                        help=HELP, dat=UnsupportedCommand()))
     COMMAND = RendertaxiCommand()
-    ok = c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=None, help=HELP, dat=COMMAND)
+    ok = c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=icon(), help=HELP, dat=COMMAND)
     if not ok:
         log(f"Registrierung abgelehnt (Plugin-ID {host.PLUGIN_ID} schon vergeben?).")
     return bool(ok)
