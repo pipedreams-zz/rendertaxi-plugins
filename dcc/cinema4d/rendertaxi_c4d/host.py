@@ -26,7 +26,7 @@ from . import rendertaxi_client as client
 
 # Registrierte Plugin-ID (vom Nutzer am 01.10.2026 genannt; die Entwicklungs-ID 1000001 entfällt).
 PLUGIN_ID = 1070762
-PLUGIN_VERSION = "0.6.0"
+PLUGIN_VERSION = "0.6.1"
 HOST_MAJOR = 2026
 
 KEY = "cinema-4d"

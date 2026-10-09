@@ -644,7 +644,7 @@ class Controller:
     def chosen_ways(self) -> ways.Plan | None:
         """Was gesendet wird (``ways.plan``) — ``None``, wenn weder Bild noch Modell gewählt ist."""
         try:
-            return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+            return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake, self.selected_roles())
         except ValueError:
             return None
 
@@ -912,7 +912,7 @@ class Controller:
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
-        chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+        chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake, self.selected_roles())
         size = self.capture_size()
         contract_version = mf.image_contract_version(handshake)
         if chosen.model:
@@ -1021,7 +1021,7 @@ class Controller:
             self._follow_camera_document()
             if transfers.pending(key):
                 raise ValueError("Hier läuft schon eine Übernahme. Fortsetzen oder verwerfen.")
-            chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+            chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake, self.selected_roles())
             directory = transfers.capture_dir(mf.uuid_v7())
             os.makedirs(directory, mode=0o700, exist_ok=True)
             self.state.progress = (f"{ways.steps(chosen)[0]} …", 0)

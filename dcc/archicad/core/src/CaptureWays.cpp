@@ -63,9 +63,10 @@ std::string PlanLabel (const CapturePlan& plan)
 
 std::string PlanSummary (const CapturePlan& plan)
 {
-	if (plan.ModelOnly ()) return "Gesendet wird: nur Modell und Kamera — ohne Rendern.";
+	// Der Bildweg des Add-ons sendet ein Bild (Ansicht oder Rendering), keine Datenpässe.
+	if (plan.ModelOnly ()) return "Gesendet werden: Modell und Kameras — kein Bild, ohne Rendern.";
 	if (plan.model) return "Gesendet werden: Bild und Modell.";
-	return "Gesendet wird: nur Bild.";
+	return "Gesendet wird: nur Bild — keine Pässe, kein Modell.";
 }
 
 std::vector<std::string> PlanSteps (const CapturePlan& plan)

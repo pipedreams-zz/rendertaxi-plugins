@@ -21,7 +21,7 @@
     },
     "plugin": {
       "identifier": "ai.rendertaxi.plugin.blender",
-      "version": "0.7.2"
+      "version": "0.7.3"
     },
     "machine": {
       "os": "linux",

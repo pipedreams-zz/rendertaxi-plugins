@@ -9,7 +9,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.2.0-2026.10.08.zip`) von der
+`rendertaxi-archicad28-1.2.1-2026.10.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
@@ -86,8 +86,8 @@ Bild und Modell sind zwei Wege; sie laufen einzeln oder zusammen. Im Bereich
   Modelldatei (glTF) mit der Kamera der Ansicht. **Nur Modell** (Bild aus,
   Modell an) rendert nicht und nimmt kein Bild auf.
 
-Was gesendet wird, steht als erste Zeile darunter, etwa „Gesendet wird: nur
-Modell und Kamera — ohne Rendern.“ Die Wahl bleibt gemerkt. Ein Update nur mit
+Was gesendet wird, steht als erste Zeile darunter, etwa „Gesendet werden:
+Modell und Kameras — kein Bild, ohne Rendern.“ Die Wahl bleibt gemerkt. Ein Update nur mit
 Modell lässt das Bild des Blickpunkts stehen, eines nur mit Bild das Modell.
 
 1. Im Bereich **Projekt und Blickpunkt** das Projekt wählen.

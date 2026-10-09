@@ -52,24 +52,27 @@ class Plan:
     image: bool
     model: bool
     hint: str | None = None
+    # Gewählte Datenpässe (Vertragsrollen, Reihenfolge der Wahl); leer = keine. Nur mit Bild von Belang.
+    passes: tuple[str, ...] = ()
 
     @property
     def model_only(self) -> bool:
         return self.model and not self.image
 
 
-def plan(send_image: bool, send_model: bool, handshake: dict | None) -> Plan:
+def plan(send_image: bool, send_model: bool, handshake: dict | None, passes=()) -> Plan:
     """Die Wahl im Plugin gegen das, was der Server annimmt — ``ValueError`` nur, wenn nichts gewählt ist.
 
     ``handshake`` ``None`` heißt „noch nicht verbunden": dann gilt die Wahl, wie sie ist. Ob der Server ein
     Modell überhaupt annimmt (ab 1.2.0), prüft der Host wie bisher an seiner Modellfrage; hier geht es nur
-    um die Aufnahme **ohne** Bild.
+    um die Aufnahme **ohne** Bild. ``passes`` sind die gewählten Datenpässe; ohne Bild gibt es keine.
     """
+    passes = tuple(passes) if send_image else ()
     if not send_image and not send_model:
         raise ValueError(NOTHING_CHOSEN)
     if send_model and not send_image and handshake is not None and not mf.model_only_allowed(handshake):
-        return Plan(image=True, model=True, hint=MODEL_ONLY_FALLBACK)
-    return Plan(image=bool(send_image), model=bool(send_model))
+        return Plan(image=True, model=True, hint=MODEL_ONLY_FALLBACK, passes=tuple(passes))
+    return Plan(image=bool(send_image), model=bool(send_model), passes=passes)
 
 
 def label(chosen: Plan) -> str:
@@ -79,13 +82,25 @@ def label(chosen: Plan) -> str:
     return "Bild und Modell" if chosen.model else "Bild"
 
 
+def _passes_text(chosen: Plan) -> str:
+    """„2 Pässe (Tiefe, Normalen)" — leer ohne Pässe."""
+    if not chosen.passes:
+        return ""
+    count = len(chosen.passes)
+    names = ", ".join(role_label(role) for role in chosen.passes)
+    return f"{count} {'Pass' if count == 1 else 'Pässe'} ({names})"
+
+
 def summary(chosen: Plan) -> str:
-    """Was gesendet wird, in einem Satz — der Bereich „Übernehmen" zeigt ihn über dem Knopf."""
+    """Was gesendet wird — und was nicht — in einem Satz; der Bereich „Übernehmen" zeigt ihn über dem Knopf."""
     if chosen.model_only:
-        return "Gesendet wird: nur Modell und Kamera — ohne Rendern."
+        return "Gesendet werden: Modell und Kameras — kein Bild, ohne Rendern."
+    extra = _passes_text(chosen)
     if chosen.model:
-        return "Gesendet werden: Bild und Modell."
-    return "Gesendet wird: nur Bild."
+        return f"Gesendet werden: Bild{', ' + extra if extra else ''} und Modell."
+    if extra:
+        return f"Gesendet werden: Bild und {extra} — kein Modell."
+    return "Gesendet wird: nur Bild — keine Pässe, kein Modell."
 
 
 def steps(chosen: Plan) -> list[str]:
@@ -93,6 +108,8 @@ def steps(chosen: Plan) -> list[str]:
     labels = []
     if chosen.image:
         labels.append("Bild aufnehmen")
+        if chosen.passes:
+            labels.append("Pässe rendern")
     if chosen.model:
         labels += ["Modell exportieren", "Kamera lesen"]
     if chosen.image:

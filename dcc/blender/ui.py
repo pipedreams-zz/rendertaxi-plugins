@@ -779,7 +779,7 @@ def capture_size(context, props: RTX_Props) -> tuple[int, int] | None:
 
 def chosen_ways(props: RTX_Props, handshake: dict | None) -> ways.Plan:
     """Was gesendet wird — die eine Stelle für Panel und Operator (``ways.plan``); ``ValueError`` ohne Wahl."""
-    return ways.plan(props.send_image, props.send_model, handshake)
+    return ways.plan(props.send_image, props.send_model, handshake, selected_roles(props))
 
 
 def camera_kind(props: RTX_Props, chosen: ways.Plan) -> str:

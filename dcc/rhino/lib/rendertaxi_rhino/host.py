@@ -23,7 +23,7 @@ import os
 from . import rendertaxi_client as client
 
 PLUGIN_GUID = "b47606d7-0da9-4f5b-86c4-43f5b32f1865"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 HOST_MAJOR = 8
 
 KEY = "rhino"

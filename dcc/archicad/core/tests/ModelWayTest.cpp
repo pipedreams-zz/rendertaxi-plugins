@@ -189,7 +189,7 @@ CaptureManifest BaseManifest (const std::string& version)
 	manifest.source.hostVersion = "28.1";
 	manifest.source.hostBuild = "7006";
 	manifest.source.pluginIdentifier = "ai.rendertaxi.plugin.archicad";
-	manifest.source.pluginVersion = "1.2.0";
+	manifest.source.pluginVersion = "1.2.1";
 	manifest.sourceProjectKey = "archicad:project:test";
 	manifest.sourceViewKey = "archicad:view:3d";
 	manifest.viewDisplayName = "RTX Perspektive";
@@ -808,7 +808,10 @@ RTX_TEST (WegeFallenGegenAeltereServerZurueckStattAbzubrechen)
 	RTX_CHECK (modelOnly.ModelOnly ());
 	RTX_CHECK (modelOnly.hint.empty ());
 	RTX_CHECK_EQ (PlanContractVersion (modelOnly, 7), std::string ("1.6.0"));
-	RTX_CHECK_EQ (PlanSummary (modelOnly), std::string ("Gesendet wird: nur Modell und Kamera — ohne Rendern."));
+	RTX_CHECK_EQ (PlanSummary (modelOnly), std::string ("Gesendet werden: Modell und Kameras — kein Bild, ohne Rendern."));
+	RTX_CHECK_EQ (PlanSummary (PlanCapture (true, false, 7).Value ()),
+				  std::string ("Gesendet wird: nur Bild — keine Pässe, kein Modell."));
+	RTX_CHECK_EQ (PlanSummary (PlanCapture (true, true, 7).Value ()), std::string ("Gesendet werden: Bild und Modell."));
 
 	// Regel 3: gemerktes „nur Modell" gegen 1.5 → Bild und Modell, mit Hinweis.
 	const CapturePlan fallback = PlanCapture (false, true, 5).Value ();

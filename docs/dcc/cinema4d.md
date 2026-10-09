@@ -10,7 +10,7 @@ Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: Cinema 4D **2026** (macOS oder Windows); ältere Fassungen
 werden nicht unterstützt — das Plugin lädt dort, zeigt aber nur einen Hinweis.
 Die Zip `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (etwa
-`rendertaxi-cinema4d2026-0.2.0-2026.09.30.zip`) von der
+`rendertaxi-cinema4d2026-0.6.1-2026.10.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 Das Plugin ist Python — kein Installationsprogramm, kein Build.

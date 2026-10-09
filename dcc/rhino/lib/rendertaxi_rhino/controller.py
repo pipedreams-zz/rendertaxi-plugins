@@ -649,7 +649,7 @@ class Controller:
 
     def chosen(self) -> ways.Plan:
         """Was gesendet wird — ``ValueError`` (``ways.NOTHING_CHOSEN``), wenn nichts gewählt ist."""
-        return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake)
+        return ways.plan(self.form.send_image, self.form.send_model, self.state.handshake, self.selected_roles())
 
     # -- Modell --------------------------------------------------------------
 
