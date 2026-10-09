@@ -1,0 +1,72 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.2.0",
+  "captureId": "01993f80-4b21-7d30-a4e2-6c1f0b9d3e12",
+  "createdAt": "2026-09-27T10:15:00.000Z",
+  "source": {
+    "host": {
+      "key": "rhino",
+      "version": "8.35"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.rhino",
+      "version": "0.2.0"
+    },
+    "machine": {
+      "os": "linux",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "scene:d3b5f8a1-2c4e-4f69-8b7d-8e1f3a5c9b24"
+  },
+  "view": {
+    "sourceViewKey": "view:top",
+    "displayName": "Draufsicht"
+  },
+  "intent": {
+    "presetKey": "architecture.plan"
+  },
+  "camera": {
+    "space": "export",
+    "projection": "orthographic",
+    "position": [0, 80, 0],
+    "direction": [0, -1, 0],
+    "up": [0, 0, -1],
+    "extent": {
+      "halfWidth": 40,
+      "halfHeight": 22.5
+    },
+    "clip": {
+      "near": 0.5,
+      "far": null
+    }
+  },
+  "geometry": null,
+  "contentHash": "9c511fb2d09538096b50b3098dda337de9a992e4bb8d6c56031b4e8048308cf6",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 75,
+      "sha256": "5e261af77b5c4781ca6a78e3a2c3c4e0c670bb10727e1927f4430e1c7003d28c",
+      "image": {
+        "width": 1600,
+        "height": 900,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    },
+    {
+      "role": "model",
+      "path": "model.glb",
+      "status": "unavailable",
+      "note": "Dieser Capture überträgt kein Modell."
+    }
+  ]
+}

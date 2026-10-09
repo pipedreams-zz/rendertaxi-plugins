@@ -1,0 +1,87 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.1.0",
+  "captureId": "01998a3c-5e20-7d13-8f46-2c9b7e0d4a15",
+  "createdAt": "2026-09-27T09:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "cinema-4d",
+      "version": "2026.3.0",
+      "capabilities": {
+        "viewportCapture": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png", "image/x-exr"]
+          }
+        },
+        "beautyRender": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png", "image/tiff", "image/x-exr"]
+          }
+        },
+        "depthPass": {
+          "state": "requires-user-action"
+        },
+        "normalPass": {
+          "state": "requires-user-action"
+        },
+        "albedoPass": {
+          "state": "requires-user-action"
+        },
+        "maskPass": {
+          "state": "requires-user-action"
+        },
+        "cameraExport": {
+          "state": "available"
+        },
+        "geometryExport": {
+          "state": "available"
+        },
+        "resultReimport": {
+          "state": "available"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.cinema-4d",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "windows",
+      "osVersion": "10.0.26100",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": null,
+    "displayName": "Showroom Kantstraße"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "Kamera Eingang"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "bd8d852d46c8a9dacfa7ae4c9b658b4aabf0a540104575aa3ea9a5888661643f",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "7c610cb96dc149769300649358d83b652d149aca20fb585ac801647d6d12f5e1",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    }
+  ]
+}

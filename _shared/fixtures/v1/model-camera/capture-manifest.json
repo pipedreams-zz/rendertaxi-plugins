@@ -1,0 +1,108 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.2.0",
+  "captureId": "01993f80-4b21-7d30-a4e2-6c1f0b9d3e11",
+  "createdAt": "2026-09-27T10:15:00.000Z",
+  "source": {
+    "host": {
+      "key": "blender",
+      "version": "5.2.0"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.blender",
+      "version": "0.2.0"
+    },
+    "machine": {
+      "os": "linux",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "scene:c2a4e7f0-1b3d-4e58-9a6c-7d0e2f4b8a13"
+  },
+  "view": {
+    "sourceViewKey": "camera:main",
+    "displayName": "Kamera Gartenseite"
+  },
+  "intent": {},
+  "camera": {
+    "space": "export",
+    "projection": "perspective",
+    "position": [4.5, 1.65, 12.25],
+    "direction": [0, 0, -1],
+    "up": [0, 1, 0],
+    "fieldOfView": {
+      "axis": "horizontal",
+      "angle": 1.047197551
+    },
+    "clip": {
+      "near": 0.1,
+      "far": 500
+    }
+  },
+  "geometry": {
+    "assetPath": "model/scene.glb",
+    "units": {
+      "sourceUnitScaleToMeter": 1
+    },
+    "axes": {
+      "handedness": "right",
+      "upAxis": "z"
+    },
+    "origin": [120.5, -48.25, 0],
+    "georeference": {
+      "epsg": 25832,
+      "origin": {
+        "easting": 356000.125,
+        "northing": 5645000.5,
+        "height": 52.3
+      },
+      "axisConvention": {
+        "handedness": "right",
+        "upAxis": "y"
+      },
+      "unit": "meter",
+      "transformChain": [
+        {
+          "order": 1,
+          "sourceFrame": "model",
+          "targetFrame": "project",
+          "kind": "rotation",
+          "parameters": {
+            "axis": "y",
+            "angleRadians": 0.261799388
+          },
+          "provenance": "plugin-reported"
+        }
+      ]
+    }
+  },
+  "contentHash": "9ceee5ebfb4a4804f1f1b3929d23490477dcb8b5ba0e2783570c9687ac6ae3a8",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 75,
+      "sha256": "e44933e501d59d911c2a58fcdc5d58e06938ade21e17861afe15bf6a4d38775f",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "model",
+      "path": "model/scene.glb",
+      "status": "present",
+      "mediaType": "model/gltf-binary",
+      "byteSize": 78,
+      "sha256": "975de2bfdf140e0602f9394ddcb578f80c2e0fb9fcf8b5f4bb234b7381e32fe2"
+    }
+  ]
+}

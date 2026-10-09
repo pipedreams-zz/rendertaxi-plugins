@@ -1,0 +1,85 @@
+{
+  "description": "Namen der Ursprungsdatei (Capture-Manifest 1.5.0, RTX-P-013): raw ist, was der Host liefert; expected, was der Python-Client daraus in source.fileName schreibt — leer heißt: das Feld entfällt. integrations/_shared/python/tests/test_client.py prüft den Client, tests/contract/capture-manifest-validation.test.ts den Server: jeder erwartete Name wird angenommen, jeder verworfene Name ohne Pfad abgelehnt.",
+  "cases": [
+    {
+      "raw": "SWH-Schule-Weberberg.c4d",
+      "expected": "SWH-Schule-Weberberg.c4d",
+      "why": "gespeicherte Szene"
+    },
+    {
+      "raw": "Wohnhaus Süd v3.blend",
+      "expected": "Wohnhaus Süd v3.blend",
+      "why": "Leerzeichen und Umlaut"
+    },
+    {
+      "raw": "Müller.c4d",
+      "expected": "Müller.c4d",
+      "why": "macOS liefert zerlegt (NFD); das Manifest steht in NFC"
+    },
+    {
+      "raw": "...c4d",
+      "expected": "...c4d",
+      "why": "Punkte allein sind kein Pfadsegment"
+    },
+    {
+      "raw": "/Users/anna/Projekte/SWH-Schule-Weberberg.c4d",
+      "expected": "SWH-Schule-Weberberg.c4d",
+      "why": "ein Pfad wird auf den Namen gekürzt"
+    },
+    {
+      "raw": "C:\\Projekte\\Weberberg\\SWH.c4d",
+      "expected": "SWH.c4d",
+      "why": "Windowspfad: nur der Name"
+    },
+    {
+      "raw": "",
+      "expected": null,
+      "why": "leer: das Feld entfällt"
+    },
+    {
+      "raw": "   ",
+      "expected": null,
+      "why": "nur Leerraum: das Feld entfällt"
+    },
+    {
+      "raw": "Weberberg:SWH.c4d",
+      "expected": null,
+      "why": "Doppelpunkt ist ein Pfadtrenner"
+    },
+    {
+      "raw": "SWH‮d4c.exe",
+      "expected": null,
+      "why": "Richtungsumkehr"
+    },
+    {
+      "raw": "SWH\u0007.c4d",
+      "expected": null,
+      "why": "Steuerzeichen"
+    },
+    {
+      "raw": "max@studio.c4d",
+      "expected": null,
+      "why": "sähe aus wie name@host: der Server wiese das ganze Manifest ab"
+    },
+    {
+      "raw": "Server.local.c4d",
+      "expected": null,
+      "why": "Rechnername"
+    },
+    {
+      "raw": "Gröx.local.c4d",
+      "expected": null,
+      "why": "Rechnername hinter einem Nicht-ASCII-Zeichen (\\b wie in JavaScript)"
+    },
+    {
+      "raw": "api_key=1.c4d",
+      "expected": null,
+      "why": "möglicher Zugangsdatenschlüssel"
+    },
+    {
+      "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.c4d",
+      "expected": null,
+      "why": "256 Zeichen"
+    }
+  ]
+}

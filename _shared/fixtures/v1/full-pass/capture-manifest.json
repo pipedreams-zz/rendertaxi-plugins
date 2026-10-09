@@ -1,0 +1,161 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.0.0",
+  "captureId": "01993f80-15be-7d33-8a47-c20e7b9f6d03",
+  "createdAt": "2026-09-20T10:05:12.250Z",
+  "source": {
+    "host": {
+      "key": "example-host",
+      "version": "3.1"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.example",
+      "version": "0.3.1"
+    },
+    "machine": {
+      "os": "windows",
+      "osVersion": "11 24H2",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "doc:2e64d0c1-9a7b-4f35-8c02-b1d7e3a95f48",
+    "displayName": "Quartier Nord"
+  },
+  "view": {
+    "sourceViewKey": "view:courtyard-east",
+    "displayName": "Innenhof Ost"
+  },
+  "intent": {
+    "recipeId": "01993b44-0d9a-7f60-a2c8-6e15b37d9c04",
+    "promptText": ""
+  },
+  "camera": null,
+  "geometry": null,
+  "contentHash": "f3f2c1a6e4dcd4e2366edb35ca13abf0ba985ddaffac31ba0417404bdc5fe169",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 75,
+      "sha256": "38b6670613b8d1d8472fb2b6733d8735237c87ae8d25e4e848b17a6e96efd79d",
+      "image": {
+        "width": 1600,
+        "height": 900,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "beauty",
+      "path": "passes/beauty.exr",
+      "status": "present",
+      "mediaType": "image/x-exr",
+      "byteSize": 80,
+      "sha256": "a0f011128390168e5cb89e854dc68a5574fea574c28195e0296d5cbe8e452e04",
+      "image": {
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "bitDepth": 16,
+        "sampleFormat": "float",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "depth",
+      "path": "passes/depth.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 79,
+      "sha256": "177a792d4c23dcaeda648f99e71986130a0e1c3656342c2adc16c1639b803b0c",
+      "image": {
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "non-color",
+        "bitDepth": 16,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      },
+      "depth": {
+        "encoding": "normalized-inverse",
+        "near": 0.1,
+        "far": 250.5
+      }
+    },
+    {
+      "role": "normal",
+      "path": "passes/normal.exr",
+      "status": "present",
+      "mediaType": "image/x-exr",
+      "byteSize": 80,
+      "sha256": "b37427433b0b583d160842755286a8f2f4a5a7aae03641e5bc17c8e605a37208",
+      "image": {
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "non-color",
+        "bitDepth": 16,
+        "sampleFormat": "float",
+        "channels": "rgb"
+      },
+      "normal": {
+        "space": "camera"
+      }
+    },
+    {
+      "role": "albedo",
+      "path": "passes/albedo.exr",
+      "status": "planned"
+    },
+    {
+      "role": "mask",
+      "path": "passes/mask.png",
+      "status": "unavailable",
+      "note": "Dieser Host erzeugt keine Auswahlmaske."
+    },
+    {
+      "role": "object-id",
+      "path": "passes/object-id.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 83,
+      "sha256": "cf569cb04bb52d3753ef86b55db092c98d15a95d1c8070fd0f075f02da6b3eae",
+      "image": {
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "non-color",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    },
+    {
+      "role": "material-id",
+      "path": "passes/material-id.png",
+      "status": "planned"
+    },
+    {
+      "role": "ambient-occlusion",
+      "path": "passes/ambient-occlusion.png",
+      "status": "planned",
+      "image": {
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "non-color",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      }
+    },
+    {
+      "role": "cryptomatte",
+      "path": "passes/cryptomatte.exr",
+      "status": "unavailable"
+    }
+  ]
+}

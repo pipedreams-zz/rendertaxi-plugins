@@ -1,0 +1,144 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.1.0",
+  "captureId": "01998b1e-4c70-7a24-9e61-5d3f8a0c2b17",
+  "createdAt": "2026-09-27T10:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "rhino",
+      "version": "8.35.26251.13001",
+      "capabilities": {
+        "viewportCapture": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png", "image/jpeg", "image/tiff", "image/bmp"]
+          }
+        },
+        "beautyRender": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png", "image/jpeg", "image/tiff", "image/bmp", "image/x-exr"]
+          }
+        },
+        "depthPass": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "normalPass": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "albedoPass": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "objectIdPass": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "materialIdPass": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "cameraExport": {
+          "state": "available"
+        },
+        "geometryExport": {
+          "state": "available"
+        },
+        "backgroundRender": {
+          "state": "unavailable"
+        },
+        "resultReimport": {
+          "state": "available"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.rhino",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "windows",
+      "osVersion": "10.0.26100",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": null,
+    "displayName": "Pavillon Uferweg"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "Perspective"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "819e4a909728c38f970495b7e70be8636cca03bc78d075d2d1c235d22e2dc65f",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "a37052c14bf95b5f0dc77185aa407f8425772370117bee22fb126aeb4e552e38",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    },
+    {
+      "role": "depth",
+      "path": "passes/depth.exr",
+      "status": "unavailable",
+      "note": "Ansichtsaufnahme (ViewCapture): kein Tiefenbild. Die Tiefe liefert das Rendering mit Rhino Render (Kanal Distance, planar, QR-03)."
+    },
+    {
+      "role": "normal",
+      "path": "passes/normal.exr",
+      "status": "unavailable",
+      "note": "Ansichtsaufnahme (ViewCapture): kein Normalenbild. Die Normalen liefert das Rendering mit Rhino Render (Kanal Normal, QR-04)."
+    },
+    {
+      "role": "albedo",
+      "path": "passes/albedo.png",
+      "status": "unavailable",
+      "note": "Ansichtsaufnahme (ViewCapture): kein Albedo. Die Albedo liefert das Rendering mit Rhino Render (Kanal Albedo, linear, QR-02)."
+    },
+    {
+      "role": "object-id",
+      "path": "passes/object-id.png",
+      "status": "unavailable",
+      "note": "Ansichtsaufnahme (ViewCapture): keine Objekt-ID. Sie liefert das Rendering mit Rhino Render (Kanal ObjectIds, QR-05)."
+    },
+    {
+      "role": "material-id",
+      "path": "passes/material-id.png",
+      "status": "unavailable",
+      "note": "Ansichtsaufnahme (ViewCapture): keine Material-ID. Sie liefert das Rendering mit Rhino Render (Kanal MaterialIds, QR-05)."
+    },
+    {
+      "role": "mask",
+      "path": "passes/mask.png",
+      "status": "unavailable",
+      "note": "Rhino hat keinen Maskenkanal; ein Weg über die Auswahl ist ungeprüft (QR-06)."
+    }
+  ]
+}

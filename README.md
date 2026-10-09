@@ -41,7 +41,8 @@ Blender-Extension und das Cinema-4D-Plugin sind Python und werden ohne Build
 aus `dcc/blender/` und `dcc/cinema4d/` gepackt. Das Rhino-Plugin (`rdtx.ai`)
 ist ebenfalls Python; sein yak-Paket baut `rhinocode` am Mac und legt es unter
 `dcc/rhino/dist/` ab. Alle drei tragen denselben eingebetteten Python-Client
-(`rendertaxi_client/`).
+(`rendertaxi_client/`). Unter `_shared/fixtures/` liegen die gemeinsamen
+Testdaten der Plugins.
 
 ## Lizenz
 

@@ -1,0 +1,139 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.1.0",
+  "captureId": "01994c3a-6e20-7b18-a4f2-2d9e5c7b1a36",
+  "createdAt": "2026-09-27T09:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "blender",
+      "version": "5.2.2",
+      "capabilities": {
+        "viewportCapture": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": [
+              "image/png",
+              "image/jpeg",
+              "image/webp",
+              "image/tiff",
+              "image/x-exr",
+              "image/bmp"
+            ]
+          }
+        },
+        "beautyRender": {
+          "state": "available",
+          "constraints": {
+            "mediaTypes": [
+              "image/png",
+              "image/jpeg",
+              "image/webp",
+              "image/tiff",
+              "image/x-exr",
+              "image/bmp"
+            ]
+          }
+        },
+        "depthPass": {
+          "state": "requires-user-action"
+        },
+        "normalPass": {
+          "state": "requires-user-action"
+        },
+        "albedoPass": {
+          "state": "requires-user-action"
+        },
+        "objectIdPass": {
+          "state": "requires-user-action"
+        },
+        "materialIdPass": {
+          "state": "requires-user-action"
+        },
+        "cameraExport": {
+          "state": "available"
+        },
+        "geometryExport": {
+          "state": "available"
+        },
+        "backgroundRender": {
+          "state": "available"
+        },
+        "resultReimport": {
+          "state": "available"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.blender",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "linux",
+      "osVersion": "24.04",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "blender:3c9a1e57-8d24-4f0b-b6e1-94a2d7c05f18",
+    "displayName": "Wohnhaus Süd"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "Kamera Straße"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "2cce5e3f633346a5960cea2897ef33eaa195b1c7271e38915d2e3e68c9ef23e8",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "db27480bffdb034e7b8844c285ef6c7a3f1ace2db234e0f8bfe551ef1e71449b",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      },
+      "note": "Viewport Render (bpy.ops.render.opengl, view_context), EEVEE, Material Preview; View Transform Standard."
+    },
+    {
+      "role": "beauty",
+      "path": "images/beauty.exr",
+      "status": "present",
+      "mediaType": "image/x-exr",
+      "byteSize": 80,
+      "sha256": "d82216031660e02e4c2d0b56cef724819934318bc83fc92fa9feb6d16afabf21",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "linear",
+        "bitDepth": 32,
+        "sampleFormat": "float",
+        "channels": "rgba"
+      },
+      "note": "Cycles, OpenEXR in Linear Rec.709."
+    },
+    {
+      "role": "depth",
+      "path": "images/depth.exr",
+      "status": "planned",
+      "mediaType": "image/x-exr",
+      "note": "Depth-Pass vorhanden, Kodierung nicht belegt (integrations/blender/docs/open-questions.md, QB-01)."
+    },
+    {
+      "role": "normal",
+      "path": "images/normal.exr",
+      "status": "planned",
+      "mediaType": "image/x-exr",
+      "note": "Weltraum belegt, Wertebereich nicht (QB-02)."
+    }
+  ]
+}

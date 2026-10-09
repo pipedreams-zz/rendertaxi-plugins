@@ -1,0 +1,87 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.6.0",
+  "captureId": "0199b4c2-6e10-7a41-9c3d-2f8e5a7b1c04",
+  "createdAt": "2026-10-06T09:30:00.000Z",
+  "source": {
+    "host": {
+      "key": "blender",
+      "version": "5.2.2",
+      "capabilities": {
+        "cameraExport": {
+          "state": "available"
+        },
+        "geometryExport": {
+          "state": "available"
+        },
+        "modelOnlyCapture": {
+          "state": "available"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.blender",
+      "version": "0.7.1"
+    },
+    "machine": {
+      "os": "linux",
+      "architecture": "x64"
+    },
+    "fileName": "Wohnhaus Süd.blend"
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "scene:c2a4e7f0-1b3d-4e58-9a6c-7d0e2f4b8a13"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "Kamera Gartenseite"
+  },
+  "intent": {},
+  "camera": {
+    "space": "export",
+    "projection": "perspective",
+    "position": [4.5, 1.65, 12.25],
+    "direction": [0, 0, -1],
+    "up": [0, 1, 0],
+    "fieldOfView": {
+      "axis": "horizontal",
+      "angle": 0.950021513
+    },
+    "clip": {
+      "near": 0.1,
+      "far": 500
+    },
+    "lens": {
+      "focalLengthMm": 35,
+      "sensorWidthMm": 36,
+      "sensorFit": "auto"
+    },
+    "resolution": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "geometry": {
+    "assetPath": "model/scene.glb",
+    "units": {
+      "sourceUnitScaleToMeter": 1
+    },
+    "axes": {
+      "handedness": "right",
+      "upAxis": "z"
+    },
+    "origin": [0, 0, 0]
+  },
+  "contentHash": "9a35d7077bb701a1f59d0ce9ed90d545b653d4967840273ee1bce3da57c183cd",
+  "assets": [
+    {
+      "role": "model",
+      "path": "model/scene.glb",
+      "status": "present",
+      "mediaType": "model/gltf-binary",
+      "byteSize": 78,
+      "sha256": "2faff57627421424c9da653681cd220bc7b37e02efe471bf67ea9033e0feddfb"
+    }
+  ]
+}

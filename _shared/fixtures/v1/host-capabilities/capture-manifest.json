@@ -1,0 +1,78 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.1.0",
+  "captureId": "01993f6e-2a10-7c41-9d52-3b8e6f1a0c04",
+  "createdAt": "2026-09-26T08:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "archicad",
+      "version": "28.0.0",
+      "build": "4001",
+      "capabilities": {
+        "viewportCapture": {
+          "state": "available",
+          "constraints": {
+            "maxWidth": 4096,
+            "maxHeight": 4096,
+            "mediaTypes": ["image/png"]
+          }
+        },
+        "beautyRender": {
+          "state": "requires-user-action",
+          "constraints": {
+            "mediaTypes": ["image/jpeg", "image/tiff"]
+          }
+        },
+        "depthPass": {
+          "state": "available"
+        },
+        "normalPass": {
+          "state": "unavailable"
+        },
+        "bimMetadata": {
+          "state": "unknown"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.archicad",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "macos",
+      "osVersion": "15.6",
+      "architecture": "arm64"
+    }
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "archicad:5f0c2b9e-41d7-4a63-9e18-c7d2a0b16f33",
+    "displayName": "Wohnhaus Süd"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "3D / Perspektive Straße"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "9121d83b1475e73a2d4428fdaa6e9e17f23e29125a6296d7bba25283b0e7f1ad",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "f7d44fd18337c3df11f6c18a45373a56697095fc2de77e00554e8102562bf004",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    }
+  ]
+}

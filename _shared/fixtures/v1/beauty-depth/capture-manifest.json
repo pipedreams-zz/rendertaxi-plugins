@@ -1,0 +1,72 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.0.0",
+  "captureId": "01993f72-8c04-7a19-b6e0-91f4d2c7a502",
+  "createdAt": "2026-09-20T09:42:30.500Z",
+  "source": {
+    "host": {
+      "key": "blender",
+      "version": "4.2.3"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.blender",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "linux",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "scene:7c1e90aa-3f52-4b08-a6d1-0e9b85c4d217"
+  },
+  "view": {
+    "sourceViewKey": "camera:main",
+    "displayName": "Kamera Innenhof 🏠"
+  },
+  "intent": {
+    "presetKey": "architecture.daylight",
+    "promptText": "Holzfassade, weiches Abendlicht"
+  },
+  "camera": null,
+  "geometry": null,
+  "contentHash": "2e5231cefb9a184722b429dad6b42f9d40bf12761ea89c21978a3a0e9b957a45",
+  "assets": [
+    {
+      "role": "beauty",
+      "path": "passes/beauty.exr",
+      "status": "present",
+      "mediaType": "image/x-exr",
+      "byteSize": 80,
+      "sha256": "74eca8f2e84ad79a23b860011981a997bf29cf701d6286ccb525691b00f07d87",
+      "image": {
+        "width": 3000,
+        "height": 2000,
+        "colorSpace": "linear",
+        "bitDepth": 32,
+        "sampleFormat": "float",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "depth",
+      "path": "passes/depth.exr",
+      "status": "present",
+      "mediaType": "image/x-exr",
+      "byteSize": 79,
+      "sha256": "742d27f3c569c3223a1d19dd0db3a3a5b8fd42e66bb1e1863bac13e0476f3e21",
+      "image": {
+        "width": 3000,
+        "height": 2000,
+        "colorSpace": "non-color",
+        "bitDepth": 32,
+        "sampleFormat": "float",
+        "channels": "gray"
+      },
+      "depth": {
+        "encoding": "linear-metric"
+      }
+    }
+  ]
+}

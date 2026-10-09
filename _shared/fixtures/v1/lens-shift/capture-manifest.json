@@ -1,0 +1,91 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.4.0",
+  "captureId": "019992c4-7a10-7c3e-9f21-4b8d0e6a5c27",
+  "createdAt": "2026-09-30T09:30:00.000Z",
+  "source": {
+    "host": {
+      "key": "blender",
+      "version": "5.2.2"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.blender",
+      "version": "0.4.0"
+    },
+    "machine": {
+      "os": "linux",
+      "architecture": "x64"
+    }
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "scene:c2a4e7f0-1b3d-4e58-9a6c-7d0e2f4b8a13"
+  },
+  "view": {
+    "sourceViewKey": "camera:shift",
+    "displayName": "Shift-Kamera Straßenseite"
+  },
+  "intent": {},
+  "camera": {
+    "space": "export",
+    "projection": "perspective",
+    "position": [4.5, 1.65, 12.25],
+    "direction": [0, 0, -1],
+    "up": [0, 1, 0],
+    "fieldOfView": {
+      "axis": "horizontal",
+      "angle": 0.950021513
+    },
+    "clip": {
+      "near": 0.1,
+      "far": 500
+    },
+    "lens": {
+      "focalLengthMm": 35,
+      "sensorWidthMm": 36,
+      "sensorFit": "auto"
+    },
+    "shift": {
+      "x": 0.1,
+      "y": -0.05
+    }
+  },
+  "geometry": {
+    "assetPath": "model/scene.glb",
+    "units": {
+      "sourceUnitScaleToMeter": 1
+    },
+    "axes": {
+      "handedness": "right",
+      "upAxis": "z"
+    },
+    "origin": [0, 0, 0]
+  },
+  "contentHash": "b023982cf2e1dc9b66c689118426cc61f87751c653751ce014e5b4fd1fd10488",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 75,
+      "sha256": "fea92353fc278c1c7f2be1b4b510e9850a27fd870a101a3a97431bdc0f83c0b4",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "model",
+      "path": "model/scene.glb",
+      "status": "present",
+      "mediaType": "model/gltf-binary",
+      "byteSize": 78,
+      "sha256": "868ebf2314e1841c46dac2b3f4d8c13bf32a50bee36cf13fcff474845420d8db"
+    }
+  ]
+}

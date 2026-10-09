@@ -1,0 +1,53 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.0.0",
+  "captureId": "01993f6e-2a10-7c41-9d52-3b8e6f1a0c01",
+  "createdAt": "2026-09-20T09:15:00.000Z",
+  "source": {
+    "host": {
+      "key": "archicad",
+      "version": "28.0.0",
+      "build": "4001"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.archicad",
+      "version": "0.1.0"
+    },
+    "machine": {
+      "os": "macos",
+      "osVersion": "15.6",
+      "architecture": "arm64"
+    }
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "archicad:5f0c2b9e-41d7-4a63-9e18-c7d2a0b16f33",
+    "displayName": "Wohnhaus Süd"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "3D / Perspektive Straße"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "4a9742514f4bdd65022127dae9e994c8cac2dd28c2fad4fbe3ad447c5a5621f5",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "1aff08687c2b3335660fab455b96121d228791026e227f026e4696fd4536b759",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    }
+  ]
+}

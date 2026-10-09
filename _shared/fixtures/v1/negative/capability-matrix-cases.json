@@ -1,0 +1,268 @@
+{
+  "description": "Negativfälle der Host-Capability-Matrix (RTX-P-003). Jeder Fall verändert eine gültige Hostspalte und muss den genannten Befund auslösen. base ist relativ zu fixtures/v1.",
+  "cases": [
+    {
+      "name": "cell-without-evidence-level",
+      "issue": "Eine Zelle ohne Belegstufe ist ein Fehler, kein Standardwert (Festlegung 6)",
+      "base": "../../capabilities/blender.json",
+      "operations": [{ "op": "remove", "path": "/capabilities/depthPass/evidence/level" }],
+      "expect": "/capabilities/depthPass: Zelle ohne Belegstufe"
+    },
+    {
+      "name": "cell-without-evidence",
+      "issue": "Auch eine Zelle ganz ohne Nachweisblock hat keine Belegstufe",
+      "base": "../../capabilities/archicad.json",
+      "operations": [{ "op": "remove", "path": "/capabilities/viewportCapture/evidence" }],
+      "expect": "/capabilities/viewportCapture: Zelle ohne Belegstufe"
+    },
+    {
+      "name": "coordinate-cell-without-evidence-level",
+      "issue": "Die Koordinatenzelle ist eine Zelle wie jede andere",
+      "base": "../../capabilities/cinema-4d.json",
+      "operations": [{ "op": "remove", "path": "/coordinateSystem/evidence/level" }],
+      "expect": "/coordinateSystem: Zelle ohne Belegstufe"
+    },
+    {
+      "name": "cell-missing",
+      "issue": "Jede Host-Capability-Kombination hat genau eine Zelle",
+      "base": "../../capabilities/rhino.json",
+      "operations": [{ "op": "remove", "path": "/capabilities/resultReimport" }],
+      "expect": "/capabilities/resultReimport: Zelle fehlt"
+    },
+    {
+      "name": "unknown-evidence-level",
+      "issue": "Es gibt genau drei Belegstufen",
+      "base": "../../capabilities/blender.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/maskPass/evidence/level", "value": "vermutet" }
+      ],
+      "expect": "unbekannte Belegstufe"
+    },
+    {
+      "name": "proven-without-source",
+      "issue": "belegt verlangt eine Quelle",
+      "base": "../../capabilities/archicad.json",
+      "operations": [{ "op": "remove", "path": "/capabilities/cameraExport/evidence/sources" }],
+      "expect": "Pflichtfeld \"sources\" fehlt"
+    },
+    {
+      "name": "proven-with-empty-sources",
+      "issue": "belegt verlangt mindestens eine Quelle",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/cameraExport/evidence/sources", "value": [] }
+      ],
+      "expect": "weniger als minItems 1"
+    },
+    {
+      "name": "proven-without-checked-at",
+      "issue": "belegt verlangt ein Prüfdatum",
+      "base": "../../capabilities/cinema-4d.json",
+      "operations": [{ "op": "remove", "path": "/coordinateSystem/evidence/checkedAt" }],
+      "expect": "Pflichtfeld \"checkedAt\" fehlt"
+    },
+    {
+      "name": "proven-with-impossible-date",
+      "issue": "Das Prüfdatum ist ein echtes Kalenderdatum",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/bimMetadata/evidence/checkedAt",
+          "value": "2026-02-30"
+        }
+      ],
+      "expect": "kein gültiges Kalenderdatum"
+    },
+    {
+      "name": "proven-in-the-future",
+      "issue": "Ein Prüfdatum in der Zukunft ist keine Prüfung",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/bimMetadata/evidence/checkedAt",
+          "value": "2999-01-01"
+        }
+      ],
+      "expect": "Prüfdatum liegt in der Zukunft"
+    },
+    {
+      "name": "proven-with-missing-repository-source",
+      "issue": "Ein Repository-Beleg muss existieren",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/viewportCapture/evidence/sources/0/path",
+          "value": "integrations/archicad/docs/gibt-es-nicht.md"
+        }
+      ],
+      "expect": "existiert nicht"
+    },
+    {
+      "name": "source-without-target",
+      "issue": "Eine Quelle nennt entweder eine Herstellerseite oder einen Repository-Beleg",
+      "base": "../../capabilities/cinema-4d.json",
+      "operations": [{ "op": "remove", "path": "/coordinateSystem/evidence/sources/0/url" }],
+      "expect": "oneOf erfordert genau einen Treffer"
+    },
+    {
+      "name": "source-with-plain-http",
+      "issue": "Quellen werden über https zitiert",
+      "base": "../../capabilities/cinema-4d.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/coordinateSystem/evidence/sources/0/url",
+          "value": "http://developers.maxon.net/docs/"
+        }
+      ],
+      "expect": "entspricht nicht pattern"
+    },
+    {
+      "name": "proven-claims-unknown",
+      "issue": "Eine belegte Zelle nennt, was belegt ist",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/geometryExport/state", "value": "unknown" }
+      ],
+      "expect": "eine belegte Zelle nennt einen Zustand, nicht unknown"
+    },
+    {
+      "name": "open-without-question-id",
+      "issue": "offen verlangt eine Frage-ID",
+      "base": "../../capabilities/archicad.json",
+      "operations": [{ "op": "remove", "path": "/capabilities/depthPass/evidence/questionId" }],
+      "expect": "Pflichtfeld \"questionId\" fehlt"
+    },
+    {
+      "name": "open-with-unknown-question",
+      "issue": "Die Frage-ID steht in der Fragenliste",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/depthPass/evidence/questionId", "value": "Q-99" }
+      ],
+      "expect": "Q-99 steht nicht in integrations/archicad/docs/open-questions.md"
+    },
+    {
+      "name": "open-with-missing-question-document",
+      "issue": "Die Fragenliste existiert",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/depthPass/evidence/questionDocument",
+          "value": "integrations/archicad/docs/gibt-es-nicht.md"
+        }
+      ],
+      "expect": "Fragenliste integrations/archicad/docs/gibt-es-nicht.md existiert nicht"
+    },
+    {
+      "name": "open-with-source",
+      "issue": "Eine offene Frage trägt keinen Beleg",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/depthPass/evidence/checkedAt", "value": "2026-09-20" }
+      ],
+      "expect": "/capabilities/depthPass/evidence/checkedAt: an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "open-claims-available",
+      "issue": "Was offen ist, heißt unknown, nicht available",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/normalPass/state", "value": "available" }
+      ],
+      "expect": "Belegstufe offen verlangt unknown"
+    },
+    {
+      "name": "unchecked-claims-requires-user-action",
+      "issue": "Eine ungeprüfte Annahme erscheint nicht als Tatsache",
+      "base": "../../capabilities/blender.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/depthPass/evidence",
+          "value": { "level": "ungeprüft" }
+        },
+        { "op": "set", "path": "/capabilities/depthPass/state", "value": "requires-user-action" }
+      ],
+      "expect": "Belegstufe ungeprüft verlangt unknown"
+    },
+    {
+      "name": "unchecked-with-checked-at",
+      "issue": "Eine ungeprüfte Zelle trägt kein Prüfdatum",
+      "base": "../../capabilities/rhino.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/cameraExport",
+          "value": { "state": "unknown", "evidence": { "level": "ungeprüft" } }
+        },
+        {
+          "op": "set",
+          "path": "/capabilities/cameraExport/evidence/checkedAt",
+          "value": "2026-09-26"
+        }
+      ],
+      "expect": "/capabilities/cameraExport/evidence/checkedAt: an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "unchecked-coordinate-with-value",
+      "issue": "Eine ungeprüfte Koordinatenzelle nennt keine Achsen",
+      "base": "../../capabilities/blender.json",
+      "operations": [
+        { "op": "set", "path": "/coordinateSystem/evidence", "value": { "level": "ungeprüft" } },
+        {
+          "op": "set",
+          "path": "/coordinateSystem/value",
+          "value": { "upAxis": "z", "handedness": "right" }
+        }
+      ],
+      "expect": "Belegstufe ungeprüft verlangt unknown"
+    },
+    {
+      "name": "host-key-differs-from-file-name",
+      "issue": "Dateiname und host.key stimmen überein",
+      "base": "../../capabilities/rhino.json",
+      "operations": [{ "op": "set", "path": "/host/key", "value": "rhinoceros" }],
+      "expect": "passt nicht zum Dateinamen rhino.json"
+    },
+    {
+      "name": "unknown-capability",
+      "issue": "Die Matrix kennt genau die dreizehn Capabilities",
+      "base": "../../capabilities/blender.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/hologramPass",
+          "value": { "state": "unknown", "evidence": { "level": "ungeprüft" } }
+        }
+      ],
+      "expect": "/capabilities/hologramPass: unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "unknown-state",
+      "issue": "Es gibt genau vier Zustände",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        { "op": "set", "path": "/capabilities/viewportCapture/state", "value": "maybe" }
+      ],
+      "expect": "Wert \"maybe\" nicht in enum"
+    },
+    {
+      "name": "constraint-media-type-outside-list",
+      "issue": "mediaTypes stammt aus einer festen Liste",
+      "base": "../../capabilities/archicad.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/capabilities/viewportCapture/constraints/mediaTypes/0",
+          "value": "image/heic"
+        }
+      ],
+      "expect": "Wert \"image/heic\" nicht in enum"
+    }
+  ]
+}

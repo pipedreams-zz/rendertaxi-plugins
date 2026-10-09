@@ -1,0 +1,1992 @@
+{
+  "description": "Negativfälle des Capture-Manifests v1. Jeder Fall wendet operations auf eine Kopie der Fixture base an und muss einen Befund auslösen, der expect enthält. Ein Fall, der stillschweigend durchgeht, lässt tools/validate.mjs fehlschlagen.",
+  "operations": "op ist set oder remove; path ist ein JSON Pointer in die Kopie der Fixture.",
+  "cases": [
+    {
+      "name": "unknown-top-level-field",
+      "issue": "Unbekannte Felder sind ein Fehler, keine Erweiterung",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/thumbnail",
+          "value": "x"
+        }
+      ],
+      "expect": "/thumbnail — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "unknown-asset-field",
+      "issue": "Unbekannte Felder sind auch in verschachtelten Objekten ein Fehler",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/gamma",
+          "value": "2.2"
+        }
+      ],
+      "expect": "/assets/0/image/gamma — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "unsupported-contract-major",
+      "issue": "Eine unbekannte MAJOR-Version wird mit eigenem Code abgelehnt",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "2.0.0"
+        }
+      ],
+      "expect": "unsupported_contract_major"
+    },
+    {
+      "name": "unsupported-contract-minor",
+      "issue": "Eine MINOR-Version über der umgesetzten wird mit eigenem Code abgelehnt",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.8.0"
+        }
+      ],
+      "expect": "unsupported_contract_minor"
+    },
+    {
+      "name": "wrong-contract",
+      "issue": "Der Dokumenttyp wird ausschließlich über contract bestimmt",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contract",
+          "value": "rendertaxi.archicad.visual-snapshot"
+        }
+      ],
+      "expect": "unbekannter oder fehlender contract-Wert"
+    },
+    {
+      "name": "role-not-kebab-case",
+      "issue": "Rollen stehen in kebab-case",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/6/role",
+          "value": "objectId"
+        }
+      ],
+      "expect": "/assets/6/role — Wert \"objectId\" nicht in enum"
+    },
+    {
+      "name": "role-from-model-path",
+      "issue": "model-glb ist eine Rolle des Modellwegs und keine Bildrolle",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/4/role",
+          "value": "model-glb"
+        }
+      ],
+      "expect": "/assets/4/role — Wert \"model-glb\" nicht in enum"
+    },
+    {
+      "name": "role-duplicate",
+      "issue": "viewport und beauty werden nicht zusammengelegt; je Rolle höchstens ein Eintrag",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/role",
+          "value": "viewport"
+        }
+      ],
+      "expect": "assets[].role nicht eindeutig: viewport"
+    },
+    {
+      "name": "path-duplicate",
+      "issue": "Zwei Assets dürfen nicht auf dieselbe Datei zeigen",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/4/path",
+          "value": "viewport.png"
+        }
+      ],
+      "expect": "assets[].path nicht eindeutig: viewport.png"
+    },
+    {
+      "name": "planned-with-sha256",
+      "issue": "Bei planned ist sha256 verboten, nicht bloß optional",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/4/sha256",
+          "value": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "expect": "/assets/4/sha256 — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "unavailable-with-byte-size",
+      "issue": "Bei unavailable ist byteSize verboten",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/5/byteSize",
+          "value": 10
+        }
+      ],
+      "expect": "/assets/5/byteSize — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "status-unknown-value",
+      "issue": "status kennt genau drei Werte",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/status",
+          "value": "uploaded"
+        }
+      ],
+      "expect": "/assets/0/status — Wert \"uploaded\" nicht in enum"
+    },
+    {
+      "name": "present-without-sha256",
+      "issue": "Ein vorhandenes Asset braucht seinen Hash",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0/sha256"
+        }
+      ],
+      "expect": "Pflichtfeld \"sha256\" fehlt"
+    },
+    {
+      "name": "no-present-asset",
+      "issue": "Ein Capture ohne vorhandenes Bild ist kein Capture",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0",
+          "value": {
+            "role": "viewport",
+            "path": "images/viewport.png",
+            "status": "planned"
+          }
+        }
+      ],
+      "expect": "kein Asset mit status \"present\""
+    },
+    {
+      "name": "present-without-image",
+      "issue": "Bei present ist der Bildblock Pflicht",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0/image"
+        }
+      ],
+      "expect": "Pflichtfeld \"image\" fehlt"
+    },
+    {
+      "name": "present-without-color-space",
+      "issue": "Bei present ist image.colorSpace Pflicht",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0/image/colorSpace"
+        }
+      ],
+      "expect": "Pflichtfeld \"colorSpace\" fehlt"
+    },
+    {
+      "name": "present-without-bit-depth",
+      "issue": "Bei present ist image.bitDepth Pflicht",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0/image/bitDepth"
+        }
+      ],
+      "expect": "Pflichtfeld \"bitDepth\" fehlt"
+    },
+    {
+      "name": "present-without-channels",
+      "issue": "Bei present ist image.channels Pflicht",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0/image/channels"
+        }
+      ],
+      "expect": "Pflichtfeld \"channels\" fehlt"
+    },
+    {
+      "name": "present-without-sample-format",
+      "issue": "16 Bit sind ohne Zahlenformat mehrdeutig",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/1/image/sampleFormat"
+        }
+      ],
+      "expect": "Pflichtfeld \"sampleFormat\" fehlt"
+    },
+    {
+      "name": "bit-depth-not-in-catalog",
+      "issue": "bitDepth kennt 8, 16 und 32",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/bitDepth",
+          "value": 10
+        }
+      ],
+      "expect": "/assets/0/image/bitDepth — Wert 10 nicht in enum"
+    },
+    {
+      "name": "float-with-eight-bit",
+      "issue": "Gleitkomma mit 8 Bit gibt es nicht",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/sampleFormat",
+          "value": "float"
+        }
+      ],
+      "expect": "/assets/0/image/bitDepth — Wert 8 nicht in enum"
+    },
+    {
+      "name": "depth-with-color-space",
+      "issue": "Ein Datenbild trägt keinen Farbraum",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/image/colorSpace",
+          "value": "srgb"
+        }
+      ],
+      "expect": "/assets/1/image/colorSpace — erwartet konstant \"non-color\""
+    },
+    {
+      "name": "beauty-as-non-color",
+      "issue": "Ein Farbbild trägt einen Farbraum",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/colorSpace",
+          "value": "non-color"
+        }
+      ],
+      "expect": "/assets/0/image/colorSpace — Wert \"non-color\" nicht in enum"
+    },
+    {
+      "name": "depth-without-encoding",
+      "issue": "Ohne depth.encoding ist ein Tiefenbild nicht interpretierbar",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/1/depth/encoding"
+        }
+      ],
+      "expect": "/assets/1/depth — Pflichtfeld \"encoding\" fehlt"
+    },
+    {
+      "name": "depth-without-depth-block",
+      "issue": "role depth verlangt den depth-Block",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/1/depth"
+        }
+      ],
+      "expect": "/assets/1 — Pflichtfeld \"depth\" fehlt"
+    },
+    {
+      "name": "depth-encoding-unknown",
+      "issue": "depth.encoding kennt genau drei Werte",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/depth/encoding",
+          "value": "z-buffer"
+        }
+      ],
+      "expect": "/assets/1/depth/encoding — Wert \"z-buffer\" nicht in enum"
+    },
+    {
+      "name": "depth-normalized-without-range",
+      "issue": "Ein normalisiertes Tiefenbild braucht near und far",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/2/depth/far"
+        }
+      ],
+      "expect": "Pflichtfeld \"far\" fehlt"
+    },
+    {
+      "name": "depth-far-not-beyond-near",
+      "issue": "far liegt hinter near",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/depth/far",
+          "value": 0.1
+        }
+      ],
+      "expect": "depth.far ist nicht größer als depth.near"
+    },
+    {
+      "name": "depth-block-on-other-role",
+      "issue": "Nur role depth trägt einen depth-Block",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/depth",
+          "value": {
+            "encoding": "linear-metric"
+          }
+        }
+      ],
+      "expect": "/assets/0/depth — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "normal-without-space",
+      "issue": "Ohne normal.space ist ein Normalenbild nicht interpretierbar",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/3/normal/space"
+        }
+      ],
+      "expect": "/assets/3/normal — Pflichtfeld \"space\" fehlt"
+    },
+    {
+      "name": "normal-without-normal-block",
+      "issue": "role normal verlangt den normal-Block",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/3/normal"
+        }
+      ],
+      "expect": "/assets/3 — Pflichtfeld \"normal\" fehlt"
+    },
+    {
+      "name": "normal-space-unknown",
+      "issue": "normal.space kennt genau drei Werte",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/3/normal/space",
+          "value": "object"
+        }
+      ],
+      "expect": "/assets/3/normal/space — Wert \"object\" nicht in enum"
+    },
+    {
+      "name": "normal-block-on-other-role",
+      "issue": "Nur role normal trägt einen normal-Block",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/normal",
+          "value": {
+            "space": "world"
+          }
+        }
+      ],
+      "expect": "/assets/1/normal — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "intent-provider-name",
+      "issue": "intent trägt keinen Providernamen",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/intent/provider",
+          "value": "example"
+        }
+      ],
+      "expect": "/intent/provider: unzulässiges Feld (Backendbegriff)"
+    },
+    {
+      "name": "intent-model-name",
+      "issue": "intent trägt keinen Modellnamen",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/intent/modelName",
+          "value": "example-xl"
+        }
+      ],
+      "expect": "/intent/modelName: unzulässiges Feld (Backendbegriff)"
+    },
+    {
+      "name": "intent-workflow-graph",
+      "issue": "intent trägt keinen Workflowgraphen",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/intent/workflow",
+          "value": {
+            "nodes": []
+          }
+        }
+      ],
+      "expect": "/intent/workflow: unzulässiges Feld (Backendbegriff)"
+    },
+    {
+      "name": "intent-unknown-field",
+      "issue": "intent ist ein geschlossenes Objekt",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/intent/strength",
+          "value": "hoch"
+        }
+      ],
+      "expect": "/intent/strength — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "number-without-precision-class",
+      "issue": "Eine Zahl ohne Präzisionsklasse ist ein Fehler",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/dpi",
+          "value": 72
+        }
+      ],
+      "expect": "/assets/0/image/dpi: keiner Präzisionsklasse zugeordnet"
+    },
+    {
+      "name": "depth-near-overprecise",
+      "issue": "Eine Länge trägt höchstens sechs Nachkommastellen",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/depth/near",
+          "value": 0.1000004
+        }
+      ],
+      "expect": "ist nicht kanonisch für die Klasse \"length\""
+    },
+    {
+      "name": "depth-near-negative-zero",
+      "issue": "Negative Null ist nicht kanonisch",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/depth/near",
+          "value": -0.0
+        }
+      ],
+      "expect": "negative Null ist nicht kanonisch"
+    },
+    {
+      "name": "byte-size-unsafe-integer",
+      "issue": "Ganzzahlen liegen im sicheren Bereich",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/byteSize",
+          "value": 9007199254740993
+        }
+      ],
+      "expect": "außerhalb des sicheren Ganzzahlbereichs"
+    },
+    {
+      "name": "byte-size-fraction",
+      "issue": "byteSize ist eine Ganzzahl",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/byteSize",
+          "value": 70.5
+        }
+      ],
+      "expect": "/assets/0/byteSize — erwartet integer, erhalten number"
+    },
+    {
+      "name": "image-width-beyond-limit",
+      "issue": "Bildmaße sind fachlich begrenzt",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/image/width",
+          "value": 65537
+        }
+      ],
+      "expect": "größer als maximum 65536"
+    },
+    {
+      "name": "model-version-id",
+      "issue": "Das Capture-Manifest kennt keine modelVersionId",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/modelVersionId",
+          "value": "01993f6e-2a10-7c41-9d52-3b8e6f1a0c09"
+        }
+      ],
+      "expect": "/modelVersionId: unzulässiges Feld (Feld des Modellwegs)"
+    },
+    {
+      "name": "predecessor-model-version-id",
+      "issue": "Das Capture-Manifest kennt keinen Vorgängerstand",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/predecessorModelVersionId",
+          "value": null
+        }
+      ],
+      "expect": "/predecessorModelVersionId: unzulässiges Feld (Feld des Modellwegs)"
+    },
+    {
+      "name": "activation-state",
+      "issue": "Das Capture-Manifest kennt keinen Aktivierungszustand",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/activation",
+          "value": {
+            "state": "not-requested"
+          }
+        }
+      ],
+      "expect": "/activation: unzulässiges Feld (Feld des Modellwegs)"
+    },
+    {
+      "name": "camera-block-before-1-2",
+      "issue": "camera ist erst ab 1.2.0 ein Objekt; ein 1.0.x-Dokument nimmt Ausbaustufe 2 nicht vorweg",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera",
+          "value": {
+            "space": "export",
+            "projection": "perspective",
+            "position": [4.5, 1.65, 12.25],
+            "direction": [0, 0, -1],
+            "up": [0, 1, 0],
+            "fieldOfView": {
+              "axis": "horizontal",
+              "angle": 1.047197551
+            },
+            "clip": {
+              "near": 0.1,
+              "far": 500
+            }
+          }
+        }
+      ],
+      "expect": "/camera: ein Objekt ist erst ab contractVersion 1.2.0 zulässig"
+    },
+    {
+      "name": "geometry-block-before-1-2",
+      "issue": "geometry ist erst ab 1.2.0 ein Objekt",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry",
+          "value": {
+            "assetPath": "model/scene.glb",
+            "units": {
+              "sourceUnitScaleToMeter": 1
+            },
+            "axes": {
+              "handedness": "right",
+              "upAxis": "z"
+            },
+            "origin": [120.5, -48.25, 0],
+            "georeference": {
+              "epsg": 25832,
+              "origin": {
+                "easting": 356000.125,
+                "northing": 5645000.5,
+                "height": 52.3
+              },
+              "axisConvention": {
+                "handedness": "right",
+                "upAxis": "y"
+              },
+              "unit": "meter",
+              "transformChain": [
+                {
+                  "order": 1,
+                  "sourceFrame": "model",
+                  "targetFrame": "project",
+                  "kind": "rotation",
+                  "parameters": {
+                    "axis": "y",
+                    "angleRadians": 0.261799388
+                  },
+                  "provenance": "plugin-reported"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expect": "/geometry: ein Objekt ist erst ab contractVersion 1.2.0 zulässig"
+    },
+    {
+      "name": "camera-missing",
+      "issue": "camera ist Pflichtfeld, auch als null",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/camera"
+        }
+      ],
+      "expect": "Pflichtfeld \"camera\" fehlt"
+    },
+    {
+      "name": "asset-sha256-tampered",
+      "issue": "Der Dateihash folgt der Golden-Fixture-Regel",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/sha256",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expect": "sha256 entspricht nicht der Golden-Fixture-Regel"
+    },
+    {
+      "name": "asset-byte-size-tampered",
+      "issue": "Die Dateigröße folgt der Golden-Fixture-Regel",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/byteSize",
+          "value": 1
+        }
+      ],
+      "expect": "byteSize entspricht nicht der Golden-Fixture-Regel"
+    },
+    {
+      "name": "content-hash-tampered",
+      "issue": "contentHash folgt der normativen Regel",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contentHash",
+          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "expect": "contentHash entspricht nicht der normativen Regel"
+    },
+    {
+      "name": "content-hash-ignores-role-change",
+      "issue": "contentHash reagiert auf die Rolle",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/role",
+          "value": "viewport"
+        }
+      ],
+      "expect": "contentHash entspricht nicht der normativen Regel"
+    },
+    {
+      "name": "sha256-uppercase",
+      "issue": "SHA-256 steht in Kleinschreibung",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/sha256",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ],
+      "expect": "/assets/0/sha256 — entspricht nicht pattern"
+    },
+    {
+      "name": "capture-id-not-uuid-v7",
+      "issue": "captureId ist eine UUIDv7",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/captureId",
+          "value": "5f0c2b9e-41d7-4a63-9e18-c7d2a0b16f33"
+        }
+      ],
+      "expect": "/captureId — entspricht nicht pattern"
+    },
+    {
+      "name": "created-at-without-milliseconds",
+      "issue": "Zeitpunkte tragen Millisekunden und Z",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/createdAt",
+          "value": "2026-09-20T09:15:00Z"
+        }
+      ],
+      "expect": "/createdAt — entspricht nicht pattern"
+    },
+    {
+      "name": "host-key-not-kebab-case",
+      "issue": "Der Hostschlüssel steht in kebab-case",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/key",
+          "value": "Cinema 4D"
+        }
+      ],
+      "expect": "/source/host/key — entspricht nicht pattern"
+    },
+    {
+      "name": "source-view-key-missing",
+      "issue": "sourceViewKey ist Pflichtfeld, auch als null",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/view/sourceViewKey"
+        }
+      ],
+      "expect": "Pflichtfeld \"sourceViewKey\" fehlt"
+    },
+    {
+      "name": "path-absolute",
+      "issue": "Kein absoluter Pfad",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/path",
+          "value": "/Users/example/viewport.png"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (absoluter Dateipfad)"
+    },
+    {
+      "name": "path-leading-slash",
+      "issue": "Kein führender Schrägstrich",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/path",
+          "value": "/images/viewport.png"
+        }
+      ],
+      "expect": "/assets/0/path — entspricht nicht pattern"
+    },
+    {
+      "name": "path-drive-letter",
+      "issue": "Kein Laufwerksbuchstabe",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/path",
+          "value": "C:\\captures\\viewport.png"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (Laufwerksbuchstabe)"
+    },
+    {
+      "name": "path-parent-segment",
+      "issue": "Kein '..'-Segment",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/path",
+          "value": "images/../viewport.png"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden ('..'-Segment)"
+    },
+    {
+      "name": "path-backslash",
+      "issue": "Nur Vorwärtsschrägstriche",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/path",
+          "value": "images\\viewport.png"
+        }
+      ],
+      "expect": "/assets/0/path — entspricht nicht pattern"
+    },
+    {
+      "name": "note-signed-storage-url",
+      "issue": "Keine signierte Storage-URL",
+      "base": "full-pass/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/5/note",
+          "value": "https://storage.example/obj?X-Amz-Signature=abc"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (signierte Storage-URL)"
+    },
+    {
+      "name": "display-name-home-path",
+      "issue": "Kein Benutzerverzeichnis im Anzeigenamen",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/project/displayName",
+          "value": "/home/example/Projekte/Wohnhaus.pln"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (absoluter Dateipfad)"
+    },
+    {
+      "name": "display-name-user-at-host",
+      "issue": "Kein Benutzer- oder Rechnername",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/view/displayName",
+          "value": "example@workstation"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (Benutzer- oder Rechnername (name@host))"
+    },
+    {
+      "name": "os-version-machine-name",
+      "issue": "Kein Rechnername",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/machine/osVersion",
+          "value": "studio-mac.local"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (Rechnername)"
+    },
+    {
+      "name": "unc-path",
+      "issue": "Kein UNC-Pfad",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/view/displayName",
+          "value": "\\\\fileserver\\projekte"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (UNC-Pfad mit Rechnername)"
+    },
+    {
+      "name": "prompt-with-credentials",
+      "issue": "Keine Zugangsdaten im freien Text",
+      "base": "beauty-depth/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/intent/promptText",
+          "value": "api_key=abc123"
+        }
+      ],
+      "expect": "verbotener Inhalt gefunden (möglicher Zugangsdatenschlüssel)"
+    },
+    {
+      "name": "host-capabilities-in-1-0",
+      "issue": "source.host.capabilities ist ein Feld von 1.1.0 und in einem 1.0.x-Dokument unzulässig (RTX-P-003)",
+      "base": "viewport-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities",
+          "value": {
+            "depthPass": {
+              "state": "available"
+            }
+          }
+        }
+      ],
+      "expect": "erst ab contractVersion 1.1.0"
+    },
+    {
+      "name": "host-capabilities-unknown-key",
+      "issue": "Eine unbekannte Capability wird abgelehnt, nicht durchgereicht",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/hologramPass",
+          "value": {
+            "state": "available"
+          }
+        }
+      ],
+      "expect": "/source/host/capabilities/hologramPass — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "host-capabilities-unknown-state",
+      "issue": "Es gibt genau vier Zustände",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/depthPass/state",
+          "value": "maybe"
+        }
+      ],
+      "expect": "/source/host/capabilities/depthPass/state — Wert \"maybe\" nicht in enum"
+    },
+    {
+      "name": "host-capabilities-entry-without-state",
+      "issue": "Ein Eintrag nennt seinen Zustand",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/source/host/capabilities/depthPass/state"
+        }
+      ],
+      "expect": "Pflichtfeld \"state\" fehlt"
+    },
+    {
+      "name": "host-capabilities-free-text",
+      "issue": "Kein freier Text in der Selbstauskunft",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/depthPass/note",
+          "value": "aktiviert im Render-Setup"
+        }
+      ],
+      "expect": "/source/host/capabilities/depthPass/note — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "host-capabilities-media-type-outside-list",
+      "issue": "mediaTypes stammt aus einer festen Liste",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/viewportCapture/constraints/mediaTypes/0",
+          "value": "image/heic"
+        }
+      ],
+      "expect": "Wert \"image/heic\" nicht in enum"
+    },
+    {
+      "name": "host-capabilities-media-types-duplicate",
+      "issue": "mediaTypes nennt jeden Wert höchstens einmal",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/beautyRender/constraints/mediaTypes/1",
+          "value": "image/jpeg"
+        }
+      ],
+      "expect": "uniqueItems verletzt"
+    },
+    {
+      "name": "host-capabilities-max-width-zero",
+      "issue": "maxWidth ist mindestens 1",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/viewportCapture/constraints/maxWidth",
+          "value": 0
+        }
+      ],
+      "expect": "kleiner als minimum 1"
+    },
+    {
+      "name": "host-capabilities-max-height-too-large",
+      "issue": "maxHeight ist höchstens 65536",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/viewportCapture/constraints/maxHeight",
+          "value": 65537
+        }
+      ],
+      "expect": "größer als maximum 65536"
+    },
+    {
+      "name": "host-capabilities-max-width-fraction",
+      "issue": "maxWidth ist eine Ganzzahl",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/viewportCapture/constraints/maxWidth",
+          "value": 1920.5
+        }
+      ],
+      "expect": "erwartet integer"
+    },
+    {
+      "name": "host-capabilities-unknown-constraint",
+      "issue": "constraints kennt genau maxWidth, maxHeight und mediaTypes",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/viewportCapture/constraints/maxFps",
+          "value": 30
+        }
+      ],
+      "expect": "/source/host/capabilities/viewportCapture/constraints/maxFps — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "host-capabilities-not-an-object",
+      "issue": "Die Selbstauskunft ist ein Objekt",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities",
+          "value": ["depthPass"]
+        }
+      ],
+      "expect": "/source/host/capabilities — erwartet object"
+    },
+    {
+      "name": "model-role-before-1-2",
+      "issue": "Die Rolle model gibt es erst ab 1.2.0 (RTX-P-011)",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.1.0"
+        }
+      ],
+      "expect": "model ist erst ab contractVersion 1.2.0 zulässig"
+    },
+    {
+      "name": "model-without-geometry",
+      "issue": "Eine GLB-Datei ohne geometry wäre ein Modell ohne Lage",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry",
+          "value": null
+        }
+      ],
+      "expect": "verlangt den Block geometry"
+    },
+    {
+      "name": "geometry-without-model",
+      "issue": "geometry beschreibt eine Datei; ohne vorhandenes Modell beschreibt er nichts",
+      "base": "camera-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry",
+          "value": {
+            "assetPath": "model/scene.glb",
+            "units": {
+              "sourceUnitScaleToMeter": 1
+            },
+            "axes": {
+              "handedness": "right",
+              "upAxis": "z"
+            },
+            "origin": [120.5, -48.25, 0],
+            "georeference": {
+              "epsg": 25832,
+              "origin": {
+                "easting": 356000.125,
+                "northing": 5645000.5,
+                "height": 52.3
+              },
+              "axisConvention": {
+                "handedness": "right",
+                "upAxis": "y"
+              },
+              "unit": "meter",
+              "transformChain": [
+                {
+                  "order": 1,
+                  "sourceFrame": "model",
+                  "targetFrame": "project",
+                  "kind": "rotation",
+                  "parameters": {
+                    "axis": "y",
+                    "angleRadians": 0.261799388
+                  },
+                  "provenance": "plugin-reported"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expect": "der Block verlangt ein Asset mit role model"
+    },
+    {
+      "name": "geometry-asset-path-mismatch",
+      "issue": "assetPath zeigt auf die GLB-Datei und auf nichts anderes",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/assetPath",
+          "value": "viewport.png"
+        }
+      ],
+      "expect": "zeigt nicht auf das Asset mit role model"
+    },
+    {
+      "name": "model-media-type-not-glb",
+      "issue": "Das Modell ist eine GLB-Datei (model/gltf-binary), kein glTF mit externen Dateien",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/mediaType",
+          "value": "model/gltf+json"
+        }
+      ],
+      "expect": "/assets/1/mediaType"
+    },
+    {
+      "name": "model-with-image-block",
+      "issue": "Die GLB-Datei ist kein Bild und trägt keinen image-Block",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/image",
+          "value": {
+            "width": 1920,
+            "height": 1080,
+            "colorSpace": "srgb",
+            "bitDepth": 8,
+            "sampleFormat": "uint",
+            "channels": "rgba"
+          }
+        }
+      ],
+      "expect": "/assets/1/image — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "model-only-capture",
+      "issue": "Bis 1.5.x trägt ein Capture mindestens ein vorhandenes Bild; das Modell allein genügt nicht",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/0"
+        }
+      ],
+      "expect": "kein Asset mit status \"present\""
+    },
+    {
+      "name": "camera-field-of-view-without-axis",
+      "issue": "Ein Sichtfeldwinkel ohne Achse ist bedeutungslos",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/camera/fieldOfView/axis"
+        }
+      ],
+      "expect": "Pflichtfeld \"axis\" fehlt"
+    },
+    {
+      "name": "camera-perspective-without-field-of-view",
+      "issue": "Eine perspektivische Kamera nennt ihr Sichtfeld",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/camera/fieldOfView"
+        }
+      ],
+      "expect": "Pflichtfeld \"fieldOfView\" fehlt"
+    },
+    {
+      "name": "camera-extent-on-perspective",
+      "issue": "extent gehört nur zur orthographic-Projektion",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/extent",
+          "value": {
+            "halfWidth": 10,
+            "halfHeight": 5
+          }
+        }
+      ],
+      "expect": "/camera/extent — an dieser Stelle ist kein Wert erlaubt"
+    },
+    {
+      "name": "camera-orthographic-without-extent",
+      "issue": "Eine orthographic-Kamera nennt ihren Ausschnitt",
+      "base": "camera-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/camera/extent"
+        }
+      ],
+      "expect": "Pflichtfeld \"extent\" fehlt"
+    },
+    {
+      "name": "camera-direction-not-normalized",
+      "issue": "direction ist ein normierter Vektor",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/direction",
+          "value": [0, 0, -0.5]
+        }
+      ],
+      "expect": "/camera/direction: kein normierter Vektor"
+    },
+    {
+      "name": "camera-up-parallel",
+      "issue": "up ist nicht parallel zu direction",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/up",
+          "value": [0, 0, 1]
+        }
+      ],
+      "expect": "/camera/up: parallel zu direction"
+    },
+    {
+      "name": "camera-far-before-near",
+      "issue": "Die ferne Schnittebene liegt hinter der nahen",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/clip/far",
+          "value": 0.05
+        }
+      ],
+      "expect": "/camera/clip/far: ist nicht größer als near"
+    },
+    {
+      "name": "camera-space-not-export",
+      "issue": "Die Kamera steht im Exportraum; ein zweiter Raum wäre eine zweite Wahrheit",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/space",
+          "value": "world"
+        }
+      ],
+      "expect": "/camera/space"
+    },
+    {
+      "name": "camera-position-overprecise",
+      "issue": "Längen gelten auf sechs Nachkommastellen",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/position/0",
+          "value": 4.5000001
+        }
+      ],
+      "expect": "nicht kanonisch"
+    },
+    {
+      "name": "geometry-unit-scale-zero",
+      "issue": "Eine Einheit hat eine positive Länge",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/units/sourceUnitScaleToMeter",
+          "value": 0
+        }
+      ],
+      "expect": "/geometry/units/sourceUnitScaleToMeter"
+    },
+    {
+      "name": "geometry-up-axis-x",
+      "issue": "Die Oben-Achse ist y oder z",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/axes/upAxis",
+          "value": "x"
+        }
+      ],
+      "expect": "Wert \"x\" nicht in enum"
+    },
+    {
+      "name": "geometry-inline-elements",
+      "issue": "Keine BIM-Daten inline; Elementkennungen nur als Hinweis auf eine Datei",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/elements",
+          "value": [
+            {
+              "id": "wall-1"
+            }
+          ]
+        }
+      ],
+      "expect": "/geometry/elements — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "geometry-model-version-field",
+      "issue": "Der Geometrieblock kennt kein Feld des Modellwegs",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/modelVersionId",
+          "value": "01993f80-4b21-7d30-a4e2-6c1f0b9d3e99"
+        }
+      ],
+      "expect": "Feld des Modellwegs"
+    },
+    {
+      "name": "georeference-without-origin",
+      "issue": "Ein EPSG-Code allein ist keine Lage (ADR 0013)",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/geometry/georeference/origin"
+        }
+      ],
+      "expect": "Pflichtfeld \"origin\" fehlt"
+    },
+    {
+      "name": "georeference-epsg-out-of-range",
+      "issue": "EPSG-Codes liegen im Bereich des Registers",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/epsg",
+          "value": 4
+        }
+      ],
+      "expect": "kleiner als minimum 1024"
+    },
+    {
+      "name": "geometry-element-ids-absolute-path",
+      "issue": "Der Hinweis auf die Elementdatei ist ein relativer Pfad",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/elementIds",
+          "value": {
+            "path": "/home/nutzer/ids.json"
+          }
+        }
+      ],
+      "expect": "absoluter Dateipfad"
+    },
+    {
+      "name": "georeference-axis-not-export",
+      "issue": "Im Capture-Manifest ist der Rahmen model der Exportraum: +Y oben",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/axisConvention/upAxis",
+          "value": "z"
+        }
+      ],
+      "expect": "/geometry/georeference/axisConvention/upAxis"
+    },
+    {
+      "name": "georeference-unit-not-meter",
+      "issue": "Der Exportraum steht in Metern",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/unit",
+          "value": "foot"
+        }
+      ],
+      "expect": "/geometry/georeference/unit"
+    },
+    {
+      "name": "georeference-chain-gap",
+      "issue": "order zählt lückenlos ab 1",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/transformChain/0/order",
+          "value": 2
+        }
+      ],
+      "expect": "order zählt nicht lückenlos ab 1"
+    },
+    {
+      "name": "georeference-chain-wrong-direction",
+      "issue": "Die Kette führt von model nach project",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/transformChain/0/targetFrame",
+          "value": "site"
+        }
+      ],
+      "expect": "führt nicht lückenlos von model nach project"
+    },
+    {
+      "name": "georeference-chain-parameters-of-other-kind",
+      "issue": "Die Parameter gehören zu ihrer Art",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/transformChain/0/parameters",
+          "value": {
+            "x": 1,
+            "y": 2,
+            "z": 3
+          }
+        }
+      ],
+      "expect": "Pflichtfeld \"axis\" fehlt"
+    },
+    {
+      "name": "georeference-chain-matrix",
+      "issue": "Keine zusammengefasste Matrix (ADR 0013)",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/geometry/georeference/transformChain/0/parameters/matrix",
+          "value": [1, 0, 0, 0]
+        }
+      ],
+      "expect": "/geometry/georeference/transformChain/0/parameters/matrix — unbekanntes Zusatzfeld"
+    },
+    {
+      "name": "png-profile-exr-media-type",
+      "issue": "Ab 1.3.0 ist PNG das einzige Bildformat des Bildwegs",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/mediaType",
+          "value": "image/x-exr"
+        }
+      ],
+      "expect": "/assets/1/mediaType — erwartet konstant \"image/png\""
+    },
+    {
+      "name": "png-profile-planned-exr",
+      "issue": "Auch ein vorgesehenes Bild nennt ab 1.3.0 keinen anderen Medientyp",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/8/mediaType",
+          "value": "image/x-exr"
+        }
+      ],
+      "expect": "/assets/8/mediaType — erwartet konstant \"image/png\""
+    },
+    {
+      "name": "png-profile-float",
+      "issue": "PNG kennt kein Gleitkomma; ab 1.3.0 nur uint",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/4/image/sampleFormat",
+          "value": "float"
+        }
+      ],
+      "expect": "/assets/4/image/sampleFormat — erwartet konstant \"uint\""
+    },
+    {
+      "name": "png-profile-32-bit",
+      "issue": "Ab 1.3.0 nur 8 oder 16 Bit je Kanal",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/image/bitDepth",
+          "value": 32
+        }
+      ],
+      "expect": "/assets/2/image/bitDepth — Wert 32 nicht in enum"
+    },
+    {
+      "name": "png-profile-depth-rgb",
+      "issue": "Das Tiefenbild ist ab 1.3.0 ein Graustufenbild",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/image/channels",
+          "value": "rgb"
+        }
+      ],
+      "expect": "/assets/2/image/channels — erwartet konstant \"gray\""
+    },
+    {
+      "name": "png-profile-depth-linear-metric",
+      "issue": "Metrische Tiefe passt in kein PNG; ab 1.3.0 nur normalisiert mit near und far",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/depth",
+          "value": {
+            "encoding": "linear-metric"
+          }
+        }
+      ],
+      "expect": "/assets/2/depth/encoding — Wert \"linear-metric\" nicht in enum"
+    },
+    {
+      "name": "png-profile-normal-gray",
+      "issue": "Normalen sind ab 1.3.0 rgb, (n + 1) / 2 je Komponente",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/3/image/channels",
+          "value": "gray"
+        }
+      ],
+      "expect": "/assets/3/image/channels — erwartet konstant \"rgb\""
+    },
+    {
+      "name": "png-profile-object-id-rgb",
+      "issue": "IDs sind ab 1.3.0 ein Graustufenbild mit dem Index als Ganzzahl",
+      "base": "png-passes/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/5/image/channels",
+          "value": "rgb"
+        }
+      ],
+      "expect": "/assets/5/image/channels — erwartet konstant \"gray\""
+    },
+    {
+      "name": "camera-lens-before-1-4",
+      "issue": "Das Objektiv der Kamera kam mit 1.4.0; ein 1.2.0-Dokument nimmt es nicht vorweg",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/lens",
+          "value": {
+            "focalLengthMm": 31.176914,
+            "sensorWidthMm": 36,
+            "sensorFit": "auto"
+          }
+        }
+      ],
+      "expect": "/camera/lens: erst ab contractVersion 1.4.0 zulässig"
+    },
+    {
+      "name": "camera-shift-before-1-4",
+      "issue": "Der Shift der Kamera kam mit 1.4.0",
+      "base": "model-camera/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/shift",
+          "value": {
+            "x": 0.1,
+            "y": 0
+          }
+        }
+      ],
+      "expect": "/camera/shift: erst ab contractVersion 1.4.0 zulässig"
+    },
+    {
+      "name": "camera-lens-angle-mismatch",
+      "issue": "Objektiv und fieldOfView sind zwei Angaben für denselben Winkel und dürfen sich nicht widersprechen",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/lens/focalLengthMm",
+          "value": 50
+        }
+      ],
+      "expect": "/camera/lens: beschreibt einen anderen Winkel als fieldOfView"
+    },
+    {
+      "name": "camera-lens-axis-mismatch",
+      "issue": "Ein fester Sensorbezug nennt die Achse des Winkels",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/lens/sensorFit",
+          "value": "vertical"
+        }
+      ],
+      "expect": "/camera/lens/sensorFit: nennt eine andere Achse als fieldOfView"
+    },
+    {
+      "name": "camera-lens-orthographic",
+      "issue": "Ein Objektiv gehört nur zur perspektivischen Kamera",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/projection",
+          "value": "orthographic"
+        },
+        {
+          "op": "remove",
+          "path": "/camera/fieldOfView"
+        },
+        {
+          "op": "set",
+          "path": "/camera/extent",
+          "value": {
+            "halfWidth": 8,
+            "halfHeight": 4.5
+          }
+        }
+      ],
+      "expect": "/camera/lens"
+    },
+    {
+      "name": "camera-shift-out-of-range",
+      "issue": "Der Shift liegt zwischen −2 und 2 (Anteil der längeren Bildseite)",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/shift/x",
+          "value": 2.5
+        }
+      ],
+      "expect": "/camera/shift/x"
+    },
+    {
+      "name": "camera-lens-precision",
+      "issue": "Die Brennweite trägt die Präzisionsklasse length: sechs Nachkommastellen",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/lens/focalLengthMm",
+          "value": 35.0000001
+        }
+      ],
+      "expect": "ist nicht kanonisch für die Klasse \"length\""
+    },
+    {
+      "name": "source-file-name-before-1-5",
+      "issue": "Der Dateiname der Ursprungsdatei ist erst ab 1.5.0 zulässig",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.4.0"
+        }
+      ],
+      "expect": "/source/fileName: erst ab contractVersion 1.5.0 zulässig"
+    },
+    {
+      "name": "source-file-name-slash",
+      "issue": "Der Dateiname trägt keinen Pfad (Vorwärtsschrägstrich)",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "Projekte/SWH-Schule-Weberberg.c4d"
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-backslash",
+      "issue": "Der Dateiname trägt keinen Pfad (Rückwärtsschrägstrich)",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "Projekte\\SWH.c4d"
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-colon",
+      "issue": "Der Doppelpunkt ist ein Pfadtrenner (klassisches macOS, Laufwerk)",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "Projekte:SWH.c4d"
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-control",
+      "issue": "Kein Steuerzeichen im Dateinamen",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "SWH\nSchule.c4d"
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-bidi",
+      "issue": "Keine Richtungsumkehr: sie verfälscht die angezeigte Endung",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "SWH‮d4c.exe"
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-dot-dot",
+      "issue": "Weder . noch .. als Dateiname",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": ".."
+        }
+      ],
+      "expect": "/source/fileName — entspricht nicht pattern"
+    },
+    {
+      "name": "source-file-name-empty",
+      "issue": "Ein leerer Dateiname entfällt, statt leer dazustehen",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": ""
+        }
+      ],
+      "expect": "/source/fileName — kürzer als minLength 1"
+    },
+    {
+      "name": "source-file-name-too-long",
+      "issue": "Höchstens 255 Zeichen",
+      "base": "source-file-name/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/fileName",
+          "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.c4d"
+        }
+      ],
+      "expect": "/source/fileName — länger als maxLength 255"
+    },
+    {
+      "name": "model-only-before-1-6",
+      "issue": "Die Aufnahme nur mit Modell ist erst ab 1.6.0 zulässig",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.5.0"
+        }
+      ],
+      "expect": "kein Asset mit status \"present\""
+    },
+    {
+      "name": "model-only-without-camera",
+      "issue": "Ein Capture nur mit Modell verlangt den Kamerablock (RTX-P-014)",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera",
+          "value": null
+        }
+      ],
+      "expect": "/camera: ein Capture nur mit Modell verlangt den Kamerablock"
+    },
+    {
+      "name": "model-only-without-resolution",
+      "issue": "Ohne Bild sagt nur die Kamera, welche Form der Rahmen hat: resolution ist Pflicht",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/camera/resolution"
+        }
+      ],
+      "expect": "/camera/resolution: ein Capture nur mit Modell nennt die Bildgröße der Kamera"
+    },
+    {
+      "name": "empty-capture-1-6",
+      "issue": "Auch ab 1.6.0 bleibt ein leerer Capture ausgeschlossen",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0",
+          "value": {
+            "role": "model",
+            "path": "model/scene.glb",
+            "status": "planned",
+            "mediaType": "model/gltf-binary"
+          }
+        },
+        {
+          "op": "set",
+          "path": "/geometry",
+          "value": null
+        }
+      ],
+      "expect": "kein Bild und kein Modell mit status \"present\""
+    },
+    {
+      "name": "camera-resolution-before-1-6",
+      "issue": "Die Bildgröße der Kamera ist erst ab 1.6.0 zulässig",
+      "base": "lens-shift/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/resolution",
+          "value": {
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      ],
+      "expect": "/camera/resolution: erst ab contractVersion 1.6.0 zulässig"
+    },
+    {
+      "name": "model-only-capability-before-1-6",
+      "issue": "Die Capability modelOnlyCapture ist erst ab 1.6.0 zulässig",
+      "base": "host-capabilities/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/source/host/capabilities/modelOnlyCapture",
+          "value": {
+            "state": "available"
+          }
+        }
+      ],
+      "expect": "/source/host/capabilities/modelOnlyCapture: erst ab contractVersion 1.6.0 zulässig"
+    },
+    {
+      "name": "camera-resolution-zero",
+      "issue": "Die Bildgröße der Kamera ist mindestens ein Pixel",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/resolution/width",
+          "value": 0
+        }
+      ],
+      "expect": "/camera/resolution/width — kleiner als minimum 1"
+    },
+    {
+      "name": "camera-resolution-fraction",
+      "issue": "Die Bildgröße der Kamera zählt ganze Pixel",
+      "base": "model-only/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/camera/resolution/height",
+          "value": 1080.5
+        }
+      ],
+      "expect": "/camera/resolution/height"
+    }
+  ]
+}

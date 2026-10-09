@@ -1,0 +1,70 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.5.0",
+  "captureId": "0199b2f4-5c10-7a2e-8d43-1f6e9b0c3a71",
+  "createdAt": "2026-10-05T10:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "cinema-4d",
+      "version": "2026.2"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.cinema-4d",
+      "version": "0.3.0"
+    },
+    "machine": {
+      "os": "macos",
+      "architecture": "arm64"
+    },
+    "fileName": "SWH-Schule-Weberberg.c4d"
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "cinema-4d:3f0b6c2e-8d41-4a7e-9f15-2c7e0a4b9d63",
+    "displayName": "SWH-Schule-Weberberg"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "Straßenseite"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "e834c86a1dd6609bd2266074b6f3de739349ec5fe927181be945065767e32215",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "images/viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 82,
+      "sha256": "c6e275eb8e4e7824692266773957f660e11a3da4a9196adb087c8fcb28c0024e",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      },
+      "note": "Viewport Renderer, Szenenkamera Straßenseite."
+    },
+    {
+      "role": "beauty",
+      "path": "images/beauty.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 80,
+      "sha256": "0c9d2acc78ae053d04f9df91a6501bde09b808b2e230572359ded0770b9bdf95",
+      "image": {
+        "width": 1920,
+        "height": 1080,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      },
+      "note": "Beauty (RenderDocument), Standard."
+    }
+  ]
+}
