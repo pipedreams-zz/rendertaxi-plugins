@@ -1,23 +1,24 @@
 # Golden Fixtures v1
 
-Zehn positive Verzeichnisse — `host-capabilities/` mit je einer Selbstauskunft
+Elf positive Verzeichnisse — `host-capabilities/` mit je einer Selbstauskunft
 mehrerer Hosts — und zwei Sätze Negativfälle. Sie sind die Testgrundlage für
 Plugins und Plattform und werden von `../../tools/validate.mjs` maschinell
 geprüft.
 
-| Verzeichnis         | Zweck                                                                                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `viewport-only`     | kleinster gültiger Capture: ein `viewport`-Bild, `intent` leer                                       |
-| `beauty-depth`      | `beauty` und `depth` als Gleitkomma-EXR, `linear-metric`                                             |
-| `full-pass`         | alle zehn Rollen, gemischte Status                                                                   |
-| `host-capabilities` | Vertrag 1.1.0 mit `source.host.capabilities`; `depthPass: available` ohne Tiefenbild                 |
-| `model-camera`      | Vertrag 1.2.0: `viewport`, GLB-Datei (`model`), perspektivische Kamera, `geometry` mit Georeferenz   |
-| `camera-only`       | Vertrag 1.2.0: parallele Kamera ohne Modell, `model` als `unavailable`                               |
-| `png-passes`        | Vertrag 1.3.0: alle Datenpässe als PNG mit 8 und 16 Bit, Tiefe `normalized-linear`, IDs Graustufen   |
-| `lens-shift`        | Vertrag 1.4.0: Kamera mit Objektiv (35 mm, Sensor 36 mm, `auto`) und Shift, GLB-Datei                |
-| `source-file-name`  | Vertrag 1.5.0: Cinema-4D-Capture mit `source.fileName` (Name der Ursprungsdatei, ohne Pfad)          |
-| `model-only`        | Vertrag 1.6.0: Blender-Capture nur mit Modell — GLB, Kamera mit `resolution`, kein Bild              |
-| `negative`          | `cases.json` (Manifest) und `capability-matrix-cases.json` (Matrix) — Fälle, die fehlschlagen müssen |
+| Verzeichnis         | Zweck                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| `viewport-only`     | kleinster gültiger Capture: ein `viewport`-Bild, `intent` leer                                         |
+| `beauty-depth`      | `beauty` und `depth` als Gleitkomma-EXR, `linear-metric`                                               |
+| `full-pass`         | alle zehn Rollen, gemischte Status                                                                     |
+| `host-capabilities` | Vertrag 1.1.0 mit `source.host.capabilities`; `depthPass: available` ohne Tiefenbild                   |
+| `model-camera`      | Vertrag 1.2.0: `viewport`, GLB-Datei (`model`), perspektivische Kamera, `geometry` mit Georeferenz     |
+| `camera-only`       | Vertrag 1.2.0: parallele Kamera ohne Modell, `model` als `unavailable`                                 |
+| `png-passes`        | Vertrag 1.3.0: alle Datenpässe als PNG mit 8 und 16 Bit, Tiefe `normalized-linear`, IDs Graustufen     |
+| `lens-shift`        | Vertrag 1.4.0: Kamera mit Objektiv (35 mm, Sensor 36 mm, `auto`) und Shift, GLB-Datei                  |
+| `source-file-name`  | Vertrag 1.5.0: Cinema-4D-Capture mit `source.fileName` (Name der Ursprungsdatei, ohne Pfad)            |
+| `model-only`        | Vertrag 1.6.0: Blender-Capture nur mit Modell — GLB, Kamera mit `resolution`, kein Bild                |
+| `masks-index`       | Vertrag 1.8.0: zwei Masken mit Herkunft (`mask`), `object-id`/`material-id` mit Begleitliste (`index`) |
+| `negative`          | `cases.json` (Manifest) und `capability-matrix-cases.json` (Matrix) — Fälle, die fehlschlagen müssen   |
 
 Die Fixtures sind Vertragsbeispiele, **keine Aussagen über Hostfähigkeiten**.
 Was Blender, Cinema 4D und Rhino tatsächlich erzeugen können, belegen erst die
@@ -134,6 +135,17 @@ PNG; `source.fileName` nennt die gespeicherte Szene `SWH-Schule-Weberberg.c4d`
 — den Namen, keinen Ordner. Die Negativfälle `source-file-name-*` bauen darauf
 auf: das Feld in einem 1.4.0-Dokument, Pfadtrenner (`/`, `\`, `:`), Steuer-
 und Formatzeichen, `..`, ein leerer und ein zu langer Name.
+
+## `masks-index`
+
+Vertrag 1.8.0 (#289): ein Cinema-4D-Capture mit Corona-Pässen. `beauty`,
+`object-id` (8 Bit) und `material-id` (16 Bit) mit Begleitliste Index → Name,
+dazu zwei Masken — Object Buffer 8 „cars" und 10 „floor" — je mit `mask`
+(Buffer-ID und Name). Die Negativfälle `masks-*`, `mask-*`, `index-*` und
+`role-duplicate-1-8` bauen darauf auf: zwei Masken, `mask` oder `index` unter
+1.8.0; eine zweite `object-id` ab 1.8.0; zwei Masken mit einem Pfad; `mask` und
+`index` an der falschen Rolle; ein doppelter oder ein Index 0; ein zu langer
+Name; eine Herkunft ohne Buffer-ID.
 
 ## `negative/source-file-names.json`
 

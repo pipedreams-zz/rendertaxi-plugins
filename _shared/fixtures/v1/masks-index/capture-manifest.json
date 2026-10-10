@@ -1,0 +1,147 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.8.0",
+  "captureId": "019a0c3e-5b20-7a41-8c3d-2f6e9b1a4d58",
+  "createdAt": "2026-10-10T12:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "cinema-4d",
+      "version": "2026.3"
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.cinema-4d",
+      "version": "0.6.3"
+    },
+    "machine": {
+      "os": "macos",
+      "architecture": "arm64"
+    },
+    "fileName": "NFA-Strasse.c4d"
+  },
+  "project": {
+    "platformProjectId": "01993a10-77c2-7e05-8b31-5d0c4a9e2f10",
+    "sourceProjectKey": "doc:6b0f3c2e-8d41-4a7e-9f15-2c7e0a4b9d63"
+  },
+  "view": {
+    "sourceViewKey": null,
+    "displayName": "K02a"
+  },
+  "intent": {},
+  "camera": null,
+  "geometry": null,
+  "contentHash": "ff1019d74dfb929d27e760791a99161ad13b9413f7ae79983f590677593eb404",
+  "assets": [
+    {
+      "role": "beauty",
+      "path": "images/beauty.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 80,
+      "sha256": "31ff8c404d30afcc570d9d82a41345ab18f24bec1b20e1d688ea187a6b8b0830",
+      "image": {
+        "width": 2250,
+        "height": 1500,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgb"
+      }
+    },
+    {
+      "role": "object-id",
+      "path": "images/object-id.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 83,
+      "sha256": "e7ae1d5a9763d4c0f4a1d5b46eb24e0ea4d79fc6ad9621ee6f1944305737f0b8",
+      "image": {
+        "width": 2250,
+        "height": 1500,
+        "colorSpace": "non-color",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      },
+      "index": [
+        {
+          "value": 1,
+          "name": "Boden"
+        },
+        {
+          "value": 2,
+          "name": "Fahrzeug"
+        },
+        {
+          "value": 3,
+          "name": "Mast Nord"
+        }
+      ]
+    },
+    {
+      "role": "material-id",
+      "path": "images/material-id.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 85,
+      "sha256": "50ebd9d31a393879b0e209b060c2047841c60443b4ef2b33dfd94de8209e3ee5",
+      "image": {
+        "width": 2250,
+        "height": 1500,
+        "colorSpace": "non-color",
+        "bitDepth": 16,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      },
+      "index": [
+        {
+          "value": 1,
+          "name": "Asphalt"
+        },
+        {
+          "value": 2,
+          "name": "Lack rot"
+        }
+      ]
+    },
+    {
+      "role": "mask",
+      "path": "images/mask-buffer-8.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 87,
+      "sha256": "af8643b0496b95fab1403b86fb67b7ad29a60b969858a3adeaf640ffad92874f",
+      "image": {
+        "width": 2250,
+        "height": 1500,
+        "colorSpace": "non-color",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      },
+      "mask": {
+        "bufferId": 8,
+        "name": "cars"
+      }
+    },
+    {
+      "role": "mask",
+      "path": "images/mask-buffer-10.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 88,
+      "sha256": "85de1fcbe496a28c7c8a6f959a1942065151f397334cf1b5f871e3467ff4437c",
+      "image": {
+        "width": 2250,
+        "height": 1500,
+        "colorSpace": "non-color",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "gray"
+      },
+      "mask": {
+        "bufferId": 10,
+        "name": "floor"
+      }
+    }
+  ]
+}

@@ -56,14 +56,19 @@ SOURCE_FILE_CONTRACT_VERSION = "1.5.0"
 MODEL_ONLY_CONTRACT_VERSION = "1.6.0"
 # 1.7.0 bringt kein Manifestfeld: der Handshake nennt seitdem die Canvas-Vorgabe (RTX-P-015). Geschrieben
 # wird deshalb höchstens 1.6.0; der Prüfer nimmt 1.7.0 an wie der Server.
+# 1.8.0: die Rolle ``mask`` darf mehrfach stehen, eine Maske nennt ihre Herkunft (``mask``), eine
+# ID-Datei ihre Begleitliste (``index``) (#289, capture-manifest.md Abschnitt 12). Geschrieben nur, wenn
+# eine Aufnahme das braucht (``masks_contract_version``); jede andere bleibt bei 1.6.0.
+MASKS_CONTRACT_VERSION = "1.8.0"
 MODEL_ROLE = "model"
 MODEL_MEDIA_TYPE = "model/gltf-binary"
 PNG_MEDIA_TYPE = "image/png"
-IMPLEMENTED_MINOR = 7
+IMPLEMENTED_MINOR = 8
 PNG_SINCE_MINOR = 3
 CAMERA_LENS_SINCE_MINOR = 4
 SOURCE_FILE_NAME_SINCE_MINOR = 5
 MODEL_ONLY_SINCE_MINOR = 6
+MASKS_SINCE_MINOR = 8
 MODEL_ONLY_CAPABILITY = "modelOnlyCapture"
 SOURCE_FILE_NAME_MAX_LENGTH = 255
 
@@ -122,6 +127,27 @@ def model_contract_version(handshake: dict | None) -> str:
     if minor is not None and minor >= CAMERA_LENS_SINCE_MINOR:
         return CAMERA_CONTRACT_VERSION
     return PNG_CONTRACT_VERSION if minor is not None and minor >= PNG_SINCE_MINOR else MODEL_CONTRACT_VERSION
+
+
+def masks_contract_version(handshake: dict | None) -> str | None:
+    """1.8.0, wenn der Server sie umsetzt — die Fassung für eine Aufnahme mit mehreren Masken oder einer
+    Begleitliste der IDs (#289); sonst ``None``: dann trägt die Aufnahme höchstens eine Maske und keine
+    Herkunft und keine Begleitliste."""
+    minor = _highest_minor(handshake)
+    return MASKS_CONTRACT_VERSION if minor is not None and minor >= MASKS_SINCE_MINOR else None
+
+
+def masks_allowed(contract_version: str) -> bool:
+    """Ob ein Dokument dieser Fassung mehrere Masken, ``mask`` und ``index`` tragen darf (ab 1.8.0)."""
+    match = re.fullmatch(r"1\.([0-9]+)\.[0-9]+", str(contract_version))
+    return match is not None and int(match.group(1)) >= MASKS_SINCE_MINOR
+
+
+def repeatable_roles() -> tuple[str, ...]:
+    """Die Rollen, die ab 1.8.0 mehrfach stehen dürfen — aus dem Schema (``$defs/repeatableAssetRole``),
+    derselben Liste, die ``tools/validate.mjs`` und der Server lesen."""
+    schema = registry().documents["capture-manifest.schema.json"]
+    return tuple(((schema.get("$defs") or {}).get("repeatableAssetRole") or {}).get("enum") or ())
 
 
 def camera_lens_allowed(contract_version: str) -> bool:
@@ -511,7 +537,19 @@ def validate_manifest(document: dict) -> list[str]:
     if before_model_only and isinstance(declared, dict) and MODEL_ONLY_CAPABILITY in declared:
         problems.append(f"/source/host/capabilities/{MODEL_ONLY_CAPABILITY}: erst ab contractVersion 1.6.0 zulässig")
     if isinstance(assets, list):
-        roles = [a.get("role") for a in assets if isinstance(a, dict)]
+        repeatable = repeatable_roles() if masks_allowed(version) else ()
+        for index, asset in enumerate(assets):
+            if not isinstance(asset, dict):
+                continue
+            if not masks_allowed(version):
+                for key in ("mask", "index"):
+                    if key in asset:
+                        problems.append(f"/assets/{index}/{key}: erst ab contractVersion 1.8.0 zulässig")
+            entries = asset.get("index")
+            values = [e.get("value") for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+            if len(set(values)) != len(values):
+                problems.append(f"/assets/{index}/index: value nicht eindeutig")
+        roles = [a.get("role") for a in assets if isinstance(a, dict) and a.get("role") not in repeatable]
         paths = [a.get("path") for a in assets if isinstance(a, dict)]
         if len(set(roles)) != len(roles):
             problems.append("/assets: eine Rolle steht mehr als einmal")
@@ -654,6 +692,10 @@ class CaptureFile:
     # Pflicht bei ``present`` für die Rollen ``depth`` bzw. ``normal`` (§5.2, §5.3).
     depth: dict | None = None
     normal: dict | None = None
+    # Seit 1.8.0 (#289): Herkunft einer Maske (``{"bufferId", "name"}``) und Begleitliste einer
+    # ID-Datei (``[{"value", "name"}]``).
+    mask: dict | None = None
+    index: list | None = None
 
 
 @dataclass
@@ -689,12 +731,14 @@ class ManifestInput:
 
 
 def capture_file(path: str, root: str, role: str, media_type: str, image: dict | None,
-                 note: str | None, depth: dict | None = None, normal: dict | None = None) -> CaptureFile:
+                 note: str | None, depth: dict | None = None, normal: dict | None = None,
+                 mask: dict | None = None, index: list | None = None) -> CaptureFile:
     """Eine geschriebene Datei als ``CaptureFile`` — Hash und Größe aus der Datei, Pfad relativ zur Wurzel."""
     sha, size = sha256_file(path)
     relative = os.path.relpath(path, root).replace(os.sep, "/")
     return CaptureFile(role=role, path=relative, media_type=media_type, image=image,
-                       note=note, byte_size=size, sha256=sha, depth=depth, normal=normal)
+                       note=note, byte_size=size, sha256=sha, depth=depth, normal=normal,
+                       mask=mask, index=index)
 
 
 def asset_entries(data: ManifestInput) -> list[dict]:
@@ -714,6 +758,10 @@ def asset_entries(data: ManifestInput) -> list[dict]:
             entry["depth"] = dict(f.depth)
         if f.normal is not None:
             entry["normal"] = dict(f.normal)
+        if f.mask is not None:
+            entry["mask"] = dict(f.mask)
+        if f.index:
+            entry["index"] = [dict(item) for item in f.index]
         if f.note:
             entry["note"] = f.note[:512]
         assets.append(entry)

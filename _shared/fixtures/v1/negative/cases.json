@@ -49,7 +49,7 @@
         {
           "op": "set",
           "path": "/contractVersion",
-          "value": "1.8.0"
+          "value": "1.9.0"
         }
       ],
       "expect": "unsupported_contract_minor"
@@ -1987,6 +1987,172 @@
         }
       ],
       "expect": "/camera/resolution/height"
+    },
+    {
+      "name": "masks-repeat-before-1-8",
+      "issue": "Unter 1.8.0 trägt ein Capture jede Rolle höchstens einmal, auch mask",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.7.0"
+        },
+        {
+          "op": "remove",
+          "path": "/assets/4/mask"
+        },
+        {
+          "op": "remove",
+          "path": "/assets/3/mask"
+        },
+        {
+          "op": "remove",
+          "path": "/assets/2/index"
+        },
+        {
+          "op": "remove",
+          "path": "/assets/1/index"
+        }
+      ],
+      "expect": "assets[].role nicht eindeutig: mask"
+    },
+    {
+      "name": "mask-source-before-1-8",
+      "issue": "Die Herkunft einer Maske gibt es erst ab 1.8.0",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.7.0"
+        }
+      ],
+      "expect": "/assets/3/mask: erst ab contractVersion 1.8.0 zulässig"
+    },
+    {
+      "name": "index-list-before-1-8",
+      "issue": "Die Begleitliste der IDs gibt es erst ab 1.8.0",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/contractVersion",
+          "value": "1.7.0"
+        }
+      ],
+      "expect": "/assets/1/index: erst ab contractVersion 1.8.0 zulässig"
+    },
+    {
+      "name": "role-duplicate-1-8",
+      "issue": "Ab 1.8.0 darf nur mask mehrfach stehen; jede andere Rolle bleibt einmalig",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/role",
+          "value": "object-id"
+        }
+      ],
+      "expect": "assets[].role nicht eindeutig: object-id"
+    },
+    {
+      "name": "mask-path-duplicate",
+      "issue": "Zwei Masken sind zwei Dateien: der Pfad bleibt eindeutig",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/4/path",
+          "value": "images/mask-buffer-8.png"
+        }
+      ],
+      "expect": "assets[].path nicht eindeutig: images/mask-buffer-8.png"
+    },
+    {
+      "name": "mask-source-wrong-role",
+      "issue": "Die Herkunft einer Maske steht nur bei role mask",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/0/mask",
+          "value": {
+            "bufferId": 1,
+            "name": "Fahrzeug"
+          }
+        }
+      ],
+      "expect": "/assets/0/mask"
+    },
+    {
+      "name": "index-list-wrong-role",
+      "issue": "Die Begleitliste steht nur bei object-id und material-id",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/3/index",
+          "value": [
+            {
+              "value": 1,
+              "name": "Fahrzeug"
+            }
+          ]
+        }
+      ],
+      "expect": "/assets/3/index"
+    },
+    {
+      "name": "index-value-duplicate",
+      "issue": "Ein Index hat höchstens einen Namen",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/index/1/value",
+          "value": 1
+        }
+      ],
+      "expect": "/assets/1/index: value nicht eindeutig: 1"
+    },
+    {
+      "name": "index-value-zero",
+      "issue": "0 heißt kein Index und trägt keinen Namen",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/1/index/0/value",
+          "value": 0
+        }
+      ],
+      "expect": "/assets/1/index/0/value"
+    },
+    {
+      "name": "index-name-too-long",
+      "issue": "Ein Name in der Begleitliste hat höchstens 128 Zeichen",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "set",
+          "path": "/assets/2/index/0/name",
+          "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ],
+      "expect": "/assets/2/index/0/name"
+    },
+    {
+      "name": "mask-source-without-buffer",
+      "issue": "Die Herkunft einer Maske nennt die Buffer-ID",
+      "base": "masks-index/capture-manifest.json",
+      "operations": [
+        {
+          "op": "remove",
+          "path": "/assets/3/mask/bufferId"
+        }
+      ],
+      "expect": "/assets/3/mask"
     }
   ]
 }

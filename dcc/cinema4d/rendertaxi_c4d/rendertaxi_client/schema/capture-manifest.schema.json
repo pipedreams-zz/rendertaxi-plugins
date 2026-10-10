@@ -54,12 +54,12 @@
     },
     "assets": {
       "type": "array",
-      "description": "Je Rolle höchstens ein Eintrag; mindestens ein Bild (jede Rolle außer model) trägt status present — seit 1.6.0 mindestens ein Bild oder das Modell; ein Capture nur mit Modell nennt dann die Kamera mit resolution. Beides erzwingt tools/validate.mjs.",
+      "description": "Je Rolle höchstens ein Eintrag — außer mask, die seit 1.8.0 mehrfach vorkommen darf (unterschieden nach path); mindestens ein Bild (jede Rolle außer model) trägt status present — seit 1.6.0 mindestens ein Bild oder das Modell; ein Capture nur mit Modell nennt dann die Kamera mit resolution. Beides erzwingt tools/validate.mjs.",
       "items": {
         "$ref": "#/$defs/asset"
       },
       "minItems": 1,
-      "maxItems": 11
+      "maxItems": 42
     }
   },
   "required": [
@@ -394,6 +394,12 @@
         "normal": {
           "$ref": "#/$defs/normal"
         },
+        "mask": {
+          "$ref": "#/$defs/maskSource"
+        },
+        "index": {
+          "$ref": "#/$defs/indexList"
+        },
         "note": {
           "$ref": "common.schema.json#/$defs/displayText"
         }
@@ -511,6 +517,36 @@
           "if": {
             "properties": {
               "role": {
+                "$ref": "#/$defs/repeatableAssetRole"
+              }
+            },
+            "required": ["role"]
+          },
+          "else": {
+            "properties": {
+              "mask": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": ["object-id", "material-id"]
+              }
+            },
+            "required": ["role"]
+          },
+          "else": {
+            "properties": {
+              "index": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
                 "enum": ["viewport", "beauty", "albedo"]
               }
             },
@@ -540,6 +576,51 @@
           }
         }
       ]
+    },
+    "repeatableAssetRole": {
+      "description": "Seit 1.8.0: die einzige Rolle, die ein Capture mehrfach tragen darf, unterschieden nach path (#289, Nachtrag zu ADR 0036). Jede andere Rolle steht höchstens einmal da. tools/validate.mjs und der Server lesen die Regel von hier; ein Dokument unter 1.8.0 trägt jede Rolle höchstens einmal.",
+      "enum": ["mask"]
+    },
+    "maskSource": {
+      "type": "object",
+      "description": "Seit 1.8.0, nur bei role mask: woher die Maske im Host stammt. bufferId ist die Kennung des Objektpuffers (etwa eines Compositing-Tags), name der Name, unter dem der Nutzer die Maske im Host sieht. Reine Beschreibung; die Datei unterscheidet path.",
+      "properties": {
+        "bufferId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["bufferId", "name"],
+      "additionalProperties": false
+    },
+    "indexList": {
+      "type": "array",
+      "description": "Seit 1.8.0, nur bei role object-id und material-id: die Begleitliste Index → Name (Objekt bzw. Material), soweit der Host sie liefert. value ist der im Bild gespeicherte Index (ab 1; 0 heißt kein Index) und je Liste eindeutig; das erzwingt tools/validate.mjs.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": ["value", "name"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 4096
     },
     "geometry": {
       "type": "object",
