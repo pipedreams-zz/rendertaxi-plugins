@@ -143,6 +143,12 @@ def masks_allowed(contract_version: str) -> bool:
     return match is not None and int(match.group(1)) >= MASKS_SINCE_MINOR
 
 
+def asset_limit() -> int:
+    """Wie viele Assets ein Manifest höchstens trägt — ``assets.maxItems`` des Schemas, keine zweite Zahl (#289)."""
+    schema = registry().documents["capture-manifest.schema.json"]
+    return int(schema["properties"]["assets"]["maxItems"])
+
+
 def repeatable_roles() -> tuple[str, ...]:
     """Die Rollen, die ab 1.8.0 mehrfach stehen dürfen — aus dem Schema (``$defs/repeatableAssetRole``),
     derselben Liste, die ``tools/validate.mjs`` und der Server lesen."""

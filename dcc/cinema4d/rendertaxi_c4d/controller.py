@@ -47,9 +47,13 @@ DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
 # mehr gibt, verliert ihr Häkchen, nie ein Fehler.
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
                     "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "lastTab": "connection",
-                    "sendImage": True, "sendModel": False, "sendExtraCameras": False, "extraCameras": {}}
+                    "sendImage": True, "sendModel": False, "sendExtraCameras": False, "extraCameras": {},
+                    "masksOff": []}
 # Höchstens so viele gemerkte Dokumente mit Kamerawahl; das älteste fällt heraus.
 REMEMBERED_DOCUMENTS = 50
+# Höchstens so viele aktive Masken stehen zur Wahl (Tab „Bild“); was darüber liegt, wird weder gezeigt noch gesendet.
+# Das Manifest trägt ohnehin höchstens ``mf.asset_limit()`` Einträge (#289, Review F-01).
+MASK_ROWS_MAX = 120
 # Die Tabs des Fensters, in ihrer Reihenfolge (Nutzerentscheidung vom 05.10.2026).
 TABS = ("connection", "project", "viewpoint", "image", "model")
 
@@ -90,6 +94,30 @@ class Form:
     # Kameras im GLB (RTX-C4D-010): die der Renderansicht immer; die gewählten nur mit dem Schalter.
     send_extra_cameras: bool = False
     extra_cameras: set[str] = field(default_factory=set)
+
+
+def masks_and_index(files: list, planned: list, contract_version: str, handshake: dict | None):
+    """Mehrere Masken, ihre Herkunft und die Begleitlisten der IDs brauchen Capture-Manifest 1.8.0 (#289).
+
+    Trägt die Aufnahme etwas davon und setzt der Server 1.8.0 um, geht sie als 1.8.0; jede andere bleibt bei
+    ``contract_version``. Setzt er es nicht um, gehen die IDs ohne Begleitliste, und die Masken bleiben geplant mit
+    Grund — ein Server unter 1.8.0 nimmt nicht einmal zwei geplante Masken an.
+    """
+    masks = [f for f in files if f.role == "mask"]
+    planned_masks = [p for p in planned if p.role == "mask"]
+    if not masks and len(planned_masks) <= 1 and not any(getattr(f, "index", None) for f in files):
+        return files, planned, contract_version
+    upgraded = mf.masks_contract_version(handshake)
+    if upgraded is not None:
+        return files, planned, upgraded
+    for f in files:
+        f.index = None
+    kept = [f for f in files if f.role != "mask"]
+    others = [p for p in planned if p.role != "mask"]
+    if masks or planned_masks:
+        others.append(mf.PlannedRole("mask", "images/mask.png", mf.PNG_MEDIA_TYPE,
+                                     "Masken nimmt dieser Server erst mit Capture-Manifest 1.8.0 an."))
+    return kept, others, contract_version
 
 
 class State:
@@ -165,8 +193,8 @@ class Controller:
         self.state = State()
         self.form = Form()
         self._jobs: list[Job] = []
-        # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke) — nur ein Hinweis.
-        self.model_estimate: tuple[str, int, int] | None = None
+        # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke, Bytes oder None) — nur ein Hinweis.
+        self.model_estimate: tuple[str, int, int, int | None] | None = None
         # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
         self.new_project_intent = NewProject()
         # Die gemerkte Wahl der Wege; ``settings`` fällt bei jedem Fehler auf die Vorgaben (Regel 3).
@@ -621,7 +649,85 @@ class Controller:
     def selected_roles(self) -> list[str]:
         if self.form.capture_kind != BEAUTY:
             return []
-        return [role for role in ("depth", "normal", "albedo", "object-id", "material-id") if role in self.form.passes]
+        return [role for role in ("depth", "normal", "albedo", "object-id", "material-id", "mask")
+                if role in self.form.passes]
+
+    # -- Masken (Corona Object Buffers, #289 Teil 2) ------------------------------
+
+    def masks_off(self) -> set[int]:
+        """Die abgewählten Buffer-IDs — gemerkt über den Neustart. Was kein Ganzzahlwert ist, fällt still heraus, und
+        eine ID, die es in der Szene nicht gibt, stört nicht (Regel 3: ein gemerkter Zustand verhindert nie das Laden)."""
+        stored = self.settings().get("masksOff")
+        if not isinstance(stored, list):
+            return set()
+        return {value for value in stored if isinstance(value, int) and not isinstance(value, bool) and value >= 0}
+
+    def mask_rows(self) -> list[dict]:
+        """Die aktivierten Object-Buffer-Masken der Szene: ``number``, ``name``, ``checked`` — leer ohne Corona.
+
+        Höchstens ``MASK_ROWS_MAX``: was darüber liegt, steht nicht zur Wahl und wird nie gesendet (keine unsichtbare
+        Vorauswahl, Review F-01).
+        """
+        try:
+            rows = self.adapter.mask_rows()
+        except (RuntimeError, AttributeError, TypeError):
+            return []
+        off = self.masks_off()
+        return [dict(row, checked=row["number"] not in off) for row in rows[:MASK_ROWS_MAX]]
+
+    def hidden_masks(self) -> int:
+        """Wie viele aktive Masken über ``MASK_ROWS_MAX`` liegen — der Tab sagt es."""
+        try:
+            return max(0, len(self.adapter.mask_rows()) - MASK_ROWS_MAX)
+        except (RuntimeError, AttributeError, TypeError):
+            return 0
+
+    def mask_room(self) -> tuple[int, int]:
+        """**Die eine Rechnung** für die Plätze der Masken (#289, Review F-01): ``(frei, gewählt)``.
+
+        Ein Manifest trägt höchstens ``mf.asset_limit()`` Einträge (``assets.maxItems`` des Vertrags), und der Server
+        nimmt höchstens ``maxAssetCount`` Dateien (Handshake). Belegt sind die Beauty, jede gewählte Datenpass-Rolle —
+        vorhanden oder geplant, beides ist ein Eintrag — und mit „Modell“ die GLB-Datei; der Rest gehört den Masken.
+        Ohne Masken als Rolle ist nichts gewählt.
+        """
+        roles = self.selected_roles()
+        if "mask" not in roles:
+            return 0, 0
+        chosen = self.chosen_ways()
+        taken = 1 + len([role for role in roles if role != "mask"]) + (1 if chosen is not None and chosen.model else 0)
+        free = mf.asset_limit() - taken
+        files = ((self.state.handshake or {}).get("limits") or {}).get("maxAssetCount")
+        if isinstance(files, int) and not isinstance(files, bool) and files > 0:
+            free = min(free, files - taken)
+        return max(0, free), len(self.chosen_masks())
+
+    def mask_problem(self) -> str | None:
+        """Mehr Masken gewählt als Plätze frei: der Satz dazu — **vor** Rendern und Export, nie stilles Abschneiden."""
+        chosen = self.chosen_ways()
+        if chosen is None or not chosen.image:
+            return None
+        free, picked = self.mask_room()
+        if picked <= free:
+            return None
+        return (f"Zu viele Masken: {picked} gewählt, {free} frei — eine Aufnahme trägt höchstens "
+                f"{mf.asset_limit()} Einträge{self._file_limit_text()}. Masken abwählen.")
+
+    def _file_limit_text(self) -> str:
+        files = ((self.state.handshake or {}).get("limits") or {}).get("maxAssetCount")
+        return f", der Server nimmt höchstens {files} Dateien" if isinstance(files, int) and files > 0 else ""
+
+    def set_mask(self, number: int, on: bool) -> None:
+        """Eine Maske an- oder abwählen und sofort merken; nicht merkbar heißt: gilt bis zum Neustart nicht weiter."""
+        off = self.masks_off()
+        (off.discard if on else off.add)(int(number))
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save({"masksOff": sorted(off)})
+        except (OSError, ValueError):
+            self._set_error("Die Wahl der Masken ließ sich nicht merken (Einstellungsordner nicht beschreibbar).")
+
+    def chosen_masks(self) -> list[int]:
+        """Die Buffer-IDs der Masken, die mitgehen."""
+        return [row["number"] for row in self.mask_rows() if row["checked"]]
 
     # -- Modell --------------------------------------------------------------
 
@@ -864,26 +970,37 @@ class Controller:
         except (RuntimeError, OSError) as error:  # export.ExportError ist ein RuntimeError
             log_exception("Modellgröße nicht bestimmbar", error)
             return
-        self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles)
+        self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles,
+                               getattr(counted, "byte_size", None))
 
     def model_hint(self) -> str:
-        """Größe, Grenzen und was nicht mitgeht — der Text im Tab „Modell"."""
+        """Größe, Grenzen und was nicht mitgeht — der Text im Tab „Modell".
+
+        Nach „Neu zählen“ eine Zeile Dreiecke, die nächste die Dateigröße in MB (Nutzerwunsch vom 10.10.2026); die
+        Zeilen trennt ``\n`` (``wrap`` bricht jede für sich um).
+        """
         if not self.form.send_model:
             return ""
         problem = self.model_problem()
         if problem:
             return problem
         parts = []
+        cap = ((self.state.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
+        limit = f" (höchstens {megabytes(cap)})" if cap else ""
         estimate = self.model_estimate
         if estimate is None or estimate[0] != self.form.capture_kind:
             parts.append("Größe noch nicht gezählt („Neu zählen“).")
+            if cap:
+                parts.append(f"Modelldatei höchstens {megabytes(cap)}.")
         else:
-            _kind, objects, triangles = estimate
-            text = f"≈ {triangles:,} Dreiecke in {objects} sichtbaren Objekten (höchstens {MAX_TRIANGLES:,})."
+            _kind, objects, triangles, byte_size = estimate
+            text = f"≈ {triangles:,} Dreiecke in {objects:,} Objekten (höchstens {MAX_TRIANGLES:,})."
             parts.append(("Zu groß: " if triangles > MAX_TRIANGLES else "") + text.replace(",", " "))
-        cap = ((self.state.handshake or {}).get("limits") or {}).get("maxGeometryBytes")
-        if cap:
-            parts.append(f"Modelldatei höchstens {cap / 1048576:.0f} MB.")
+            if byte_size is None:
+                parts.append(f"Dateigröße nicht gemessen{limit}.")
+            else:
+                too_big = "Zu groß: " if cap and byte_size > cap else ""
+                parts.append(f"{too_big}Datei ≈ {megabytes(byte_size)}{limit}.")
         try:
             why = self.adapter.camera_problem(self.capture_size() or self.document_size(),
                                               mf.camera_lens_allowed(mf.model_contract_version(self.state.handshake)))
@@ -891,7 +1008,7 @@ class Controller:
             why = str(error)
         if why:
             parts.append(f"Ohne Kamera: {why}")
-        return " ".join(parts)
+        return "\n".join(parts)
 
     # -- Übernahme ------------------------------------------------------------
 
@@ -912,6 +1029,9 @@ class Controller:
         """
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
+        problem = self.mask_problem()
+        if problem:  # vor Rendern und Export: dieselbe Rechnung wie im Tab (Review F-01)
+            raise ValueError(problem)
         chosen = ways.plan(self.form.send_image, self.form.send_model, self.state.handshake, self.selected_roles())
         size = self.capture_size()
         contract_version = mf.image_contract_version(handshake)
@@ -932,7 +1052,7 @@ class Controller:
         if chosen.image:
             files, planned, view_name = self.adapter.render(
                 self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
-                self._progress_in_main, self.data_pass_bit_depth(), rendered)
+                self._progress_in_main, self.data_pass_bit_depth(), rendered, self.chosen_masks())
         camera = geometry = None
         if chosen.model:
             if chosen.image:
@@ -949,6 +1069,7 @@ class Controller:
             files.append(model)
             if chosen.model_only:
                 view_name = self.adapter.camera_name() or "Renderansicht"
+        files, planned, contract_version = masks_and_index(files, planned, contract_version, handshake)
         try:
             file_name = self.adapter.document_file_name()
         except (RuntimeError, AttributeError, TypeError):  # ohne Dateinamen geht der Capture trotzdem
@@ -989,15 +1110,20 @@ class Controller:
         """„Übernehmen": Bild und/oder Modell im Hauptfaden, übertragen im Hintergrund.
 
         Rendert die Beauty im Picture Viewer, startet der Knopf dieses Rendern (``start_rendering``); übernommen wird
-        dann mit „Gerenderte Bilder übernehmen“ (``take_rendered``).
+        dann mit „Gerenderte Bilder übernehmen“ (``take_rendered``). Passen die gewählten Masken nicht, startet keins
+        von beiden (``mask_problem``).
         """
+        problem = None if self.rendering_running() else self.mask_problem()
+        if problem:
+            self._set_error(problem)
+            return False
         if self.picture_viewer_way():
             return self.start_rendering()
         return self._capture(None)
 
     def take_rendered(self) -> bool:
         """„Gerenderte Bilder übernehmen“: Beauty und Ebenen aus dem Bildspeicher des Renderns, sonst wie „Übernehmen“."""
-        problem = self.rendered_problem()
+        problem = self.rendered_problem() or self.mask_problem()
         if problem:
             self._set_error(problem)
             return False
@@ -1105,17 +1231,27 @@ class Controller:
             self.adapter.open_url(self.state.result["openUrl"])
 
 
+def megabytes(byte_size: int) -> str:
+    """Bytes als MB mit einer Nachkommastelle und Komma (1 MB = 1 048 576 Bytes, wie die Grenze des Servers)."""
+    return f"{byte_size / 1048576:.1f} MB".replace(".", ",")
+
+
 def wrap(text: str, width: int = 60, lines: int = 4) -> list[str]:
-    """Text in höchstens ``lines`` Zeilen zu ``width`` Zeichen — statische Texte brechen nicht selbst um."""
-    words, result, line = (text or "").split(), [], ""
-    for word in words:
-        if line and len(line) + 1 + len(word) > width:
+    """Text in höchstens ``lines`` Zeilen zu ``width`` Zeichen — statische Texte brechen nicht selbst um.
+
+    ``\n`` beginnt eine neue Zeile; jeder Absatz bricht für sich um.
+    """
+    result = []
+    for paragraph in (text or "").split("\n"):
+        line = ""
+        for word in paragraph.split():
+            if line and len(line) + 1 + len(word) > width:
+                result.append(line)
+                line = word
+            else:
+                line = f"{line} {word}".strip()
+        if line:
             result.append(line)
-            line = word
-        else:
-            line = f"{line} {word}".strip()
-    if line:
-        result.append(line)
     if len(result) > lines:
         result = result[:lines]
         result[-1] = result[-1][: max(0, width - 1)] + "…"

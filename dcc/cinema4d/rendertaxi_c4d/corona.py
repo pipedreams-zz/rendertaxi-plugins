@@ -20,10 +20,16 @@ Am Host gemessen (Cinema 4D 2026.3.1, Corona 15, ``docs/measurements/2026-10-08-
 * **Albedo** aus SourceColor (Typ 21) mit Component „Diffuse“ (10601 = 0): die diffuse Grundfarbe, die Corona rendert
   (Faktor 0,966 der Grundfarbe beim Standardmaterial), linear im Renderraum wie die Albedo unter Standard. Der Pass
   „Albedo“ (Typ 16) ist eine graue Diagnose und keine Grundfarbe.
-* **IDs** aus Masken (Typ 14, Monochrom) mit Anti-aliasing aus, je ID eine: „Object buffer ID“ (10811/10812) sind die
-  Objektpuffer der Compositing-Tags, „Material ID“ (10813/10814) die Material-ID der Corona-Materialien (Parameter 4220).
-  Gemessen: nur 0 und 1, keine Überlappung, deckungsgleich mit den Flächen des ID-Passes. Der ID-Pass selbst (Typ 13)
-  liefert Farbcodes, keinen Index.
+* **IDs** (#289 Teil 2, gemessen 10.10.2026, ``docs/measurements/2026-10-10-corona-ids-buffers.md``) aus dem
+  ID-Pass (Typ 13, Modus 10701: 4 Object, 3 Material) mit Anti-aliasing aus — **eine** Ebene je Rolle, gleich wie
+  viele IDs: je Objekt bzw. Material eine flache Farbe, ohne Treffer (0, 0, 0). Die Farbe im Modus Material hängt nur
+  am Namen des Materials (über Läufe gleich), im Modus Object ist sie je Lauf zufällig. Aus den Farben wird der Index
+  (``colour_index``: nach Farbwert sortiert, 1 … N); Coronas eigene Zuordnung — Material ID (Parameter 4220) und
+  Objektpuffer der Compositing-Tags — kommt aus den **aktivierten Masken des Nutzers** im selben Render (``active_masks``)
+  und geht nur in die Begleitliste.
+* **Masken** (Rolle ``mask``): die aktivierten Object-Buffer-Masken des Nutzers (Typ 14, „Object buffer ID“ 10811/10812)
+  aus ihren eigenen Ebenen. Aktiv heißt: Multi-Pass an, der Knoten an und jeder Ordner (Typ 999) darüber an — ein
+  ausgeschalteter Ordner liefert keine Ebene (gemessen).
 
 Nur Python-Standardbibliothek und ``c4d``. Was hier nicht geht, wirft nie: die Rolle wird ``planned`` mit Grund
 (Regel 3).
@@ -40,9 +46,9 @@ BRANCH = 1037373
 NODE = 1033780
 HOOK_ENABLE = 10000
 TYPE, ENABLE, ANTIALIASING = 10101, 10103, 10105
-NORMALS_GEOMETRY, WORLD_POSITION, MASK, SOURCE_COLOR = 8, 11, 14, 21
+NORMALS_GEOMETRY, WORLD_POSITION, ID_PASS, MASK, SOURCE_COLOR, FOLDER = 8, 11, 13, 14, 21, 999
+ID_MODE, ID_MODE_MATERIAL, ID_MODE_OBJECT = 10701, 3, 4
 COMPONENT, COMPONENT_DIFFUSE = 10601, 0
-MASK_MODE, MASK_MONOCHROME = 10801, 0
 MASK_OBJECT_ON, MASK_OBJECT_ID, MASK_MATERIAL_ON, MASK_MATERIAL_ID = 10811, 10812, 10813, 10814
 # Die Material-ID der Corona-Materialien (Physical, Legacy, Light): Parameter 4220 „Material ID“ unter „Advanced“.
 MATERIAL_ID = 4220
@@ -86,9 +92,73 @@ def _nodes(head):
     return found
 
 
-def material_ids(doc) -> list[int]:
-    """Die Material-IDs der Corona-Materialien im Dokument (ab 1), aufsteigend — nur gelesen."""
-    found = set()
+class UserMask:
+    """Eine aktivierte Maske des Nutzers: ``kind`` ``object`` (Objektpuffer) oder ``material`` (Material ID)."""
+
+    def __init__(self, kind: str, number: int, name: str):
+        self.kind, self.number, self.name = kind, number, name
+
+    def __eq__(self, other):
+        return isinstance(other, UserMask) and (self.kind, self.number, self.name) == (other.kind, other.number,
+                                                                                      other.name)
+
+    def __repr__(self):
+        return f"UserMask({self.kind!r}, {self.number}, {self.name!r})"
+
+
+def _number(node, key) -> int | None:
+    try:
+        value = node[key]
+    except (AttributeError, TypeError, KeyError):
+        return None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def active_masks(doc) -> list[UserMask]:
+    """Die **aktivierten** Masken des Nutzers in der Reihenfolge des Pass-Baums — nur gelesen.
+
+    Aktiv heißt: Multi-Pass an, der Knoten an und jeder Ordner darüber an (ein ausgeschalteter Ordner liefert keine
+    Ebene, gemessen). Eine Maske ist ``object`` mit „Object buffer ID“ an, ``material`` mit „Material ID“ an; eine mit
+    beidem schneidet zwei Mengen und zählt zu keiner.
+    """
+    hook, head = _head(doc)
+    if hook is None or head is None or not hook[HOOK_ENABLE]:
+        return []
+    found: list[UserMask] = []
+
+    def walk(node):
+        while node is not None:
+            # Am Host ist „Enable“ 0 oder 1 (gemessen 10.10.2026), nicht False/True; ein neuer Knoten hat keinen Wert.
+            if node.GetType() == NODE and (node[ENABLE] is None or bool(node[ENABLE])):
+                if node[TYPE] == FOLDER:
+                    walk(node.GetDown())
+                elif node[TYPE] == MASK:
+                    on_object, on_material = bool(node[MASK_OBJECT_ON]), bool(node[MASK_MATERIAL_ON])
+                    kind, key = (("object", MASK_OBJECT_ID) if on_object and not on_material
+                                 else ("material", MASK_MATERIAL_ID) if on_material and not on_object else (None, None))
+                    number = _number(node, key) if kind else None
+                    if kind and number is not None:
+                        found.append(UserMask(kind, number, node.GetName()))
+            node = node.GetNext()
+
+    walk(head.GetFirst())
+    return found
+
+
+def object_buffers(doc) -> list[UserMask]:
+    """Die aktivierten Object-Buffer-Masken — die Liste, aus der der Nutzer die Masken wählt (je Buffer-ID die erste)."""
+    seen: set[int] = set()
+    found = []
+    for mask in active_masks(doc):
+        if mask.kind == "object" and mask.number not in seen:
+            seen.add(mask.number)
+            found.append(mask)
+    return found
+
+
+def material_names(doc) -> dict[int, list[str]]:
+    """Material ID (Parameter 4220, ab 1) → Namen der Corona-Materialien mit dieser ID — nur gelesen."""
+    found: dict[int, list[str]] = {}
     material = doc.GetFirstMaterial() if hasattr(doc, "GetFirstMaterial") else None
     while material is not None:
         if material.GetType() in MATERIAL_TYPES:
@@ -97,9 +167,9 @@ def material_ids(doc) -> list[int]:
             except (AttributeError, TypeError, KeyError):
                 value = None
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                found.add(value)
+                found.setdefault(value, []).append(material.GetName())
         material = material.GetNext()
-    return sorted(found)
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -199,8 +269,6 @@ class Passes:
     def __init__(self, colour_info: Colour):
         self.colour = colour_info
         self.layers: dict = {}
-        self.object_ids: list[int] = []
-        self.material_ids: list[int] = []
         self.problem: str | None = None
 
 
@@ -217,11 +285,13 @@ def _node(kind: int, name: str, antialiasing: bool, params: dict | None = None):
     return node
 
 
-def prepare(twin, roles, object_ids: list[int], material_ids_: list[int]) -> Passes:
+def prepare(twin, roles) -> Passes:
     """Die Pässe für ``roles`` in den Pass-Baum der **Kopie** ``twin`` — nie in das Dokument des Nutzers.
 
     Ist Multi-Pass in der Kopie aus, schaltet ``prepare`` es ein und die Pässe des Nutzers dort aus (sie würden sonst
     erstmals mitgerendert). Schlägt etwas fehl, steht der Grund in ``problem``; gerendert wird trotzdem (Regel 3).
+    Die Masken (Rolle ``mask``) und die Namen der Begleitlisten kommen aus den Masken des Nutzers, die ohnehin
+    mitgerendert werden — dafür legt ``prepare`` nichts an.
     """
     passes = Passes(colour(twin))
     try:
@@ -247,25 +317,119 @@ def prepare(twin, roles, object_ids: list[int], material_ids_: list[int]) -> Pas
         if "albedo" in roles:
             wanted.append(("albedo", None, _node(SOURCE_COLOR, name("albedo"), True, {COMPONENT: COMPONENT_DIFFUSE})))
         if "object-id" in roles:
-            passes.object_ids = list(object_ids)
-            for number in object_ids:
-                wanted.append(("object-id", number, _node(MASK, name("object-id", number), False, {
-                    MASK_MODE: MASK_MONOCHROME, MASK_OBJECT_ON: True, MASK_OBJECT_ID: number})))
+            wanted.append(("object-id", None, _node(ID_PASS, name("object-id"), False, {ID_MODE: ID_MODE_OBJECT})))
         if "material-id" in roles:
-            passes.material_ids = list(material_ids_)
-            for number in material_ids_:
-                wanted.append(("material-id", number, _node(MASK, name("material-id", number), False, {
-                    MASK_MODE: MASK_MONOCHROME, MASK_MATERIAL_ON: True, MASK_MATERIAL_ID: number})))
-        for role, number, node in wanted:
+            wanted.append(("material-id", None, _node(ID_PASS, name("material-id"), False,
+                                                      {ID_MODE: ID_MODE_MATERIAL})))
+        for role, _number, node in wanted:
             node.InsertUnderLast(head)
-            if number is None:
-                passes.layers[role] = node.GetName()
-            else:
-                passes.layers.setdefault(role, {})[number] = node.GetName()
+            passes.layers[role] = node.GetName()
     except Exception as error:  # noqa: BLE001 — Regel 3: ohne Pässe bleibt die Beauty
         passes.layers = {}
         passes.problem = f"Corona-Pässe ließen sich nicht anlegen ({type(error).__name__})."
     return passes
+
+
+# --------------------------------------------------------------------------
+# Farbtabelle: aus einem ID-Pass mit Farbcodes ein Index je Pixel
+# --------------------------------------------------------------------------
+
+
+NO_HIT = (0.0, 0.0, 0.0)
+
+
+class ColourTable:
+    """Ergebnis von ``colour_index``: ``index`` je Pixel (0 = kein Index), ``colours`` je Index (1 … N) die Farbe,
+    ``counts`` je Index die Pixelzahl, ``reassigned`` die Pixel, deren Farbe keine eigene Fläche war (Kanten)."""
+
+    def __init__(self, index: list[int], colours: list[tuple], counts: list[int], reassigned: int):
+        self.index, self.colours, self.counts, self.reassigned = index, colours, counts, reassigned
+
+
+def _key(value, step: float) -> tuple:
+    return tuple(int(round(c / step)) for c in value[:3])
+
+
+def colour_index(pixels, width: int, tolerance: float = 0.0, step: float = 1e-4,
+                 min_pixels: int = 1) -> ColourTable:
+    """**Die eine Farbtabelle für beide ID-Pässe** (Objekt und Material): Farbe → Index 1 … N, (0, 0, 0) → 0.
+
+    ``pixels`` zeilenweise (r, g, b). Der Index folgt dem **Farbwert** (aufsteigend) — für Materialien, deren Farbe
+    am Namen hängt, damit unabhängig von Bildausschnitt und Reihenfolge. Ohne Anti-aliasing (so rendert das Plugin) ist
+    jede Farbe eine Fläche; ``tolerance`` (je Kanal) und ``min_pixels`` sind für fremde Bilder **mit** Kantenglättung
+    oder Rauschen (die Beispielbilder des Nutzers): Farben innerhalb der Toleranz zur häufigeren gehören zu ihr,
+    seltenere als ``min_pixels`` sind Kanten und bekommen den häufigsten Index ihrer acht Nachbarn, sonst den der
+    nächsten Farbe. Zwischenwerte gibt es im Ergebnis nie: jedes Pixel trägt genau einen Index.
+    """
+    keys = [_key(value, step) for value in pixels]
+    counts: dict = {}
+    for key in keys:
+        counts[key] = counts.get(key, 0) + 1
+    reach = int(round(tolerance / step))
+    centres: list = []
+    owner: dict = {}
+    for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        if max(abs(c) for c in key) <= reach:  # schwarz oder fast schwarz: kein Treffer
+            owner[key] = None
+            continue
+        near = next((centre for centre in centres if max(abs(a - b) for a, b in zip(key, centre)) <= reach), None)
+        if near is not None:
+            owner[key] = near
+        elif count >= min_pixels:
+            centres.append(key)
+            owner[key] = key
+    ordered = sorted(centres)
+    number = {centre: position + 1 for position, centre in enumerate(ordered)}
+    index = [0] * len(keys)
+    pending = []
+    for i, key in enumerate(keys):
+        if key in owner:
+            centre = owner[key]
+            index[i] = 0 if centre is None else number[centre]
+        else:
+            pending.append(i)
+    height = len(keys) // width if width else 0
+    for i in pending:
+        y, x = divmod(i, width)
+        votes: dict = {}
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                nx, ny = x + dx, y + dy
+                if (dx or dy) and 0 <= nx < width and 0 <= ny < height:
+                    j = ny * width + nx
+                    if keys[j] in owner:
+                        votes[index[j]] = votes.get(index[j], 0) + 1
+        if votes:
+            index[i] = max(sorted(votes), key=lambda value: votes[value])
+        elif ordered:
+            key = keys[i]
+            nearest = min(ordered, key=lambda centre: sum((a - b) ** 2 for a, b in zip(key, centre)))
+            index[i] = number[nearest]
+    totals = [0] * (len(ordered) + 1)
+    for value in index:
+        totals[value] += 1
+    return ColourTable(index, [tuple(c * step for c in centre) for centre in ordered], totals[1:], len(pending))
+
+
+def names_from_masks(table: ColourTable, masks, share: float = 0.9) -> dict:
+    """Begleitliste aus Masken: ``masks`` sind ``(Name, Werte)``; ein Index, dessen Pixel zu mindestens ``share`` in
+    **genau einer** Maske liegen (Wert über 0,5), heißt wie sie. Alles andere bleibt ohne Namen."""
+    named: dict = {}
+    hits: dict = {}
+    for label, values in masks:
+        inside: dict = {}
+        for position, value in enumerate(values):
+            if value > 0.5:
+                number = table.index[position]
+                if number:
+                    inside[number] = inside.get(number, 0) + 1
+        for number, count in inside.items():
+            if count >= share * table.counts[number - 1]:
+                hits.setdefault(number, []).append(label)
+    for number, labels in hits.items():
+        if len(labels) == 1:
+            named[number] = labels[0]
+    return named
 
 
 class AmbiguousLayer(Exception):

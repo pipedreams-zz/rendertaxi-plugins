@@ -33,7 +33,8 @@ import c4d
 from c4d import gui
 
 from . import host
-from .controller import BEAUTY, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT, Controller, wrap
+from .controller import (BEAUTY, MASK_ROWS_MAX, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
+                         Controller, wrap)
 from .rendertaxi_client import frame
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
@@ -66,12 +67,18 @@ ID_HINT = 1040  # bis 1043: vier Zeilen
 ID_KIND = 1051
 ID_RESOLUTION = 1052
 ID_CUT = 1053
-ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062, "object-id": 1063, "material-id": 1064}
+ID_PASS = {"depth": 1060, "normal": 1061, "albedo": 1062, "object-id": 1063, "material-id": 1064, "mask": 1065}
 # Die Hinweise zu den Pässen: ein Block statt einer Zeile je Pass — nichts doppelt, nichts abgeschnitten (Host, 07.10.2026).
 ID_PASS_NOTE = 1110  # bis 1115: sechs Zeilen
 PASS_NOTE_LINES = 6
 PASS_LABELS = {"depth": "Tiefe", "normal": "Normalen", "albedo": "Albedo", "object-id": "Objekt-ID",
-               "material-id": "Material-ID"}
+               "material-id": "Material-ID", "mask": "Masken"}
+# Masken (Corona Object Buffers, #289 Teil 2): je aktivierter Maske ein Häkchen mit Buffer-ID und Name.
+ID_MASKS = 1250  # die Gruppe der Liste, neu gefüllt, wenn sich die Masken ändern
+ID_MASK_NOTE = 1251  # bis 1253: „N gewählt, M frei“ — dieselbe Rechnung wie vor dem Export (Review F-01)
+MASK_NOTE_LINES = 3
+ID_MASK_FIRST = 1400  # bis 1400 + MAX_MASKS - 1
+MAX_MASKS = MASK_ROWS_MAX
 ID_BIT_DEPTH = 1068
 ID_MODEL = 1100
 ID_MODEL_COUNT = 1101
@@ -120,6 +127,8 @@ NOT_CONNECTED = "Erst unter „Verbindung“ anmelden — dann lässt sich hier 
 LINES = 4
 SUMMARY_LINES = 3
 WIDTH = 64
+# Der Tab „Modell“: Dreiecke und Dateigröße je in einer Zeile, ohne unnötigen Umbruch (Nutzerwunsch vom 10.10.2026).
+MODEL_WIDTH = 80
 
 
 class RendertaxiDialog(gui.GeDialog):
@@ -136,6 +145,8 @@ class RendertaxiDialog(gui.GeDialog):
         self._tab: str | None = None
         # Die Kameraliste, wie sie gerade im Tab „Modell“ steht: (Schlüssel, Beschriftung) je Häkchen.
         self._camera_rows: list[tuple[str, str]] | None = None
+        # Die Maskenliste im Tab „Bild“: (Buffer-ID, Beschriftung) je Häkchen.
+        self._mask_rows: list[tuple[int, str]] | None = None
 
     # -- Aufbau ---------------------------------------------------------------
 
@@ -174,6 +185,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._layout_state = None
         self._shown_lines = {}
         self._camera_rows = None
+        self._mask_rows = None
         self.SetTitle(f"rendertaxi.ai {host.PLUGIN_VERSION}")
         self.GroupBegin(ID_MAIN, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, 1, 0, "")
         self.GroupBorderSpace(8, 8, 8, 8)
@@ -229,9 +241,13 @@ class RendertaxiDialog(gui.GeDialog):
         self._text(0, "Pässe (optional, nur Beauty)")
         self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 0, "")
         for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo"),
-                                 ("object-id", "Objekt-ID"), ("material-id", "Material-ID")):
+                                 ("object-id", "Objekt-ID"), ("material-id", "Material-ID"), ("mask", "Masken")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
         self.GroupEnd()
+        self.GroupBegin(ID_MASKS, c4d.BFH_SCALEFIT, 3, 0, "")  # kompakt: drei Spalten, jede aktive Maske sichtbar
+        self.GroupEnd()
+        for line in range(MASK_NOTE_LINES):
+            self._text(ID_MASK_NOTE + line)
         for line in range(PASS_NOTE_LINES):
             self._text(ID_PASS_NOTE + line)
         self._text(0, mf.DATA_PASS_BIT_DEPTH_LABEL)
@@ -299,9 +315,9 @@ class RendertaxiDialog(gui.GeDialog):
 
     # -- Anzeige ----------------------------------------------------------------
 
-    def _lines(self, first_id: int, text: str, lines: int = LINES) -> None:
+    def _lines(self, first_id: int, text: str, lines: int = LINES, width: int = WIDTH) -> None:
         """Text umgebrochen auf ``lines`` Zeilen; leere Zeilen sind verborgen und belegen keinen Platz."""
-        wrapped = wrap(text, WIDTH, lines)
+        wrapped = wrap(text, width, lines)
         for offset, line in enumerate(wrapped):
             self.SetString(first_id + offset, line)
         used = sum(1 for line in wrapped if line)
@@ -461,20 +477,52 @@ class RendertaxiDialog(gui.GeDialog):
                 notes.append((role, hint))
             else:
                 offered.append(role)
+        corona_ids = "mask" in rows  # Masken bietet das Plugin nur mit Corona an
         if offered and no_png:
             notes.append(("", "Dieser Server nimmt noch keine Pässe an; übertragen wird das Bild."))
+        elif offered and corona_ids:
+            notes.append(("", f"Pässe als PNG {bit_depth} Bit: Tiefe von nah (0) bis fern (1); IDs 1 … N je Farbe des "
+                              "Corona-ID-Passes (Objekt-ID gilt je Aufnahme); eine Maske je gewähltem Object Buffer; "
+                              "sonst linear."))
         elif offered:
             ids = "Objekt-ID je Pixel die ID des Objektpuffers"
-            if "material-id" in offered:
-                ids += ", Material-ID die Material ID des Corona-Materials"
             notes.append(("", f"Pässe als PNG {bit_depth} Bit: Tiefe von nah (0) bis fern (1), {ids}, sonst linear."))
         self._lines(ID_PASS_NOTE, pass_notes(notes), PASS_NOTE_LINES)
+        self._refresh_masks(form, rows, busy)
+
+    def _refresh_masks(self, form, rows: dict, busy: bool) -> None:
+        """Die aktivierten Object-Buffer-Masken mit Häkchen (Buffer-ID und Name) — neu aufgebaut, wenn sie sich ändern;
+        bedienbar, solange „Masken“ gewählt ist. Die Abwahl merkt der Controller (Regel 3)."""
+        state = rows.get("mask", ("unknown", "", None))[0]
+        shown = self.controller.mask_rows() if state == "available" else []
+        wanted = [(row["number"], f"{row['number']} · {row['name']}"[:60]) for row in shown]
+        if wanted != self._mask_rows:
+            self.LayoutFlushGroup(ID_MASKS)
+            for index, (_number, label) in enumerate(wanted):
+                self._gadgets[ID_MASK_FIRST + index] = self.AddCheckbox(ID_MASK_FIRST + index, c4d.BFH_SCALEFIT,
+                                                                        0, 0, label)
+            self.LayoutChanged(ID_MASKS)
+            self._mask_rows = wanted
+        usable = form.capture_kind == BEAUTY and "mask" in form.passes and not busy
+        for index, row in enumerate(shown):
+            self.SetBool(ID_MASK_FIRST + index, row["checked"])
+            self._enable(ID_MASK_FIRST + index, usable)
+        note = ""
+        if usable:
+            free, picked = self.controller.mask_room()
+            note = f"Masken: {picked} gewählt, {free} frei."
+            if picked > free:
+                note = self.controller.mask_problem() or note
+        hidden = self.controller.hidden_masks() if shown else 0
+        if hidden:
+            note = f"{note} {hidden} weitere aktive Masken stehen nicht zur Wahl.".strip()
+        self._lines(ID_MASK_NOTE, note, MASK_NOTE_LINES)
 
     def _refresh_model(self, busy: bool) -> None:
         controller = self.controller
         self._enable(ID_MODEL_COUNT, not busy and controller.form.send_model)
         hint = controller.model_hint() if controller.form.send_model else "Unter „Übernehmen“ „Modell“ wählen."
-        self._lines(ID_MODEL_HINT, hint)
+        self._lines(ID_MODEL_HINT, hint, width=MODEL_WIDTH)
         self._refresh_cameras(busy)
 
     def _refresh_cameras(self, busy: bool) -> None:
@@ -609,6 +657,10 @@ class RendertaxiDialog(gui.GeDialog):
             controller.set_send_model(self.GetBool(ID_MODEL))
         elif element_id == ID_SEND_CAMERAS:
             controller.set_send_extra_cameras(self.GetBool(ID_SEND_CAMERAS))
+        elif ID_MASK_FIRST <= element_id < ID_MASK_FIRST + MAX_MASKS:
+            index = element_id - ID_MASK_FIRST
+            if self._mask_rows and index < len(self._mask_rows):
+                controller.set_mask(self._mask_rows[index][0], self.GetBool(element_id))
         elif ID_CAMERA_FIRST <= element_id < ID_CAMERA_FIRST + MAX_CAMERAS:
             index = element_id - ID_CAMERA_FIRST
             if self._camera_rows and index < len(self._camera_rows):

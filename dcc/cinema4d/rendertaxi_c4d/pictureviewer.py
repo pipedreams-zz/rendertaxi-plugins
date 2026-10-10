@@ -217,7 +217,7 @@ class Rendering:
             except Exception:  # noqa: BLE001 — Regel 3: ohne Positions-Pass bleibt die Tiefe geplant
                 self.position = False
         if self.engine == capture.CORONA and self.roles and corona.available():
-            self.corona = corona.prepare(twin, self.roles, capture.object_buffer_ids(doc), corona.material_ids(doc))
+            self.corona = corona.prepare(twin, self.roles)
         flags = capture.render_flags(True) | NO_DOCUMENT_CLONE
         if show:
             flags |= CREATE_PICTUREVIEWER | OPEN_PICTUREVIEWER

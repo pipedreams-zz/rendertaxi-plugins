@@ -96,9 +96,18 @@ Fenster sagt es beim jeweiligen Pass.
 
 **Mit Corona** legt das Plugin die Pässe selbst an — nur für das Rendern im
 Picture Viewer; deine Multi-Pass-Einstellungen bleiben, wie sie sind. Tiefe,
-Normalen und Albedo gehen ohne weitere Einstellung. Die **Objekt-ID** braucht
-Compositing-Tags mit Objektpuffer, die **Material-ID** eine **Material ID** ab 1
-in den Corona-Materialien (unter „Advanced“).
+Normalen und Albedo gehen ohne weitere Einstellung. **Objekt-ID** und
+**Material-ID** kommen aus Coronas ID-Pass: je Objekt bzw. Material ein Index
+(1, 2, 3 …). Hast du Masken mit „Material ID“ oder „Object buffer ID“
+eingeschaltet, stehen deren Namen zu den Indizes. Die Objekt-ID gilt je
+Aufnahme — Corona färbt Objekte bei jedem Rendern neu.
+
+**Masken (Corona):** Unter „Masken“ stehen deine eingeschalteten Object-Buffer-
+Masken mit ID und Namen; jede gewählte geht als eigenes Schwarz-Weiß-Bild mit.
+Eingeschaltet heißt: Multi-Pass an, die Maske an und jeder Ordner darüber an.
+Was du abwählst, merkt sich das Plugin. Eine Aufnahme hat nur begrenzt Platz;
+unter der Liste steht, wie viele Masken gewählt und wie viele frei sind — sind es
+zu viele, wählst du welche ab, bevor gerendert wird.
 
 ## Modell mitsenden
 

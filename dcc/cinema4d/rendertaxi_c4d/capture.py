@@ -189,6 +189,10 @@ PASSES: tuple[PassSpec, ...] = (
     PassSpec("material-id", "materialIdPass", "Material-ID", 0, "Material-ID", "non-color", channels=pngwrite.GRAY,
              blocked_by="QC-06", blocked_note="Die Material-ID liefert Cinema 4D mit Standard oder Physical nicht.",
              source=NOWHERE),
+    # #289 Teil 2: Masken nur mit Corona — je aktivierter Object-Buffer-Maske des Nutzers eine Datei (Vertrag 1.8.0).
+    # Unter Standard/Physical wird die Zeile weder angeboten noch gemeldet (``offered``).
+    PassSpec("mask", "maskPass", "Masken", 0, "Object Buffer", "non-color", channels=pngwrite.GRAY,
+             blocked_by="corona", blocked_note="Masken überträgt das Plugin nur mit Corona.", source=NOWHERE),
 )
 PASS_BY_ROLE = {spec.role: spec for spec in PASSES}
 
@@ -352,26 +356,37 @@ def position_pass_available() -> bool:
     return POST_EFFECTS is not None and c4d.plugins.FindPlugin(POSITION_VIDEOPOST, c4d.PLUGINTYPE_VIDEOPOST) is not None
 
 
+MASK_HINT = ("Im Corona-Multi-Pass eine Maske mit „Object buffer ID“ einschalten, auch jeden Ordner darüber "
+             "(ein ausgeschalteter Ordner schaltet seine Masken ab).")
 OBJECT_BUFFER_HINT = "An Objekten ein Compositing-Tag mit Objektpuffer vergeben (Tag › Objektpuffer, ID ab 1)."
-MATERIAL_ID_HINT = "In den Corona-Materialien unter „Advanced“ eine Material ID ab 1 vergeben."
 
 
 def corona_status(spec: PassSpec, doc) -> tuple[str, str]:
     """Zustand eines Passes unter Corona (RTX-C4D-009): die Pässe legt das Plugin beim Rendern selbst an — in der Kopie.
 
-    Was der Nutzer tun muss, ist nur das, was Corona aus der Szene braucht: Objektpuffer für die Objekt-ID, Material-IDs
-    für die Material-ID, ein umkehrbares Farbmanagement für Tiefe und Normalen.
+    Was der Nutzer tun muss, ist nur das, was Corona aus der Szene braucht: ein umkehrbares Farbmanagement für Tiefe
+    und Normalen und für die Masken eingeschaltete Object-Buffer-Masken. Objekt- und Material-ID brauchen nichts: sie
+    kommen aus dem ID-Pass (Farbcode je Objekt bzw. Material, #289 Teil 2).
     """
     if not corona.available():
         return "unavailable", "Der Corona-Multi-Pass fehlt in diesem Cinema 4D."
     if spec.role in ("depth", "normal"):
         colour = corona.colour(doc)
         return ("available", "") if colour.decode is not None else ("requires-user-action", colour.problem or "")
-    if spec.role == "object-id":
-        return ("available", "") if object_buffer_ids(doc) else ("requires-user-action", OBJECT_BUFFER_HINT)
-    if spec.role == "material-id":
-        return ("available", "") if corona.material_ids(doc) else ("requires-user-action", MATERIAL_ID_HINT)
+    if spec.role == "mask":
+        return ("available", "") if corona.object_buffers(doc) else ("requires-user-action", MASK_HINT)
     return "available", ""
+
+
+def offered(spec: PassSpec, doc) -> bool:
+    """Ob ein Pass in **diesem** Dokument angeboten und gemeldet wird: die Masken nur mit Corona (Standard und Physical
+    bleiben, wie sie waren)."""
+    if spec.buffer is None:
+        return False
+    if spec.role == "mask":
+        rd = doc.GetActiveRenderData()
+        return rd is not None and rd[c4d.RDATA_RENDERENGINE] == CORONA
+    return True
 
 
 def pass_status(spec: PassSpec, doc) -> tuple[str, str]:
@@ -437,7 +452,7 @@ def probe(doc) -> dict:
         return capabilities
     capabilities["beautyRender"] = {"state": "available", "constraints": {"mediaTypes": [PNG]}}
     for spec in PASSES:
-        if spec.buffer is None:
+        if not offered(spec, doc):
             continue
         state, _hint = pass_status(spec, doc)
         entry = {"state": state}
@@ -452,7 +467,7 @@ def pass_rows(doc) -> list[tuple[PassSpec, str, str]]:
     rd = doc.GetActiveRenderData()
     if rd is None:
         return []
-    return [(spec, *pass_status(spec, doc)) for spec in PASSES if spec.buffer is not None]
+    return [(spec, *pass_status(spec, doc)) for spec in PASSES if offered(spec, doc)]
 
 
 # --------------------------------------------------------------------------
@@ -807,18 +822,6 @@ def object_id_problem(ids: list[int], bit_depth: int) -> str | None:
     return None
 
 
-def material_id_problem(ids: list[int], bit_depth: int) -> str | None:
-    """Wie ``object_id_problem`` für die Material-IDs der Corona-Materialien."""
-    if not ids:
-        return MATERIAL_ID_HINT
-    top = (1 << bit_depth) - 1
-    if ids[-1] > top:
-        if bit_depth == 8 and ids[-1] <= 65535:
-            return f"Material ID {ids[-1]} passt nicht in 8 Bit; „16 Bit“ wählen oder Material IDs bis {top} vergeben."
-        return f"Material IDs bis {top} vergeben (gefunden: {ids[-1]})."
-    return None
-
-
 def _layer_gray(layer, size: tuple[int, int]) -> list[float]:
     """Der erste Kanal einer Ebene, alle Pixel zeilenweise (Masken)."""
     width, height = size
@@ -914,29 +917,7 @@ def _corona_pass(doc, spec: PassSpec, passes, bitmap, path: str, size: tuple[int
         raise PassMissing(colour.problem or corona.COLOR_HINT)
     origin = "nur in der Kopie des Dokuments angelegt"
     if spec.role in ("object-id", "material-id"):
-        ids = passes.object_ids if spec.role == "object-id" else passes.material_ids
-        problem = (object_id_problem if spec.role == "object-id" else material_id_problem)(ids, bit_depth)
-        if problem:
-            raise PassMissing(problem)
-        names = passes.layers.get(spec.role) or {}
-
-        def masks():
-            for number in ids:
-                layer = corona.find_layer(bitmap, names.get(number, ""))
-                if layer is None:
-                    raise PassMissing(f"Corona hat die Maske für die ID {number} nicht geliefert.")
-                yield number, _layer_gray(layer, size)
-
-        what = "Objektpuffer" if spec.role == "object-id" else "Material IDs"
-        _index_png(path, size, bit_depth, masks(),
-                   f"Die Corona-Masken sind nicht eindeutig; die {spec.label} bleibt geplant.",
-                   f"Ein Bildpunkt liegt in mehreren Masken; je Objekt nur eine ID ({what}) vergeben.",
-                   tolerance=1e-4, zero=1e-4)
-        source = ("Objektpuffer der Compositing-Tags" if spec.role == "object-id"
-                  else "Material ID der Corona-Materialien")
-        describe(spec, path, lambda written, ids=ids, source=source: (
-            f"{spec.label} aus Corona-Masken je ID ({source}; IDs {', '.join(map(str, ids))}), Monochrom, "
-            f"Anti-aliasing aus, {origin}, {written}, Wert = ID, 0 = keine; {passage} (am Host gemessen)."))
+        _corona_ids(doc, spec, passes, bitmap, path, size, bit_depth, describe, passage, origin)
         return
     layer = corona.find_layer(bitmap, passes.layers.get(spec.role, ""))
     if layer is None:
@@ -962,9 +943,126 @@ def _corona_pass(doc, spec: PassSpec, passes, bitmap, path: str, size: tuple[int
         f"Albedo unter Standard ({origin}; {colour.label}), {written}; {passage} (am Host gemessen)."))
 
 
+def _layer_rgb(layer, size: tuple[int, int]) -> list[tuple]:
+    """Alle Pixel einer Ebene als (r, g, b), zeilenweise, roh."""
+    width, height = size
+    buffer = bytearray(12 * width)
+    unpack = struct.Struct(f"<{3 * width}f").unpack
+    values: list[tuple] = []
+    for y in range(height):
+        if layer.GetPixelCnt(0, y, width, buffer, 12, c4d.COLORMODE_RGBf, c4d.PIXELCNT_0) is False:
+            raise PassMissing("Cinema 4D hat einen ID-Pass nicht lesbar geliefert.")
+        row = unpack(bytes(buffer))
+        values.extend(zip(row[0::3], row[1::3], row[2::3]))
+    return values
+
+
+def _user_mask_values(bitmap, mask, size: tuple[int, int], colour) -> list[float] | None:
+    """Die Werte einer Maske des Nutzers (erster Kanal, nach dem Farbmanagement zurückgerechnet) — ``None`` ohne Ebene.
+
+    ``corona.AmbiguousLayer`` geht weiter: dann ist nicht zu sagen, welche Ebene die Maske ist.
+    """
+    layer = corona.find_layer(bitmap, mask.name)
+    if layer is None:
+        return None
+    decode = colour.albedo  # nur die OETF zurück; bei OCIO bleibt ein Grau grau (Zeilensummen der Matrix 1)
+    return [decode((value, value, value))[0] for value in _layer_gray(layer, size)]
+
+
+def _corona_ids(doc, spec: PassSpec, passes, bitmap, path: str, size: tuple[int, int], bit_depth: int, describe,
+                passage: str, origin: str) -> None:
+    """Objekt- bzw. Material-ID aus dem ID-Pass der Kopie (Farbcode, Anti-aliasing aus) über die Farbtabelle.
+
+    Index 1 … N nach Farbwert (``corona.colour_index``), 0 ohne Treffer. Die Begleitliste kommt aus Coronas eigener
+    Zuordnung: den aktivierten Masken des Nutzers im selben Render — Material ID k nennt das Material mit dieser ID,
+    Objektpuffer k die Maske. Eine Fläche ohne eindeutige Maske bleibt ohne Namen.
+    """
+    layer = corona.find_layer(bitmap, passes.layers.get(spec.role, ""))
+    if layer is None:
+        raise PassMissing(f"Corona hat den ID-Pass für {spec.label} nicht geliefert.")
+    table = corona.colour_index(_layer_rgb(layer, size), size[0])
+    top = (1 << bit_depth) - 1
+    count = len(table.colours)
+    if count > top:
+        what = "Objekte" if spec.role == "object-id" else "Materialien"
+        raise PassMissing(f"{count} {what} im Bild passen nicht in {bit_depth} Bit; „16 Bit“ wählen."
+                          if bit_depth == 8 else f"{count} {what} im Bild — mehr als {top} Indizes.")
+    width, height = size
+    pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
+                       ([value / top for value in table.index[y * width:(y + 1) * width]] for y in range(height)))
+    kind = "object" if spec.role == "object-id" else "material"
+    materials = corona.material_names(doc) if kind == "material" else {}
+    masks = []
+    for mask in corona.active_masks(doc):
+        if mask.kind != kind:
+            continue
+        try:
+            values = _user_mask_values(bitmap, mask, size, passes.colour)
+        except corona.AmbiguousLayer:
+            values = None
+        if values is None:
+            continue
+        if kind == "material":
+            own = materials.get(mask.number) or []
+            label = f"{own[0] if len(own) == 1 else mask.name} (Material ID {mask.number})"
+        else:
+            label = f"{mask.name} (Object Buffer {mask.number})"
+        masks.append((label[:128], values))
+    named = corona.names_from_masks(table, masks)
+    index = [{"value": number, "name": named[number]} for number in sorted(named)]
+    source = ("ID-Pass „Object“: die Farbe ist je Renderlauf zufällig, der Index gilt für diese Aufnahme"
+              if kind == "object" else
+              "ID-Pass „Material“: die Farbe hängt am Materialnamen, der Index folgt dem Farbwert und ändert sich mit "
+              "den sichtbaren Materialien")
+    describe(spec, path, lambda written: (
+        f"{spec.label} aus dem Corona-{source} (Anti-aliasing aus, {origin}), {written}, Index 1 … {count} über die "
+        f"Farbtabelle, 0 = kein Treffer; {len(index)} mit Namen aus den Masken des Nutzers; {passage} (am Host "
+        f"gemessen)."), index=index or None)
+
+
+def _corona_masks(doc, passes, bitmap, images: str, root: str, size: tuple[int, int], bit_depth: int, chosen,
+                  passage: str, files: list, planned: list) -> None:
+    """Die Rolle ``mask``: je gewählter, aktivierter Object-Buffer-Maske des Nutzers eine Graustufen-PNG aus ihrer
+    eigenen Ebene — mit ``mask`` (Buffer-ID, Name). Fehlt eine Ebene oder ist ihr Name mehrdeutig, bleibt **diese**
+    Maske geplant; die anderen gehen (Regel 3)."""
+    spec = PASS_BY_ROLE["mask"]
+    buffers = [mask for mask in corona.object_buffers(doc) if chosen is None or mask.number in chosen]
+    if not buffers:
+        planned.append(mf.PlannedRole("mask", "images/mask.png", PNG,
+                                      MASK_HINT if not corona.object_buffers(doc) else "Keine Maske gewählt."))
+        return
+    width, height = size
+    top = (1 << bit_depth) - 1
+    for mask in buffers:
+        relative = f"images/mask-buffer-{mask.number}.png"
+        path = os.path.join(images, f"mask-buffer-{mask.number}.png")
+        try:
+            values = None if passes is None or passes.problem else _user_mask_values(bitmap, mask, size, passes.colour)
+            reason = (passes.problem if passes is not None and passes.problem else
+                      "Mit Corona gehen die Masken beim Rendern im Picture Viewer mit." if passes is None else
+                      f"Corona hat die Maske „{mask.name}“ nicht geliefert.")
+        except corona.AmbiguousLayer:
+            values, reason = None, (f"Mehrere Corona-Ebenen heißen „{mask.name}“; welche die Maske ist, ist nicht "
+                                    "eindeutig. Die Maske umbenennen.")
+        except PassMissing as missing_reason:
+            values, reason = None, str(missing_reason)
+        if values is None:
+            _remove(path)
+            planned.append(mf.PlannedRole("mask", relative, PNG, reason))
+            continue
+        pngwrite.write_png(path, width, height, pngwrite.GRAY, bit_depth,
+                           ([min(1.0, max(0.0, v)) for v in values[y * width:(y + 1) * width]]
+                            for y in range(height)))
+        image = dict(mf.describe_png(path), colorSpace=spec.color_space)
+        note = (f"Maske „{mask.name}“ (Object Buffer {mask.number}) aus der Corona-Ebene des Nutzers, Kantenglättung wie "
+                f"dort eingestellt, PNG {image['bitDepth']} Bit {image['channels']}, 0 bis {top} = Anteil; {passage}.")
+        files.append(mf.capture_file(path, root, "mask", PNG, image, note,
+                                     mask={"bufferId": mask.number, "name": mask.name[:128] or str(mask.number)}))
+
+
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],
                   allowed_media_types: list[str] | None, progress, bit_depth: int = mf.DEFAULT_DATA_PASS_BIT_DEPTH,
-                  rendered=None):
+                  rendered=None, masks=None):
     """Beauty als PNG und die gewählten Pässe als PNG mit ``bit_depth`` — ``(beauty, pass_files, planned)``.
 
     ``rendered``: das Ergebnis eines Renderns im Picture Viewer (``pictureviewer.Rendering``, RTX-C4D-010). Dann wird
@@ -984,7 +1082,8 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
     * **Objekt-ID:** dritter Render über den Dateiweg (``_object_files``), Index-PNG; das temporäre Verzeichnis
       wird immer entfernt.
 
-    Eine ungültige Bittiefe wird zum Standard 8 Bit (``mf.data_pass_bit_depth``).
+    Eine ungültige Bittiefe wird zum Standard 8 Bit (``mf.data_pass_bit_depth``). ``masks``: die gewählten
+    Buffer-IDs der Rolle ``mask`` (Corona); ``None`` heißt jede aktivierte.
     """
     bit_depth = mf.data_pass_bit_depth(bit_depth)
     rd = doc.GetActiveRenderData()
@@ -1043,6 +1142,10 @@ def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str]
         corona_specs, wanted = wanted, []
         passes = getattr(rendered, "corona", None) if rendered is not None else None
         for spec in corona_specs:
+            if spec.role == "mask":
+                _corona_masks(doc, passes, rendered.bitmap if rendered is not None else None, images, root, size,
+                              bit_depth, None if masks is None else set(masks), passage, files, planned)
+                continue
             path = os.path.join(images, f"{spec.role}.png")
             if passes is None:
                 missing(spec, "Mit Corona gehen die Pässe beim Rendern im Picture Viewer mit.")

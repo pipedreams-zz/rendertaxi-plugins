@@ -13,7 +13,7 @@ import webbrowser
 import c4d
 from c4d import gui
 
-from . import capture, export, host, pictureviewer
+from . import capture, corona, export, host, pictureviewer
 from .controller import BEAUTY
 
 
@@ -67,8 +67,15 @@ class Cinema4DAdapter:
     def pass_rows(self):
         return capture.pass_rows(capture.active_document())
 
+    def mask_rows(self) -> list[dict]:
+        """Die aktivierten Object-Buffer-Masken (Corona) — ``number``, ``name``; ohne Corona leer."""
+        doc = capture.active_document()
+        if not any(spec.role == "mask" for spec, _state, _hint in capture.pass_rows(doc)):
+            return []
+        return [{"number": mask.number, "name": mask.name} for mask in corona.object_buffers(doc)]
+
     def render(self, kind: str, directory: str, size, roles: list[str], allowed_media_types, progress,
-               bit_depth: int, rendered=None):
+               bit_depth: int, rendered=None, masks=None):
         """``(files, planned, view_name)`` — Viewport oder Beauty mit Pässen (PNG, ``bit_depth`` 8 oder 16).
 
         ``rendered``: das Ergebnis von ``start_rendering`` — die Beauty kommt dann aus dessen Bildspeicher.
@@ -76,7 +83,7 @@ class Cinema4DAdapter:
         doc = capture.active_document()
         if kind == BEAUTY:
             beauty, passes, planned = capture.render_beauty(doc, directory, size, roles, allowed_media_types, progress,
-                                                            bit_depth, rendered)
+                                                            bit_depth, rendered, masks)
             return [beauty, *passes], planned, capture.view_name(doc)
         return [capture.render_viewport(doc, directory, size, progress)], [], capture.view_name(doc)
 

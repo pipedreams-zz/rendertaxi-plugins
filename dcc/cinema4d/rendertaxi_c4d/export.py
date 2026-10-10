@@ -68,6 +68,8 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 
 import c4d
@@ -606,13 +608,35 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
 class Estimate:
     objects: int
     triangles: int
+    # Größe der GLB-Datei in Bytes, gemessen an einem Probeexport (#289 Teil 2); ``None``, wenn nicht exportiert
+    # wurde (leer, über der Dreiecksgrenze oder der Export schlug fehl).
+    byte_size: int | None = None
 
 
 def estimate(doc, kind: str) -> Estimate:
-    """Sichtbare Objekte und Dreiecke — der Hinweis im Dialog, **bevor** exportiert wird."""
+    """Sichtbare Objekte, Dreiecke und die Dateigröße — der Hinweis im Dialog, **bevor** übernommen wird.
+
+    Die Größe kommt aus einem Export derselben Objekte mit demselben Exporter in ein temporäres Verzeichnis, das danach
+    gelöscht wird (Nutzerwunsch vom 10.10.2026: „nach Neu zählen Dateigröße anzeigen“). Ohne Kameras; die fehlen in
+    der Größe (je Kamera einige hundert Bytes).
+    """
     prepared = prepare(doc, kind)
-    c4d.documents.KillDocument(prepared.document)
-    return Estimate(prepared.objects, prepared.triangles)
+    byte_size = None
+    folder = None
+    try:
+        if 0 < prepared.triangles <= MAX_TRIANGLES:
+            folder = tempfile.mkdtemp(prefix="rendertaxi-zaehlen-")
+            target = os.path.join(folder, "scene.glb")
+            try:
+                _save(prepared.document, target)
+                byte_size = os.path.getsize(target)
+            except (ExportError, OSError):  # die Zählung gilt trotzdem, nur ohne Größe
+                byte_size = None
+    finally:
+        c4d.documents.KillDocument(prepared.document)
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+    return Estimate(prepared.objects, prepared.triangles, byte_size)
 
 
 # --------------------------------------------------------------------------
