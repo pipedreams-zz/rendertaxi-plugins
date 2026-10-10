@@ -77,6 +77,7 @@ import c4d
 from . import capture
 from .rendertaxi_client import glb
 from .rendertaxi_client import manifest as mf
+from .rendertaxi_client.log import log, log_exception
 
 VIEWPORT = "viewport"
 MODEL_PATH = glb.MODEL_PATH
@@ -611,6 +612,8 @@ class Estimate:
     # Größe der GLB-Datei in Bytes, gemessen an einem Probeexport (#289 Teil 2); ``None``, wenn nicht exportiert
     # wurde (leer, über der Dreiecksgrenze oder der Export schlug fehl).
     byte_size: int | None = None
+    # Warum keine Größe da ist — der Tab sagt es, statt still nichts zu zeigen (Abnahme 0.6.3, F-03).
+    size_problem: str | None = None
 
 
 def estimate(doc, kind: str) -> Estimate:
@@ -622,21 +625,30 @@ def estimate(doc, kind: str) -> Estimate:
     """
     prepared = prepare(doc, kind)
     byte_size = None
+    problem = None
     folder = None
     try:
-        if 0 < prepared.triangles <= MAX_TRIANGLES:
+        if prepared.triangles == 0:
+            problem = "keine sichtbare Geometrie"
+        elif prepared.triangles > MAX_TRIANGLES:
+            problem = "zu viele Dreiecke für einen Export"
+        else:
             folder = tempfile.mkdtemp(prefix="rendertaxi-zaehlen-")
             target = os.path.join(folder, "scene.glb")
             try:
                 _save(prepared.document, target)
                 byte_size = os.path.getsize(target)
-            except (ExportError, OSError):  # die Zählung gilt trotzdem, nur ohne Größe
-                byte_size = None
+            except Exception as error:  # noqa: BLE001 — die Zählung gilt trotzdem, nur ohne Größe, mit Grund
+                log_exception("Dateigröße des Modells nicht messbar", error)
+                problem = "Probeexport fehlgeschlagen" if isinstance(error, (ExportError, OSError)) \
+                    else f"Probeexport fehlgeschlagen ({type(error).__name__})"
     finally:
         c4d.documents.KillDocument(prepared.document)
         if folder is not None:
             shutil.rmtree(folder, ignore_errors=True)
-    return Estimate(prepared.objects, prepared.triangles, byte_size)
+    log(f"Modell gezählt: {prepared.objects} Objekte, {prepared.triangles} Dreiecke, "
+        f"{'—' if byte_size is None else byte_size} Bytes{f' ({problem})' if problem else ''}")
+    return Estimate(prepared.objects, prepared.triangles, byte_size, problem)
 
 
 # --------------------------------------------------------------------------

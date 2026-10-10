@@ -127,8 +127,10 @@ NOT_CONNECTED = "Erst unter „Verbindung“ anmelden — dann lässt sich hier 
 LINES = 4
 SUMMARY_LINES = 3
 WIDTH = 64
+# Die Infotexte unter Pässen, Masken und „Übernehmen“: volle Zeilenbreite, Umbruch erst am Rand (Abnahme 0.6.3, F-02).
+NOTE_WIDTH = 96
 # Der Tab „Modell“: Dreiecke und Dateigröße je in einer Zeile, ohne unnötigen Umbruch (Nutzerwunsch vom 10.10.2026).
-MODEL_WIDTH = 80
+MODEL_WIDTH = NOTE_WIDTH
 
 
 class RendertaxiDialog(gui.GeDialog):
@@ -239,12 +241,12 @@ class RendertaxiDialog(gui.GeDialog):
         self._combo(ID_RESOLUTION, RESOLUTION_LABELS)
         self._text(ID_CUT)
         self._text(0, "Pässe (optional, nur Beauty)")
-        self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 0, "")
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 4, 0, "")  # vier Spalten, wie die Masken darunter (Abnahme 0.6.3, F-02)
         for spec_role, label in (("depth", "Tiefe (Depth)"), ("normal", "Normalen"), ("albedo", "Albedo"),
                                  ("object-id", "Objekt-ID"), ("material-id", "Material-ID"), ("mask", "Masken")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
         self.GroupEnd()
-        self.GroupBegin(ID_MASKS, c4d.BFH_SCALEFIT, 3, 0, "")  # kompakt: drei Spalten, jede aktive Maske sichtbar
+        self.GroupBegin(ID_MASKS, c4d.BFH_SCALEFIT, 4, 0, "")  # vier Spalten wie die Pässe, jede aktive Maske sichtbar
         self.GroupEnd()
         for line in range(MASK_NOTE_LINES):
             self._text(ID_MASK_NOTE + line)
@@ -487,7 +489,7 @@ class RendertaxiDialog(gui.GeDialog):
         elif offered:
             ids = "Objekt-ID je Pixel die ID des Objektpuffers"
             notes.append(("", f"Pässe als PNG {bit_depth} Bit: Tiefe von nah (0) bis fern (1), {ids}, sonst linear."))
-        self._lines(ID_PASS_NOTE, pass_notes(notes), PASS_NOTE_LINES)
+        self._lines(ID_PASS_NOTE, pass_notes(notes), PASS_NOTE_LINES, width=NOTE_WIDTH)
         self._refresh_masks(form, rows, busy)
 
     def _refresh_masks(self, form, rows: dict, busy: bool) -> None:
@@ -516,7 +518,7 @@ class RendertaxiDialog(gui.GeDialog):
         hidden = self.controller.hidden_masks() if shown else 0
         if hidden:
             note = f"{note} {hidden} weitere aktive Masken stehen nicht zur Wahl.".strip()
-        self._lines(ID_MASK_NOTE, note, MASK_NOTE_LINES)
+        self._lines(ID_MASK_NOTE, note, MASK_NOTE_LINES, width=NOTE_WIDTH)
 
     def _refresh_model(self, busy: bool) -> None:
         controller = self.controller
@@ -573,7 +575,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._enable(ID_MODEL, connected and not busy)
         self.SetBool(ID_SEND_CAMERAS, form.send_extra_cameras)
         self._enable(ID_SEND_CAMERAS, connected and not busy and form.send_model)
-        self._lines(ID_SEND_SUMMARY, controller.send_summary(), SUMMARY_LINES)
+        self._lines(ID_SEND_SUMMARY, controller.send_summary(), SUMMARY_LINES, width=NOTE_WIDTH)
         self.SetString(ID_CAPTURE, controller.send_label())
         # „Gerenderte Bilder übernehmen“ nur auf dem Weg über den Picture Viewer; aktiv, wenn ein passendes Ergebnis da ist.
         picture_viewer = controller.picture_viewer_way()

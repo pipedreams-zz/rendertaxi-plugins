@@ -969,6 +969,21 @@ def _user_mask_values(bitmap, mask, size: tuple[int, int], colour) -> list[float
     return [decode((value, value, value))[0] for value in _layer_gray(layer, size)]
 
 
+def _layer_place(bitmap, name: str) -> str:
+    """„Ebene „Mask9“, Nr. 2 von 3“ — woher eine Maske gelesen wurde, für die Notiz im Manifest (Abnahme 0.6.3)."""
+    count = bitmap.GetLayerCount()
+    for index in range(count):
+        layer = bitmap.GetLayerNum(index)
+        if layer is not None and layer.GetParameter(c4d.MPBTYPE_NAME) == name:
+            return f"Ebene „{name}“, Nr. {index + 1} von {count}"
+    return f"Ebene „{name}“"
+
+
+SAME_MASKS = ("Die Masken „{a}“ (Object Buffer {an}) und „{b}“ (Object Buffer {bn}) sind bildgleich: beide Buffer "
+              "liegen auf denselben Objekten. Compositing-Tags prüfen (auch geerbte Buffer-IDs) oder eine der beiden "
+              "Masken abwählen.")
+
+
 def _corona_ids(doc, spec: PassSpec, passes, bitmap, path: str, size: tuple[int, int], bit_depth: int, describe,
                 passage: str, origin: str) -> None:
     """Objekt- bzw. Material-ID aus dem ID-Pass der Kopie (Farbcode, Anti-aliasing aus) über die Farbtabelle.
@@ -1033,6 +1048,7 @@ def _corona_masks(doc, passes, bitmap, images: str, root: str, size: tuple[int, 
         return
     width, height = size
     top = (1 << bit_depth) - 1
+    written: dict[str, object] = {}  # sha256 → Maske: zwei gleiche Bilder werden nicht gesendet (Abnahme 0.6.3, F-01)
     for mask in buffers:
         relative = f"images/mask-buffer-{mask.number}.png"
         path = os.path.join(images, f"mask-buffer-{mask.number}.png")
@@ -1046,6 +1062,9 @@ def _corona_masks(doc, passes, bitmap, images: str, root: str, size: tuple[int, 
                                     "eindeutig. Die Maske umbenennen.")
         except PassMissing as missing_reason:
             values, reason = None, str(missing_reason)
+        if values is not None and all(v * top < 0.5 for v in values):
+            # Leer im Bild (jedes Pixel 0): nichts zu senden, die Übernahme läuft weiter.
+            values, reason = None, f"Maske „{mask.name}“ (Object Buffer {mask.number}) ist im Bild leer."
         if values is None:
             _remove(path)
             planned.append(mf.PlannedRole("mask", relative, PNG, reason))
@@ -1054,10 +1073,16 @@ def _corona_masks(doc, passes, bitmap, images: str, root: str, size: tuple[int, 
                            ([min(1.0, max(0.0, v)) for v in values[y * width:(y + 1) * width]]
                             for y in range(height)))
         image = dict(mf.describe_png(path), colorSpace=spec.color_space)
-        note = (f"Maske „{mask.name}“ (Object Buffer {mask.number}) aus der Corona-Ebene des Nutzers, Kantenglättung wie "
-                f"dort eingestellt, PNG {image['bitDepth']} Bit {image['channels']}, 0 bis {top} = Anteil; {passage}.")
-        files.append(mf.capture_file(path, root, "mask", PNG, image, note,
-                                     mask={"bufferId": mask.number, "name": mask.name[:128] or str(mask.number)}))
+        note = (f"Maske „{mask.name}“ (Object Buffer {mask.number}) aus der Corona-Ebene des Nutzers "
+                f"({_layer_place(bitmap, mask.name)}), Kantenglättung wie dort eingestellt, PNG {image['bitDepth']} Bit "
+                f"{image['channels']}, 0 bis {top} = Anteil; {passage}.")
+        captured = mf.capture_file(path, root, "mask", PNG, image, note,
+                                   mask={"bufferId": mask.number, "name": mask.name[:128] or str(mask.number)})
+        twin = written.get(captured.sha256)
+        if twin is not None:
+            raise CaptureError(SAME_MASKS.format(a=twin.name, an=twin.number, b=mask.name, bn=mask.number))
+        written[captured.sha256] = mask
+        files.append(captured)
 
 
 def render_beauty(doc, root: str, size: tuple[int, int] | None, roles: list[str],

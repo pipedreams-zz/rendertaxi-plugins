@@ -54,6 +54,8 @@ REMEMBERED_DOCUMENTS = 50
 # Höchstens so viele aktive Masken stehen zur Wahl (Tab „Bild“); was darüber liegt, wird weder gezeigt noch gesendet.
 # Das Manifest trägt ohnehin höchstens ``mf.asset_limit()`` Einträge (#289, Review F-01).
 MASK_ROWS_MAX = 120
+# Notiz im Manifest (Namenskonvention ``…_note``, tests/architecture/visible-texts.test.ts), kein Fenstertext.
+masks_need_1_8_note = "Masken nimmt dieser Server erst mit Capture-Manifest 1.8.0 an."
 # Die Tabs des Fensters, in ihrer Reihenfolge (Nutzerentscheidung vom 05.10.2026).
 TABS = ("connection", "project", "viewpoint", "image", "model")
 
@@ -115,8 +117,7 @@ def masks_and_index(files: list, planned: list, contract_version: str, handshake
     kept = [f for f in files if f.role != "mask"]
     others = [p for p in planned if p.role != "mask"]
     if masks or planned_masks:
-        others.append(mf.PlannedRole("mask", "images/mask.png", mf.PNG_MEDIA_TYPE,
-                                     "Masken nimmt dieser Server erst mit Capture-Manifest 1.8.0 an."))
+        others.append(mf.PlannedRole("mask", "images/mask.png", mf.PNG_MEDIA_TYPE, masks_need_1_8_note))
     return kept, others, contract_version
 
 
@@ -194,7 +195,8 @@ class Controller:
         self.form = Form()
         self._jobs: list[Job] = []
         # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke, Bytes oder None) — nur ein Hinweis.
-        self.model_estimate: tuple[str, int, int, int | None] | None = None
+        # (Aufnahmeart, Objekte, Dreiecke, Bytes oder None, Grund ohne Bytes oder None) — nur ein Hinweis.
+        self.model_estimate: tuple[str, int, int, int | None, str | None] | None = None
         # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
         self.new_project_intent = NewProject()
         # Die gemerkte Wahl der Wege; ``settings`` fällt bei jedem Fehler auf die Vorgaben (Regel 3).
@@ -691,8 +693,8 @@ class Controller:
         Ohne Masken als Rolle ist nichts gewählt.
         """
         roles = self.selected_roles()
-        if "mask" not in roles:
-            return 0, 0
+        if "mask" not in roles or mf.masks_contract_version(self.state.handshake) is None:
+            return 0, 0  # ohne Masken, oder ein Server unter 1.8.0: sie gehen ohnehin nicht mit
         chosen = self.chosen_ways()
         taken = 1 + len([role for role in roles if role != "mask"]) + (1 if chosen is not None and chosen.model else 0)
         free = mf.asset_limit() - taken
@@ -971,7 +973,7 @@ class Controller:
             log_exception("Modellgröße nicht bestimmbar", error)
             return
         self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles,
-                               getattr(counted, "byte_size", None))
+                               getattr(counted, "byte_size", None), getattr(counted, "size_problem", None))
 
     def model_hint(self) -> str:
         """Größe, Grenzen und was nicht mitgeht — der Text im Tab „Modell".
@@ -993,11 +995,12 @@ class Controller:
             if cap:
                 parts.append(f"Modelldatei höchstens {megabytes(cap)}.")
         else:
-            _kind, objects, triangles, byte_size = estimate
+            _kind, objects, triangles, byte_size, size_problem = estimate
             text = f"≈ {triangles:,} Dreiecke in {objects:,} Objekten (höchstens {MAX_TRIANGLES:,})."
             parts.append(("Zu groß: " if triangles > MAX_TRIANGLES else "") + text.replace(",", " "))
             if byte_size is None:
-                parts.append(f"Dateigröße nicht gemessen{limit}.")
+                why_not = f": {size_problem}" if size_problem else ""
+                parts.append(f"Dateigröße nicht gemessen{why_not}{limit}.")
             else:
                 too_big = "Zu groß: " if cap and byte_size > cap else ""
                 parts.append(f"{too_big}Datei ≈ {megabytes(byte_size)}{limit}.")
@@ -1050,9 +1053,15 @@ class Controller:
         planned: list = []
         view_name = None
         if chosen.image:
+            roles = self.selected_roles()
+            masks_unsupported = "mask" in roles and mf.masks_contract_version(handshake) is None
+            if masks_unsupported:  # gar nicht erst schreiben, was dieser Server nicht annimmt
+                roles = [role for role in roles if role != "mask"]
             files, planned, view_name = self.adapter.render(
-                self.form.capture_kind, directory, size, self.selected_roles(), limits.get("allowedMediaTypes"),
+                self.form.capture_kind, directory, size, roles, limits.get("allowedMediaTypes"),
                 self._progress_in_main, self.data_pass_bit_depth(), rendered, self.chosen_masks())
+            if masks_unsupported:
+                planned.append(mf.PlannedRole("mask", "images/mask.png", mf.PNG_MEDIA_TYPE, masks_need_1_8_note))
         camera = geometry = None
         if chosen.model:
             if chosen.image:
