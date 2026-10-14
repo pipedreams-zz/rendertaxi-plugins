@@ -15,9 +15,16 @@ und wird mit ``tools/measure_model_way.py`` am Mac gemessen.
   der Editor-, bei Beauty der Renderpunkt, ``MODE_UNDEF`` erbt vom
   Elternobjekt) und die Ebene lassen es zu. Jedes Objekt wird mit seiner
   Weltmatrix in die Punkte **gebacken** (gespiegelte Matrizen kehren den
-  Umlaufsinn um) und ohne Materialien, UVs und Animation übernommen; nur ein
-  Phong-Tag geht mit. So liegen Punkte der GLB und die Hülle, die das Plugin
-  vorher ausrechnet, im selben Raum.
+  Umlaufsinn um) und ohne UVs und Animation übernommen. So liegen Punkte der
+  GLB und die Hülle, die das Plugin vorher ausrechnet, im selben Raum.
+* **Normalen wie in Cinema 4D (RTX-C4D-011).** Mit geht nicht der Phong-Tag
+  allein, sondern die Normalen, die Cinema 4D für das Objekt zeigt
+  (``CreatePhongNormals``: Phong-Winkel, Phong-Brüche, Normal-Tag), in
+  Weltkoordinaten gedreht, als Normal-Tag am gebackenen Objekt — dazu ein
+  Phong-Tag, ohne den der glTF-Exporter keine Normalen schreibt. Gemessen
+  (``docs/measurements/2026-10-14-glb-normalen.md``): bis 0.6.4 gingen
+  Normal-Tag (CAD-Importe) und Phong-Brüche verloren, und die Flächen wurden
+  in der GLB rund, wo Cinema 4D sie flach zeigt.
 * **Wie exportiert wird.** Der glTF-Exporter von Cinema 4D
   (``FORMAT_GLTFEXPORT``) mit „GLB (Binary)" und **Flip Z** — laut Hilfe 2026
   „glTF uses the right-hand rule (Z axis points to the front), while Cinema 4D
@@ -354,7 +361,7 @@ class Prepared:
     lenses: dict = field(default_factory=dict)  # Knotenname → (Brennweite, Sensor, Film Offset X, Y) oder None
 
 
-def _baked(obj, mesh_index: int):
+def _baked(obj, mesh_index: int, materials: "MaterialSubstitutes | None" = None):
     """Ein neues Polygonobjekt mit Weltkoordinaten — oder ``None`` ohne Polygone."""
     points = obj.GetAllPoints()
     polygons = obj.GetAllPolygons()
@@ -370,10 +377,175 @@ def _baked(obj, mesh_index: int):
         mesh.SetPolygon(index, _reversed(polygon) if flip else polygon)
         triangles += 1 if polygon.IsTriangle() else 2
     phong = obj.GetTag(c4d.Tphong)
-    if phong is not None:
+    normals = _world_normals(obj, matrix, polygons, flip)
+    if normals is not None:
+        # Die Normalen, die Cinema 4D zeigt, als Normal-Tag; der Phong-Tag sorgt nur dafür, dass der Exporter sie
+        # schreibt (ohne Phong-Tag schreibt er keine), und schaltet sein eigenes Glätten ab.
+        tag = mesh.MakeVariableTag(c4d.Tnormal, len(polygons))
+        tag.SetAllHighlevelData(normals)
+        smooth = phong.GetClone() if phong is not None else c4d.BaseTag(c4d.Tphong)
+        smooth[c4d.PHONGTAG_PHONG_ANGLELIMIT] = False
+        mesh.InsertTag(smooth)
+    elif phong is not None:
         mesh.InsertTag(phong.GetClone())
+    if materials is not None:
+        materials.carry(obj, mesh, polygons, flip)
     mesh.Message(c4d.MSG_UPDATE)
     return mesh, triangles
+
+
+# --------------------------------------------------------------------------
+# Materialien (RTX-C4D-011)
+# --------------------------------------------------------------------------
+
+# Größte Bilddatei, die als Textur eingebettet wird; darüber geht nur die Farbe mit (Issue #516).
+MAX_TEXTURE_BYTES = 2 * 1024 * 1024
+
+
+class MaterialSubstitutes:
+    """**Die Materialien der Szene als einfache Standardmaterialien im Exportdokument.**
+
+    Je Material der Szene genau ein Standardmaterial mit der Grundfarbe (``GetAverageColor`` des Farbkanals — für
+    Standard-, Corona- und Node-Materialien gleich gefragt, ohne Shader-Übersetzung) und, nur bei einem
+    Standardmaterial mit Bitmap im Farbkanal, UVW-Projektion und einer Datei bis 2 MB, dieser Textur. Daraus schreibt
+    der glTF-Exporter ein PBR-Material (``baseColorFactor`` bzw. ``baseColorTexture``, Metall 0, Rauheit 0,5;
+    gemessen 14.10.2026). Mit gehen Texturtag, Auswahl und UVW des Objekts; ohne Texturtag kein Material.
+    """
+
+    def __init__(self, target, source_document):
+        self.target = target
+        self.source_document = source_document
+        self.by_key: dict = {}
+        self.textured = 0
+        self.too_large = 0
+
+    def _key(self, material):
+        guid = getattr(material, "GetGUID", None)
+        return guid() if guid is not None else id(material)
+
+    def substitute(self, material, textured: bool = True):
+        """Der Stellvertreter von ``material`` für **eine Verwendung**: mit Textur (``textured``, Projektion UVW)
+        oder nur mit Grundfarbe. Beide sind eigene Materialien im Exportdokument — einmal zugewiesen, wird ein
+        Stellvertreter nie mehr verändert (Review F-01 zu #520: dasselbe Bitmap-Material an einem UVW- und einem
+        kubisch projizierten Objekt behält am UVW-Objekt seine Textur)."""
+        key = (self._key(material), textured)
+        if key in self.by_key:
+            return self.by_key[key]
+        copy = c4d.BaseMaterial(c4d.Mmaterial)
+        copy.SetName(material.GetName() or "Material")
+        colour = None
+        try:
+            colour = material.GetAverageColor(c4d.CHANNEL_COLOR)
+        except Exception:  # noqa: BLE001 — ein Material ohne Farbkanal bleibt neutral grau
+            colour = None
+        copy[c4d.MATERIAL_COLOR_COLOR] = colour if colour is not None else c4d.Vector(0.5)
+        copy[c4d.MATERIAL_USE_REFLECTION] = False
+        texture = self._texture(material) if textured else None
+        if texture is not None:
+            shader = c4d.BaseShader(c4d.Xbitmap)
+            shader[c4d.BITMAPSHADER_FILENAME] = texture
+            copy[c4d.MATERIAL_COLOR_SHADER] = shader
+            copy.InsertShader(shader)
+            self.textured += 1
+        self.target.InsertMaterial(copy)
+        self.by_key[key] = copy
+        return copy
+
+    def _texture(self, material) -> str | None:
+        """Die Bilddatei im Farbkanal eines Standardmaterials, wenn sie lesbar und höchstens 2 MB groß ist."""
+        if material.GetType() != c4d.Mmaterial:
+            return None
+        shader = material[c4d.MATERIAL_COLOR_SHADER]
+        if shader is None or shader.GetType() != c4d.Xbitmap:
+            return None
+        name = shader[c4d.BITMAPSHADER_FILENAME]
+        if not name:
+            return None
+        path = name if os.path.isabs(name) else None
+        if path is None:
+            folder = self.source_document.GetDocumentPath() or ""
+            path = c4d.GenerateTexturePath(folder, name, "") if hasattr(c4d, "GenerateTexturePath") else None
+        if not path or not os.path.isfile(path):
+            return None
+        if os.path.getsize(path) > MAX_TEXTURE_BYTES:
+            self.too_large += 1
+            return None
+        return path
+
+    def carry(self, obj, mesh, polygons, flip: bool) -> None:
+        """Texturtags, Polygonauswahlen und UVW von ``obj`` an ``mesh`` — die Materialien als Stellvertreter."""
+        texture_tags = [tag for tag in obj.GetTags() if tag.GetType() == c4d.Ttexture]
+        if not texture_tags:
+            return
+        for tag in obj.GetTags():
+            if tag.GetType() == c4d.Tpolygonselection:
+                mesh.InsertTag(tag.GetClone())
+        uvw = obj.GetTag(c4d.Tuvw)
+        if uvw is not None:
+            copy = uvw.GetClone()
+            if flip:  # dieselbe Eckreihenfolge wie _reversed
+                for index, polygon in enumerate(polygons):
+                    a, b, c, d = (copy.GetSlow(index)[key] for key in ("a", "b", "c", "d"))
+                    if polygon.IsTriangle():
+                        copy.SetSlow(index, a, c, b, b)
+                    else:
+                        copy.SetSlow(index, a, d, c, b)
+            mesh.InsertTag(copy)
+        for tag in texture_tags:
+            material = tag[c4d.TEXTURETAG_MATERIAL]
+            if material is None:
+                continue
+            copy = tag.GetClone()
+            # Eine andere Projektion als UVW ergäbe in der GLB falsche Koordinaten: nur die Farbe.
+            uvw_projection = copy[c4d.TEXTURETAG_PROJECTION] == c4d.TEXTURETAG_PROJECTION_UVW
+            copy[c4d.TEXTURETAG_MATERIAL] = self.substitute(material, textured=uvw_projection)
+            mesh.InsertTag(copy)
+
+
+# Ein Normal-Tag speichert je Polygon vier Ecken × xyz als ganze Zahlen; 32000 ist die Länge eins
+# (``NormalTag``, gemessen mit ``GetAllHighlevelData`` am Host: 12 Werte je Polygon).
+_NORMAL_SCALE = 32000
+
+
+def _world_normals(obj, matrix, polygons, flip: bool) -> list | None:
+    """Die Normalen, die Cinema 4D für ``obj`` zeigt, in Weltkoordinaten — als Daten eines Normal-Tags.
+
+    ``None`` ohne Phong- und Normal-Tag (Cinema 4D zeigt dann flach; der Exporter schreibt dann keine Normalen, und
+    der Loader schattiert ebenso flach) oder wenn dieses Cinema 4D die Normalen nicht liefert. Gedreht wird mit der
+    Kofaktormatrix (Normalen unter ungleichmäßiger Skalierung), das Vorzeichen der Determinante hält sie außen; die
+    Ecken einer gespiegelten Fläche stehen in der Reihenfolge von ``_reversed``.
+    """
+    create = getattr(obj, "CreatePhongNormals", None)
+    if create is None or getattr(c4d, "Tnormal", None) is None or not polygons:
+        return None
+    normals = create()
+    if not normals or len(normals) < 4 * len(polygons):
+        return None
+    v1, v2, v3 = matrix.v1, matrix.v2, matrix.v3
+    sign = -1.0 if flip else 1.0
+    c1, c2, c3 = _cross(v2, v3), _cross(v3, v1), _cross(v1, v2)
+    data: list = []
+    for index, polygon in enumerate(polygons):
+        corners = []
+        for corner in range(4):
+            n = normals[index * 4 + corner]
+            x = sign * (c1[0] * n.x + c2[0] * n.y + c3[0] * n.z)
+            y = sign * (c1[1] * n.x + c2[1] * n.y + c3[1] * n.z)
+            z = sign * (c1[2] * n.x + c2[2] * n.y + c3[2] * n.z)
+            length = math.sqrt(x * x + y * y + z * z)
+            if not length > 1e-12:
+                return None
+            corners.append((x / length, y / length, z / length))
+        if flip:  # dieselbe Reihenfolge wie _reversed: (a, c, b) bzw. (a, d, c, b)
+            corners = [corners[0], corners[2], corners[1], corners[1]] if polygon.IsTriangle() else \
+                [corners[0], corners[3], corners[2], corners[1]]
+        for x, y, z in corners:
+            data += [int(round(x * _NORMAL_SCALE)), int(round(y * _NORMAL_SCALE)), int(round(z * _NORMAL_SCALE))]
+    return data
+
+
+def _cross(a, b) -> tuple[float, float, float]:
+    return (a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
 
 
 def is_camera(obj) -> bool:
@@ -566,6 +738,7 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
         _image_size(target, size)
         objects = triangles = cameras = 0
         lenses: dict = {}
+        materials = MaterialSubstitutes(target, doc)
         low = [math.inf] * 3
         high = [-math.inf] * 3
         # Dieselben Schlüssel wie in der Liste: ``Polygonize`` behält Namen und Reihenfolge der Kameras.
@@ -585,7 +758,7 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
                 continue
             if not isinstance(obj, c4d.PolygonObject) or not visible(obj, source, kind):
                 continue
-            mesh, count = _baked(obj, objects)
+            mesh, count = _baked(obj, objects, materials)
             if mesh is None:
                 continue
             target.InsertObject(mesh)
@@ -666,11 +839,11 @@ _SETTINGS = (
     ("GLTFEXPORTER_MORPHANIMATIONS", False),
     ("GLTFEXPORTER_SKINANIMATIONS", False),
     ("GLTFEXPORTER_BAKEANIMATIONS", False),
-    ("GLTFEXPORTER_TEXTURES", False),
+    ("GLTFEXPORTER_TEXTURES", True),  # nur die eingebetteten Bitmaps der Stellvertreter (≤ 2 MB), RTX-C4D-011
     ("GLTFEXPORTER_CAMERAS", True),
     ("GLTFEXPORTER_INSTANCES", False),
     ("GLTFEXPORTER_NORMALS", True),
-    ("GLTFEXPORTER_UVS", False),
+    ("GLTFEXPORTER_UVS", True),  # für die Texturen; UVW trägt nur ein Objekt mit Texturtag (MaterialSubstitutes)
     ("GLTFEXPORTER_DOUBLESIDED", False),
 )
 
@@ -782,7 +955,8 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
     if prepared.cameras:
         cameras += f", davon {described} mit Objektiv und Shift (extras)"
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Cinema 4D (Flip Z): sichtbare Objekte polygonisiert, "
-            f"Weltkoordinaten, ohne Animation, Materialien und UVs; {triangles} Dreiecke; {cameras}; {scaled}.")
+            f"Weltkoordinaten, Normalen wie in Cinema 4D, Materialien als Grundfarbe (Texturen bis 2 MB), ohne "
+            f"Animation; {triangles} Dreiecke; {cameras}; {scaled}.")
     file = mf.CaptureFile(role="model", path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
     return Model(file, geometry_dict(meters), meters, triangles, factor)

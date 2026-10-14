@@ -59,7 +59,10 @@ lassen sich dort abmelden.
    neuen Namen.
 2. **Neuer Blickpunkt** mit Namen oder **Bestehenden aktualisieren** und den
    Blickpunkt wählen. Ein Update legt keinen zweiten Blickpunkt an. Als Name
-   steht der Name der Kamera schon da; du kannst ihn ändern.
+   steht der Name der Kamera schon da und folgt einem Kamerawechsel; du kannst
+   ihn ändern. Die Liste der Blickpunkte wird beim Öffnen des Tabs neu gelesen;
+   **Liste aktualisieren** holt einen Blickpunkt, der inzwischen im Browser
+   entstand.
 3. Unter **Bild übernehmen** die Aufnahmeart wählen:
    - **Viewport** — die Ansicht, gerendert mit dem **Viewport Renderer** (so,
      wie sie im Editor zu sehen ist; bei mehreren Ansichten die Renderansicht). Das Plugin
@@ -120,8 +123,11 @@ dieser Kamera.
 - **Was exportiert wird:** alle Objekte, die in der Aufnahme sichtbar sind —
   bei **Viewport** nach dem Editor-Punkt im Objekt-Manager, bei **Beauty** nach
   dem Render-Punkt, jeweils samt Ebene. Generatoren und Deformer werden in Polygone
-  gewandelt, **ohne** Animation,
-  Materialien, Texturen, Kameras und Lichter. Deine Szene wird dabei nicht
+  gewandelt, **ohne** Animation und Lichter. Kanten erscheinen wie in Cinema 4D
+  (Phong, Phong-Brüche, Normal-Tags aus CAD-Importen). Materialien gehen als
+  **Grundfarbe** mit; ein Bild im Farbkanal eines Standardmaterials mit
+  UVW-Projektion bis 2 MB als Textur — Corona-, Redshift- und Node-Materialien
+  nur als Farbe. Deine Szene wird dabei nicht
   verändert: das Plugin arbeitet auf einer Kopie und nutzt den glTF-Exporter
   von Cinema 4D; dessen Einstellungen stellt es danach wieder her.
 - **Vor dem Senden** nennt das Fenster die Zahl der Dreiecke und sichtbaren

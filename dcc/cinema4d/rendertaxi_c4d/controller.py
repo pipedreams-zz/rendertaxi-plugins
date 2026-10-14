@@ -554,6 +554,18 @@ class Controller:
         form.viewpoint_name = form.suggested_viewpoint_name = suggestion
         return True
 
+    def refresh_viewpoints(self) -> bool:
+        """„Liste aktualisieren“: die Blickpunkte des gewählten Projekts neu lesen (RTX-C4D-011)."""
+        if not self.form.project_id or not self.state.connected:
+            return False
+        self._request_viewpoints(self.form.project_id)
+        return True
+
+    def open_viewpoint_tab(self) -> None:
+        """Der Tab „Blickpunkt“ ist vorn: Kameraname als Vorschlag, Liste neu lesen — einmal, nicht im Takt."""
+        self.suggest_viewpoint_name()
+        self.refresh_viewpoints()
+
     def select_project(self, project_id: str | None) -> None:
         self.form.project_id = project_id or None
         if self.form.viewpoint_id and not any(
@@ -1196,6 +1208,10 @@ class Controller:
                 # Was angekommen ist, aus dem Abschlussbeleg je Weg — und was am Blickpunkt stehen blieb.
                 update = (pending["target"].get("viewpoint") or {}).get("mode") == frame.UPDATE
                 self.state.message = ways.result_text(outcome["result"], update)
+                # Der Name ist vergeben: das Feld folgt wieder der Kamera (RTX-C4D-011), auch wenn er getippt war.
+                if not update:
+                    self.form.suggested_viewpoint_name = self.form.viewpoint_name
+                    self.suggest_viewpoint_name()
 
             job.post(apply)
             # Neuer Blickpunkt: die Liste neu lesen, damit er gleich wählbar ist.

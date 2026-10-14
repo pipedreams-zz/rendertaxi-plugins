@@ -8,7 +8,8 @@ Bereich „Übernehmen".
 * **Projekt** — Projekt, „Neues Projekt …" (Name erfragen, anlegen, gleich wählen), „Aktualisieren" (auch
   umbenannte Projekte).
 * **Blickpunkt** — neuer Blickpunkt mit Namen (der Name des Kameraobjekts steht als Vorschlag darin, bis der
-  Nutzer ihn ändert) oder bestehenden aktualisieren; „Rahmen an Aufnahme anpassen" (``frame: fit-to-capture``,
+  Nutzer ihn ändert; er folgt einem Kamerawechsel und nach jeder Übernahme wieder der Kamera) oder bestehenden
+  aktualisieren — die Liste liest der Tab beim Öffnen neu, „Liste aktualisieren“ auf Wunsch (RTX-C4D-011); „Rahmen an Aufnahme anpassen" (``frame: fit-to-capture``,
   sonst ``keep``); Rahmengröße Canvas-Vorgabe oder Render-Einstellung (``size``).
 * **Bild** — Viewport oder Beauty mit optionalen Pässen; Größe aus dem Dokument oder dem Blickpunkt-Rahmen;
   „Bittiefe der Datenpässe" (8 oder 16 Bit, sofort gemerkt, Wortlaut aus dem gemeinsamen Client).
@@ -60,6 +61,7 @@ ID_NEW_PROJECT = 1039
 ID_TARGET_MODE = 1033
 ID_VP_NAME = 1034
 ID_VIEWPOINT = 1035
+ID_REFRESH_VIEWPOINTS = 1044  # „Liste aktualisieren“ im Tab „Blickpunkt“ (RTX-C4D-011)
 ID_FIT = 1036
 ID_SIZE = 1037
 ID_SIZE_TEXT = 1038
@@ -226,7 +228,11 @@ class RendertaxiDialog(gui.GeDialog):
         self._tab_begin("viewpoint")
         self._combo(ID_TARGET_MODE, MODE_LABELS)
         self._gadgets[ID_VP_NAME] = self.AddEditText(ID_VP_NAME, c4d.BFH_SCALEFIT, 300, 0)
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 1, "")
         self._combo(ID_VIEWPOINT)
+        self._gadgets[ID_REFRESH_VIEWPOINTS] = self.AddButton(ID_REFRESH_VIEWPOINTS, c4d.BFH_RIGHT, 0, 0,
+                                                              "Liste aktualisieren")
+        self.GroupEnd()
         self._gadgets[ID_FIT] = self.AddCheckbox(ID_FIT, c4d.BFH_SCALEFIT, 0, 0, "Rahmen an Aufnahme anpassen")
         self._text(0, "Rahmengröße")
         self._combo(ID_SIZE, SIZE_LABELS)
@@ -312,6 +318,9 @@ class RendertaxiDialog(gui.GeDialog):
         self._tab = self.controller.last_tab()
         self.SetInt32(ID_TABS, ID_TAB[self._tab])
         self.SetTimer(250)
+        # Öffnet das Fenster mit dem Tab „Blickpunkt“, liest er die Liste wie beim Wechsel dorthin (RTX-C4D-011).
+        if self._tab == "viewpoint":
+            self._guarded(self.controller.open_viewpoint_tab)
         self._guarded(self.refresh)
         return True
 
@@ -361,6 +370,10 @@ class RendertaxiDialog(gui.GeDialog):
         if tab is not None and tab != self._tab:
             self._tab = tab
             self.controller.remember_tab(tab)
+            # Der Tab „Blickpunkt“ liest die Liste neu und nimmt den Kameranamen als Vorschlag (RTX-C4D-011):
+            # ein Blickpunkt, der inzwischen anderswo entstand, ist ohne Neuwahl des Projekts da.
+            if tab == "viewpoint":
+                self.controller.open_viewpoint_tab()
 
     def refresh(self) -> None:
         controller, state, form = self.controller, self.controller.state, self.controller.form
@@ -425,6 +438,7 @@ class RendertaxiDialog(gui.GeDialog):
             self.SetString(ID_VP_NAME, form.viewpoint_name)
         self._enable(ID_VP_NAME, creating)
         self._enable(ID_VIEWPOINT, not creating)
+        self._enable(ID_REFRESH_VIEWPOINTS, not busy and bool(form.project_id))
         self._enable(ID_FIT, not creating)
         self._fill(ID_VIEWPOINT, "— Blickpunkt wählen —", state.viewpoints.get(form.project_id or "", []),
                    form.viewpoint_id)
@@ -598,7 +612,10 @@ class RendertaxiDialog(gui.GeDialog):
 
     def Timer(self, msg) -> None:
         self._guarded(self._follow_tab)
-        if self._guarded(self.controller.pump):
+        # Ein Kamerawechsel im Viewport ist keine Änderung des Dokuments (kein EVMSG_CHANGE): der Vorschlag folgt
+        # der Kamera hier — nur lokal, ohne Serverabfrage.
+        changed = self._guarded(self.controller.suggest_viewpoint_name)
+        if self._guarded(self.controller.pump) or changed:
             self.refresh()
 
     def CoreMessage(self, message_id, msg) -> bool:
@@ -627,6 +644,7 @@ class RendertaxiDialog(gui.GeDialog):
             ID_CANCEL: controller.cancel,
             ID_SIGN_OUT: controller.sign_out,
             ID_REFRESH: controller.refresh,
+            ID_REFRESH_VIEWPOINTS: controller.refresh_viewpoints,
             ID_NEW_PROJECT: controller.new_project,
             ID_CAPTURE: controller.capture,
             ID_TAKE: controller.take_rendered,
