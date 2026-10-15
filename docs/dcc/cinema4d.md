@@ -38,7 +38,7 @@ Das Fenster lässt sich andocken und kommt mit dem Layout zurück.
 
 1. **Extensions › rendertaxi.ai** öffnen.
 2. Unter **Einstellungen** steht die Serveradresse (Vorgabe
-   `https://dev.rendertaxi.ai`) — nur ändern, wenn euer Büro eine andere Adresse
+   `https://app.rendertaxi.ai`) — nur ändern, wenn euer Büro eine andere Adresse
    nennt, dann **Einstellungen sichern**. Ein **Gerätename** hilft, Cinema 4D
    später wiederzuerkennen.
 3. **Verbinden** zeigt einen Code und öffnet den Browser. Dort mit dem

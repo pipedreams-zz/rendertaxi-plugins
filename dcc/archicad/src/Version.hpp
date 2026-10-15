@@ -8,7 +8,7 @@
 // übernehmen. Die Fassung ist eine Eigenschaft dieses Add-Ons, keine
 // Vertragsauslegung — sie wird hier gehoben und im Bericht genannt, nicht
 // stillschweigend.
-#define RTX_ADDON_VERSION "1.2.2"
+#define RTX_ADDON_VERSION "1.2.3"
 
 // **Wortgleich zu `client_id`** (§5.1: „`client_id` … wortgleich zu
 // `source.plugin.identifier` des Manifests"). Vorher standen hier zwei
@@ -34,4 +34,4 @@
 #define RTX_ADDON_BUILD_DATE __DATE__
 
 /** Vorgabe der Serveradresse; der Nutzer kann sie in der Palette ändern. */
-#define RTX_DEFAULT_SERVER "https://dev.rendertaxi.ai"
+#define RTX_DEFAULT_SERVER "https://app.rendertaxi.ai"

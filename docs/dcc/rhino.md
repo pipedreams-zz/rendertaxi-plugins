@@ -50,7 +50,7 @@ oder im Plugin **Abmelden**.
 
 1. **RdtxAI** öffnet die Palette von rdtx.ai.
 2. Unter **Verbindung › Einstellungen** steht die Serveradresse (Vorgabe
-   `https://dev.rendertaxi.ai`) — nur ändern, wenn euer Büro eine andere Adresse
+   `https://app.rendertaxi.ai`) — nur ändern, wenn euer Büro eine andere Adresse
    nennt, dann **Einstellungen sichern**. Nach dem Verbinden sind die
    Einstellungen zugeklappt; ein Klick auf **Einstellungen** öffnet sie. Ein **Gerätename** hilft, Rhino später
    wiederzuerkennen.

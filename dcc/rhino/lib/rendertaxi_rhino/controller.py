@@ -39,7 +39,7 @@ from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewPro
                                           handshake_problem, normalize_server_url, prepare, project_choices,
                                           project_name_problem, supports_model)
 
-DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
+DEFAULT_SERVER_URL = "https://app.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender und Cinema 4D.
 # ``sendImage``, ``sendModel``, ``modelColors``: die Wahl der Wege und der Materialfarben (wie Cinema 4D,
 # RTX-C4D-008) — gemerkt, nie Bedingung fürs Laden.

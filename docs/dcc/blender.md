@@ -11,7 +11,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: Blender 4.5 LTS, 5.1 oder 5.2 LTS (macOS, Windows, Linux) — ab
 Extension 0.5.0; ältere Fassungen der Extension brauchen 5.2. Die Zip
 `rendertaxi-blender4.5-<Version>-<Release>.zip` (etwa
-`rendertaxi-blender4.5-0.7.3-2026.10.09.zip`; die Zahl nach „blender" ist die
+`rendertaxi-blender4.5-0.7.4-2026.10.09.zip`; die Zahl nach „blender" ist die
 Mindestversion) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
@@ -37,7 +37,7 @@ unter **Add-ons**.
 1. In der 3D-Ansicht mit **N** die Seitenleiste öffnen, Reiter
    **rendertaxi.ai**.
 2. Unter **Verbindung** steht die Serveradresse (Vorgabe
-   `https://dev.rendertaxi.ai`, änderbar unter **Edit › Preferences › Add-ons ›
+   `https://app.rendertaxi.ai`, änderbar unter **Edit › Preferences › Add-ons ›
    rendertaxi.ai** —
    nur ändern, wenn euer Büro eine andere Adresse nennt).
 3. **Verbinden** zeigt einen Code und öffnet den Browser. Dort mit dem

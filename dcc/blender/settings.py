@@ -33,7 +33,7 @@ from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log, log_exception, set_debug  # noqa: F401
 from .rendertaxi_client.store import CredentialStore, TransferStore, has_local_material  # noqa: F401
 
-DEFAULT_SERVER_URL = "https://dev.rendertaxi.ai"
+DEFAULT_SERVER_URL = "https://app.rendertaxi.ai"
 
 
 # --------------------------------------------------------------------------

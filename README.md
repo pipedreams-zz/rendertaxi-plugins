@@ -1,7 +1,7 @@
 # rendertaxi.ai-Plugins
 
 Plugins, die eine Ansicht aus dem 3D-Programm als Bild an
-[rendertaxi.ai](https://dev.rendertaxi.ai) übergeben und einem Projekt und
+[rendertaxi.ai](https://app.rendertaxi.ai) übergeben und einem Projekt und
 Blickpunkt zuordnen. Generierung und Ergebnisbearbeitung bleiben in der
 Webanwendung.
 

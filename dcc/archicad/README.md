@@ -187,6 +187,9 @@ und ein von außen auslösbarer Upload wäre eine Angriffsfläche ohne Gegenwert
 
 ## Anmeldung
 
+**Seit 1.2.3** ist die Vorgabe der Serveradresse `https://app.rendertaxi.ai` (RTX-INFRA-031; vorher `dev`). Das macOS-Bundle
+unter `dist/macos/` trägt sie erst nach einem Neubau am Mac (`scripts/dist.sh macos`), siehe Pull Request.
+
 **Es gibt kein Passwortfeld, und das ist Absicht** (Festlegung 4 des Auftrags).
 Die Anmeldung ist ein Gerätelogin nach RFC 8628: das Add-On zeigt einen Code,
 öffnet den Systembrowser, und der Nutzer bestätigt dort. Das Add-On sieht nie
@@ -224,7 +227,7 @@ gebautes Bundle. `build/` ist ignoriert.
 Der Client ist gegen die **Spezifikation** gebaut, nicht gegen Annahmen:
 `docs/api/plugin-api-v1.md`, `docs/api/plugin-api-v1.openapi.json` und
 `packages/contracts/src/plugin.ts` auf `main` bei **`08dd482`** (25.09.2026) —
-derselbe Stand, der auf `https://dev.rendertaxi.ai` läuft.
+derselbe Stand, der auf `https://app.rendertaxi.ai` läuft.
 
 Die neun Annahmen des ersten Durchgangs (A-01 bis A-09) sind **aufgelöst** —
 jede entweder durch die Spezifikation bestätigt oder korrigiert. Auch die

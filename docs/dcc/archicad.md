@@ -9,7 +9,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.2.2-2026.10.09.zip`) von der
+`rendertaxi-archicad28-1.2.3-2026.10.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
@@ -65,7 +65,7 @@ starten.
 1. Menü **rdtx.ai › Palette** öffnet die Palette. Sie lässt sich
    andocken.
 2. Im Bereich **Verbindung** steht die Serveradresse (Vorgabe
-   `https://dev.rendertaxi.ai`). Nur ändern, wenn euer Büro eine andere
+   `https://app.rendertaxi.ai`). Nur ändern, wenn euer Büro eine andere
    Adresse nennt.
 3. **Anmelden…** öffnet den Browser mit einem Code. Dort mit dem
    rendertaxi.ai-Konto anmelden und das Gerät bestätigen. Die Palette zeigt
