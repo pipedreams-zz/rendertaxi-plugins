@@ -54,6 +54,7 @@ import os
 from dataclasses import dataclass
 
 from .rendertaxi_client import glb
+from .rendertaxi_client import glbmaterials
 from .rendertaxi_client import manifest as mf
 
 MODEL_PATH = glb.MODEL_PATH
@@ -415,14 +416,22 @@ def estimate(context) -> Estimate:
     return Estimate(objects, triangles)
 
 
-def export_model(context, directory: str, include_materials: bool = False) -> mf.CaptureFile:
+MERGE_BY_MATERIAL = glbmaterials.MERGE_BY_MATERIAL
+KEEP_OBJECTS = glbmaterials.KEEP_OBJECTS
+
+
+def export_model(context, directory: str, materials: bool = True,
+                 merge: str = glbmaterials.MERGE_BY_MATERIAL) -> mf.CaptureFile:
     """Die sichtbaren Objekte als GLB nach ``directory/model/scene.glb``.
 
     Eingebauter glTF-Exporter (``bpy.ops.export_scene.gltf``), „+Y Up",
     Modifier angewendet, ohne Animation, Lichter und Custom Properties;
-    **mit** den sichtbaren Kameras der Szene (Namen der Objekte, RTX-M2-026);
-    Materialien und Texturen nur auf Wunsch (dann in die Datei eingebettet,
-    nie daneben). Die Datei bleibt im Capture-Verzeichnis.
+    **mit** den sichtbaren Kameras der Szene (Namen der Objekte, RTX-M2-026).
+    Danach die Materialregel (RTX-P-021, ``capture-manifest.md`` 11.6) auf der
+    exportierten Datei — nie in der Szene: Basisfarbe und eine Diffustextur
+    bis 2 MB (größere verkleinert ``scale_image``), Transparenz als
+    ``alphaMode``, nach Material zusammengeführt oder je Objekt. ``materials``
+    ``False`` ist „ohne Materialien“. Die Datei bleibt im Capture-Verzeichnis.
     """
     import bpy
 
@@ -448,9 +457,10 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
             export_lights=False,
             export_extras=False,
             export_copyright="",
-            export_materials="EXPORT" if include_materials else "NONE",
-            export_image_format="AUTO" if include_materials else "NONE",
-            export_texcoords=include_materials,
+            export_materials="EXPORT" if materials else "NONE",
+            export_image_format="AUTO" if materials else "NONE",
+            export_texcoords=materials,
+            export_tangents=False,
             export_keep_originals=False,
             will_save_settings=False,
         )
@@ -460,6 +470,11 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
     if "FINISHED" not in result or not os.path.exists(target):
         raise ExportError("Blender hat den glTF-Export nicht ausgeführt.")
     _write_camera_extras(scene, target)
+    try:
+        report = glbmaterials.apply_material_rule(target, materials=materials, merge=merge,
+                                                  scale_image=scale_image)
+    except glb.GlbError as error:
+        raise ExportError(str(error)) from None
     document = read_glb_json(target)
     if external_references(document):
         raise ExportError("Die GLB-Datei verweist auf Dateien außerhalb ihrer selbst.")
@@ -471,9 +486,46 @@ def export_model(context, directory: str, include_materials: bool = False) -> mf
                           f"{MAX_TRIANGLES:,} an.".replace(",", " "))
     sha, size = mf.sha256_file(target)
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Blender: sichtbare Objekte, Modifier angewendet, "
-            f"+Y oben, ohne Animation; {'mit' if include_materials else 'ohne'} Materialien; {triangles} Dreiecke.")
+            f"+Y oben, ohne Animation; {glbmaterials.report_note(report, materials)}; {triangles} Dreiecke.")
     return mf.CaptureFile(role="model", path=MODEL_PATH, media_type=MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
+
+
+def scale_image(data: bytes, mime: str, factor: float):
+    """Ein Bild um ``factor`` je Seite verkleinert neu kodieren — Blenders eigene Bildbibliothek.
+
+    Bilder mit Alphakanal (laut PNG-Kopf) bleiben PNG, alle anderen werden JPEG (Qualität 90):
+    ein Foto als PNG wäre bei gleicher Pixelzahl drei- bis fünfmal größer.
+    """
+    import tempfile
+
+    import bpy
+
+    folder = tempfile.mkdtemp(prefix="rdtxai-image-")
+    source = os.path.join(folder, "source.png" if mime == "image/png" else "source.jpg")
+    with open(source, "wb") as handle:
+        handle.write(data)
+    image = None
+    try:
+        image = bpy.data.images.load(source, check_existing=False)
+        width, height = image.size[0], image.size[1]
+        if not width or not height:
+            return None
+        image.scale(max(1, int(width * factor)), max(1, int(height * factor)))
+        alpha = mime == "image/png" and glbmaterials.png_has_alpha(data)
+        kind, out_mime = ("PNG", "image/png") if alpha else ("JPEG", "image/jpeg")
+        target = os.path.join(folder, "scaled.png" if alpha else "scaled.jpg")
+        # ``Image.save`` schreibt die Pixel ohne die Farbverwaltung der Szene (``save_render`` legte AgX darüber).
+        image.file_format = kind
+        image.save(filepath=target, quality=90)
+        with open(target, "rb") as handle:
+            return handle.read(), out_mime
+    finally:
+        if image is not None:
+            bpy.data.images.remove(image)
+        import shutil
+
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def camera_extras_of(data, width: int, height: int) -> dict | None:

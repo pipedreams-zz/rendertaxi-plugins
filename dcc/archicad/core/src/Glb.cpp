@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 #include "rtx/Json.hpp"
 
@@ -97,12 +98,12 @@ GlbCounts CountGlb (const GlbScene& scene)
 			if (prim.indices.empty () || prim.positions.empty ()) continue;
 			used = true;
 			++counts.primitives;
+			counts.accessors += prim.uvs.empty () ? 3 : 4;
 			counts.triangles += prim.Triangles ();
 			counts.vertices += prim.positions.size () / 3;
 		}
 		if (used) ++counts.meshes;
 	}
-	counts.accessors = counts.primitives * 3;
 	// Mesh-Knoten, der Wurzelknoten beim Versatz ist hier nicht gezählt (höchstens einer), dann die Kameras.
 	counts.nodes = counts.meshes + scene.cameras.size ();
 	return counts;
@@ -119,6 +120,8 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 		std::size_t indexCount;
 		float min[3];
 		float max[3];
+		/** Byte-Versatz in der UV-Sicht; `kNone` ohne UV. */
+		std::size_t uvOffset;
 	};
 
 	// --- Bounding Box doppelt genau, Versatz bei großen Koordinaten (QA-02) -----
@@ -150,14 +153,19 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 	std::vector<Placed> placed;
 	std::size_t vertexTotal = 0;
 	std::size_t indexTotal = 0;
+	std::size_t uvTotal = 0;
 	for (std::size_t m = 0; m < scene.meshes.size (); ++m) {
 		const GlbMesh& mesh = scene.meshes[m];
 		for (std::size_t p = 0; p < mesh.primitives.size (); ++p) {
 			const GlbPrimitive& prim = mesh.primitives[p];
 			if (prim.indices.empty () || prim.positions.empty ()) continue;
-			Placed entry {m, p, vertexTotal * 12, indexTotal * 4, prim.positions.size () / 3, prim.indices.size (), {}, {}};
+			const std::size_t vertices = prim.positions.size () / 3;
+			const bool uv = prim.uvs.size () == vertices * 2;
+			Placed entry {m, p, vertexTotal * 12, indexTotal * 4, vertices, prim.indices.size (), {}, {},
+						  uv ? uvTotal * 8 : kNone};
 			vertexTotal += entry.vertexCount;
 			indexTotal += entry.indexCount;
+			if (uv) uvTotal += vertices;
 			placed.push_back (entry);
 		}
 	}
@@ -200,8 +208,24 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 		const GlbPrimitive& prim = scene.meshes[entry.mesh].primitives[entry.primitive];
 		Append (bin, prim.indices.data (), prim.indices.size ());
 	}
+	// UV (nur Primitive mit Textur), dann je Bild seine Bytes — jede Sicht auf vier Bytes ausgerichtet.
+	const std::size_t uvStart = bin.size ();
+	for (const Placed& entry : placed) {
+		if (entry.uvOffset == kNone) continue;
+		const GlbPrimitive& prim = scene.meshes[entry.mesh].primitives[entry.primitive];
+		Append (bin, prim.uvs.data (), prim.uvs.size ());
+	}
+	const std::size_t uvLength = bin.size () - uvStart;
+	std::vector<std::pair<std::size_t, std::size_t>> imageViews;
+	for (const GlbImage& image : scene.images) {
+		Pad (bin, 0);
+		imageViews.emplace_back (bin.size (), image.bytes.size ());
+		Append (bin, image.bytes.data (), image.bytes.size ());
+	}
 	const std::size_t binLength = bin.size ();
 	Pad (bin, 0);
+	const std::size_t uvView = 3;
+	const std::size_t firstImageView = uvLength > 0 ? 4 : 3;
 
 	// --- JSON -----------------------------------------------------------------
 	std::string j;
@@ -271,7 +295,11 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 		const GlbPrimitive& prim = scene.meshes[entry.mesh].primitives[entry.primitive];
 		if (entry.mesh != currentMesh) {
 			if (currentMesh != kNone) meshes += "]},";
-			meshes += "{\"primitives\":[";
+			meshes += "{";
+			// Meshname wie der Knoten (11.6): das Material „nach Material“, die GUID mit „Objekte behalten“.
+			if (!scene.meshes[entry.mesh].nodeName.empty ())
+				meshes += "\"name\":" + JsonQuote (scene.meshes[entry.mesh].nodeName) + ",";
+			meshes += "\"primitives\":[";
 			currentMesh = entry.mesh;
 		} else {
 			meshes += ",";
@@ -279,8 +307,10 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 		const std::size_t pos = accessorCount++;
 		const std::size_t nor = accessorCount++;
 		const std::size_t idx = accessorCount++;
-		meshes += "{\"attributes\":{\"POSITION\":" + std::to_string (pos) + ",\"NORMAL\":" + std::to_string (nor) +
-				  "},\"indices\":" + std::to_string (idx);
+		const std::size_t tex = entry.uvOffset != kNone ? accessorCount++ : kNone;
+		meshes += "{\"attributes\":{\"POSITION\":" + std::to_string (pos) + ",\"NORMAL\":" + std::to_string (nor);
+		if (tex != kNone) meshes += ",\"TEXCOORD_0\":" + std::to_string (tex);
+		meshes += "},\"indices\":" + std::to_string (idx);
 		if (prim.material < scene.materials.size ()) meshes += ",\"material\":" + std::to_string (prim.material);
 		meshes += "}";
 		if (!accessors.empty ()) accessors += ",";
@@ -292,6 +322,10 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 					 ",\"componentType\":5126,\"count\":" + std::to_string (entry.vertexCount) + ",\"type\":\"VEC3\"}";
 		accessors += ",{\"bufferView\":2,\"byteOffset\":" + std::to_string (entry.indexOffset) +
 					 ",\"componentType\":5125,\"count\":" + std::to_string (entry.indexCount) + ",\"type\":\"SCALAR\"}";
+		if (tex != kNone)
+			accessors += ",{\"bufferView\":" + std::to_string (uvView) + ",\"byteOffset\":" +
+						 std::to_string (entry.uvOffset) + ",\"componentType\":5126,\"count\":" +
+						 std::to_string (entry.vertexCount) + ",\"type\":\"VEC2\"}";
 	}
 	if (currentMesh != kNone) meshes += "]}";
 	if (!meshes.empty ()) j += ",\"meshes\":[" + meshes + "]";
@@ -304,11 +338,26 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 			if (i > 0) j += ",";
 			j += "{\"name\":" + JsonQuote (mat.name) + ",\"pbrMetallicRoughness\":{\"baseColorFactor\":[" +
 				 Number (mat.rgba[0]) + "," + Number (mat.rgba[1]) + "," + Number (mat.rgba[2]) + "," +
-				 Number (mat.rgba[3]) + "],\"metallicFactor\":0,\"roughnessFactor\":0.8}";
+				 Number (mat.rgba[3]) + "]";
+			if (mat.image >= 0 && static_cast<std::size_t> (mat.image) < scene.images.size ())
+				j += ",\"baseColorTexture\":{\"index\":" + std::to_string (mat.image) + "}";
+			j += ",\"metallicFactor\":0,\"roughnessFactor\":0.8}";
 			if (mat.blend) j += ",\"alphaMode\":\"BLEND\"";
 			j += ",\"doubleSided\":true}";
 		}
 		j += "]";
+	}
+
+	if (!scene.images.empty ()) {
+		// Eine Textur je Bild, gleicher Index; Wiederholung ist die Vorgabe von glTF.
+		std::string textures;
+		std::string images;
+		for (std::size_t i = 0; i < scene.images.size (); ++i) {
+			textures += (i > 0 ? ",{\"source\":" : "{\"source\":") + std::to_string (i) + "}";
+			images += (i > 0 ? "," : "") + std::string ("{\"bufferView\":") + std::to_string (firstImageView + i) +
+					  ",\"mimeType\":" + JsonQuote (scene.images[i].mimeType) + "}";
+		}
+		j += ",\"textures\":[" + textures + "],\"images\":[" + images + "]";
 	}
 
 	if (!scene.cameras.empty ()) {
@@ -343,7 +392,13 @@ std::vector<std::uint8_t> WriteGlb (const GlbScene& scene, GlbStats* stats)
 		j += ",{\"buffer\":0,\"byteOffset\":" + std::to_string (normalsStart) +
 			 ",\"byteLength\":" + std::to_string (indicesStart - normalsStart) + ",\"byteStride\":12,\"target\":34962}";
 		j += ",{\"buffer\":0,\"byteOffset\":" + std::to_string (indicesStart) +
-			 ",\"byteLength\":" + std::to_string (binLength - indicesStart) + ",\"target\":34963}";
+			 ",\"byteLength\":" + std::to_string (uvStart - indicesStart) + ",\"target\":34963}";
+		if (uvLength > 0)
+			j += ",{\"buffer\":0,\"byteOffset\":" + std::to_string (uvStart) + ",\"byteLength\":" +
+				 std::to_string (uvLength) + ",\"byteStride\":8,\"target\":34962}";
+		for (const auto& view : imageViews)
+			j += ",{\"buffer\":0,\"byteOffset\":" + std::to_string (view.first) + ",\"byteLength\":" +
+				 std::to_string (view.second) + "}";
 		j += "]";
 	}
 	j += "}";
@@ -388,28 +443,54 @@ GlbScene MergeByMaterial (const GlbScene& scene)
 	GlbScene merged;
 	merged.generator = scene.generator;
 	merged.materials = scene.materials;
+	merged.images = scene.images;
 	merged.cameras = scene.cameras;
-	GlbMesh mesh;
-	std::map<std::uint32_t, std::size_t> primitiveOf;
+	merged.texturesDownscaled = scene.texturesDownscaled;
+	merged.texturesDropped = scene.texturesDropped;
+	std::map<std::uint32_t, std::size_t> meshOf;
 	for (const GlbMesh& source : scene.meshes)
 		for (const GlbPrimitive& prim : source.primitives) {
 			if (prim.indices.empty () || prim.positions.empty ()) continue;
-			auto found = primitiveOf.find (prim.material);
-			if (found == primitiveOf.end ()) {
-				found = primitiveOf.emplace (prim.material, mesh.primitives.size ()).first;
+			const std::uint32_t material = prim.material < scene.materials.size () ? prim.material : kGlbNoMaterial;
+			auto found = meshOf.find (material);
+			if (found == meshOf.end ()) {
+				found = meshOf.emplace (material, merged.meshes.size ()).first;
+				GlbMesh mesh;
+				mesh.nodeName = material == kGlbNoMaterial ? kGlbNoMaterialName : scene.materials[material].name;
 				mesh.primitives.push_back ({});
-				mesh.primitives.back ().material = prim.material;
+				mesh.primitives.back ().material = material;
+				merged.meshes.push_back (std::move (mesh));
 			}
-			GlbPrimitive& target = mesh.primitives[found->second];
-			const std::uint32_t base = static_cast<std::uint32_t> (target.positions.size () / 3);
+			GlbPrimitive& target = merged.meshes[found->second].primitives.front ();
+			const std::size_t before = target.positions.size () / 3;
+			const std::uint32_t base = static_cast<std::uint32_t> (before);
 			target.positions.insert (target.positions.end (), prim.positions.begin (), prim.positions.end ());
 			target.normals.insert (target.normals.end (), prim.normals.begin (), prim.normals.end ());
 			// Fehlende Normalen auffüllen, damit die Ecken der nächsten Quelle an ihrer Stelle bleiben.
 			target.normals.resize (target.positions.size (), 0.0f);
+			const bool textured = material != kGlbNoMaterial && scene.materials[material].image >= 0;
+			if (textured) {
+				target.uvs.resize (before * 2, 0.0f);
+				target.uvs.insert (target.uvs.end (), prim.uvs.begin (), prim.uvs.end ());
+				target.uvs.resize (target.positions.size () / 3 * 2, 0.0f);
+			}
 			for (const std::uint32_t index : prim.indices) target.indices.push_back (base + index);
 		}
-	if (!mesh.primitives.empty ()) merged.meshes.push_back (std::move (mesh));
 	return merged;
+}
+
+GlbScene WithoutMaterials (const GlbScene& scene)
+{
+	GlbScene out = scene;
+	out.materials.clear ();
+	out.images.clear ();
+	out.texturesDownscaled = out.texturesDropped = 0;
+	for (GlbMesh& mesh : out.meshes)
+		for (GlbPrimitive& prim : mesh.primitives) {
+			prim.material = kGlbNoMaterial;
+			prim.uvs.clear ();
+		}
+	return out;
 }
 
 GlbLimitCheck CheckGlbStructure (const GlbCounts& counts, const GlbServerLimits& limits)
@@ -456,7 +537,8 @@ Status CheckGlbFile (const GlbStats& stats, std::uint64_t byteSize, std::int64_t
 	return Status::Ok ();
 }
 
-Result<GlbFile> FinishGlb (const GlbScene& scene, std::int64_t maxGeometryBytes, const GlbServerLimits& limits)
+Result<GlbFile> FinishGlb (const GlbScene& scene, std::int64_t maxGeometryBytes, const GlbServerLimits& limits,
+						   bool mergeByMaterial)
 {
 	const GlbCounts counts = CountGlb (scene);
 	if (counts.triangles == 0)
@@ -465,14 +547,16 @@ Result<GlbFile> FinishGlb (const GlbScene& scene, std::int64_t maxGeometryBytes,
 	if (structure.trianglesExceeded) return Result<GlbFile>::Fail (errc::LimitExceeded, structure.message);
 
 	GlbFile file;
-	if (structure.structureExceeded) {
+	if (mergeByMaterial || structure.structureExceeded) {
 		file.bytes = WriteGlb (MergeByMaterial (scene), &file.stats);
 		file.mergedByMaterial = true;
+		file.mergeFallback = !mergeByMaterial;
 	} else {
 		file.bytes = WriteGlb (scene, &file.stats);
 		if (file.stats.jsonBytes > limits.maxJsonBytes) {
 			file.bytes = WriteGlb (MergeByMaterial (scene), &file.stats);
 			file.mergedByMaterial = true;
+			file.mergeFallback = true;
 		}
 	}
 	const Status checked = CheckGlbFile (file.stats, file.bytes.size (), maxGeometryBytes, limits);
@@ -490,8 +574,37 @@ void GlbSceneBuilder::BeginElement (const std::string& guid)
 	primitiveOf.clear ();
 }
 
+std::int32_t GlbSceneBuilder::KnownImage (std::int64_t key) const
+{
+	const auto found = imageOf.find (key);
+	return found == imageOf.end () ? -2 : found->second;
+}
+
+std::int32_t GlbSceneBuilder::Image (std::int64_t key, const RgbaImage& pixels)
+{
+	const auto found = imageOf.find (key);
+	if (found != imageOf.end ()) return found->second;
+	const Result<EncodedImage> encoded = TextureForGlb (pixels);
+	std::int32_t index = -1;
+	if (encoded) {
+		GlbImage image;
+		image.bytes = encoded.Value ().bytes;
+		image.mimeType = encoded.Value ().mimeType;
+		image.width = encoded.Value ().width;
+		image.height = encoded.Value ().height;
+		image.alpha = pixels.alpha;
+		if (encoded.Value ().downscaled) ++scene.texturesDownscaled;
+		index = static_cast<std::int32_t> (scene.images.size ());
+		scene.images.push_back (std::move (image));
+	} else {
+		++scene.texturesDropped;
+	}
+	imageOf[key] = index;
+	return index;
+}
+
 std::uint32_t GlbSceneBuilder::Material (std::int64_t key, const std::string& name, double red, double green,
-										 double blue, double transparency)
+										 double blue, double transparency, std::int32_t image)
 {
 	const auto found = materialOf.find (key);
 	if (found != materialOf.end ()) return found->second;
@@ -503,6 +616,13 @@ std::uint32_t GlbSceneBuilder::Material (std::int64_t key, const std::string& na
 	const double alpha = 1.0 - std::min (1.0, std::max (0.0, std::isfinite (transparency) ? transparency : 0.0));
 	material.rgba[3] = static_cast<float> (alpha);
 	material.blend = alpha < 0.999;
+	material.image = image >= 0 && static_cast<std::size_t> (image) < scene.images.size () ? image : -1;
+	// Mit Textur ist die Basisfarbe weiß: in Archicad ersetzt die Textur die Oberflächenfarbe, glTF dagegen
+	// multipliziert beide (gemessen 15.10.2026, sonst wäre der Ortbeton um 60 % zu dunkel).
+	if (material.image >= 0) material.rgba[0] = material.rgba[1] = material.rgba[2] = 1.0f;
+	// Transparenz aus dem Bild (F-02 an #532): ein genutzter Alphakanal macht das Material `BLEND`, auch bei
+	// Oberflächentransparenz 0 — sonst zeigte glTF die durchsichtigen Pixel deckend.
+	if (material.image >= 0 && scene.images[static_cast<std::size_t> (material.image)].alpha) material.blend = true;
 	const std::uint32_t index = static_cast<std::uint32_t> (scene.materials.size ());
 	scene.materials.push_back (material);
 	materialOf[key] = index;
@@ -510,7 +630,7 @@ std::uint32_t GlbSceneBuilder::Material (std::int64_t key, const std::string& na
 }
 
 void GlbSceneBuilder::AddConvexPolygon (std::uint32_t material, const std::vector<Vec3>& corners,
-										const std::vector<Vec3>& normals, Vec3 faceNormal)
+										const std::vector<Vec3>& normals, Vec3 faceNormal, const std::vector<Vec2>& uvs)
 {
 	const std::size_t n = corners.size ();
 	if (n < 3) return;
@@ -524,6 +644,7 @@ void GlbSceneBuilder::AddConvexPolygon (std::uint32_t material, const std::vecto
 		mesh.primitives.back ().material = material;
 	}
 	GlbPrimitive& prim = mesh.primitives[found->second];
+	const bool textured = material < scene.materials.size () && scene.materials[material].image >= 0;
 
 	// Umlaufsinn gegen die Flächennormale prüfen; glTF will gegen den Uhrzeigersinn von außen.
 	faceNormal = Norm (faceNormal);
@@ -544,6 +665,10 @@ void GlbSceneBuilder::AddConvexPolygon (std::uint32_t material, const std::vecto
 		}
 		prim.normals.insert (prim.normals.end (),
 							 {static_cast<float> (normal.x), static_cast<float> (normal.z), static_cast<float> (-normal.y)});
+		if (textured) {
+			const Vec2 uv = i < uvs.size () ? uvs[i] : Vec2 {};
+			prim.uvs.insert (prim.uvs.end (), {static_cast<float> (uv.u), static_cast<float> (uv.v)});
+		}
 	}
 	for (std::size_t i = 1; i + 1 < n; ++i) {
 		const std::uint32_t a = base + static_cast<std::uint32_t> (i);

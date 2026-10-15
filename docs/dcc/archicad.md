@@ -9,7 +9,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.2.3-2026.10.09.zip`) von der
+`rendertaxi-archicad28-1.3.0-2026.10.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.

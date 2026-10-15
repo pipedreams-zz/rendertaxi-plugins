@@ -83,6 +83,7 @@ import c4d
 
 from . import capture
 from .rendertaxi_client import glb
+from .rendertaxi_client import glbmaterials
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log, log_exception
 
@@ -313,6 +314,15 @@ def _walk(obj):
         obj = obj.GetNext()
 
 
+def _instance_name(obj, instances: set) -> str | None:
+    """Der Name der Instanz, aus der ``obj`` beim ``Polygonize`` wurde — ``None`` für ein gewöhnliches Objekt."""
+    parent = obj.GetUp()
+    if (parent is None or parent.GetType() != c4d.Onull or parent.GetName() not in instances
+            or parent.GetDown() is None or parent.GetDown().GetNext() is not None):
+        return None
+    return parent.GetName()
+
+
 def visible(obj, doc, kind: str) -> bool:
     """Sichtbar in der Aufnahme: Editor- (Viewport) oder Renderpunkt (Beauty) samt Erbe, und die Ebene.
 
@@ -359,6 +369,7 @@ class Prepared:
     high: list | None
     cameras: int = 0
     lenses: dict = field(default_factory=dict)  # Knotenname → (Brennweite, Sensor, Film Offset X, Y) oder None
+    material_names: dict = field(default_factory=dict)  # ``MaterialSubstitutes.renamed``
 
 
 def _baked(obj, mesh_index: int, materials: "MaterialSubstitutes | None" = None):
@@ -398,8 +409,11 @@ def _baked(obj, mesh_index: int, materials: "MaterialSubstitutes | None" = None)
 # Materialien (RTX-C4D-011)
 # --------------------------------------------------------------------------
 
-# Größte Bilddatei, die als Textur eingebettet wird; darüber geht nur die Farbe mit (Issue #516).
-MAX_TEXTURE_BYTES = 2 * 1024 * 1024
+# Größte Textur in der Datei (``capture-manifest.md`` 11.6); eine größere verkleinert die Materialregel
+# (``glbmaterials.apply_material_rule`` mit ``scale_image``), statt sie wegzulassen (RTX-P-021).
+MAX_TEXTURE_BYTES = glbmaterials.MAX_TEXTURE_BYTES
+MERGE_BY_MATERIAL = glbmaterials.MERGE_BY_MATERIAL
+KEEP_OBJECTS = glbmaterials.KEEP_OBJECTS
 
 
 class MaterialSubstitutes:
@@ -407,7 +421,8 @@ class MaterialSubstitutes:
 
     Je Material der Szene genau ein Standardmaterial mit der Grundfarbe (``GetAverageColor`` des Farbkanals — für
     Standard-, Corona- und Node-Materialien gleich gefragt, ohne Shader-Übersetzung) und, nur bei einem
-    Standardmaterial mit Bitmap im Farbkanal, UVW-Projektion und einer Datei bis 2 MB, dieser Textur. Daraus schreibt
+    Standardmaterial mit Bitmap im Farbkanal und UVW-Projektion, dieser Textur — gleich wie groß: über 2 MB
+    verkleinert sie die Materialregel nach dem Export (RTX-P-021). Daraus schreibt
     der glTF-Exporter ein PBR-Material (``baseColorFactor`` bzw. ``baseColorTexture``, Metall 0, Rauheit 0,5;
     gemessen 14.10.2026). Mit gehen Texturtag, Auswahl und UVW des Objekts; ohne Texturtag kein Material.
     """
@@ -417,9 +432,18 @@ class MaterialSubstitutes:
         self.source_document = source_document
         self.by_key: dict = {}
         self.textured = 0
-        self.too_large = 0
+        # Name im Exportdokument → Name in der Szene: ``InsertMaterial`` hängt einer zweiten Fassung desselben
+        # Namens „.1“ an (gemessen 14.10.2026); die Materialregel führt beide wieder unter einem Namen zusammen.
+        self.renamed: dict[str, str] = {}
 
     def _key(self, material):
+        """Wer ein Material ist — über alle Verwendungen gleich. ``BaseMaterial`` hat in Python kein ``GetGUID``
+        (gemessen 14.10.2026, 2026.4); ``id()`` des Wrappers ist je Zugriff neu und gab jeder Verwendung einen
+        eigenen Stellvertreter („Holz“, „Holz.1“ …). Die Unique-ID des Erzeugers bleibt beim ``Polygonize``."""
+        find = getattr(material, "FindUniqueID", None)
+        unique = find(c4d.MAXON_CREATOR_ID) if find is not None and hasattr(c4d, "MAXON_CREATOR_ID") else None
+        if unique is not None:
+            return bytes(unique)
         guid = getattr(material, "GetGUID", None)
         return guid() if guid is not None else id(material)
 
@@ -440,6 +464,11 @@ class MaterialSubstitutes:
             colour = None
         copy[c4d.MATERIAL_COLOR_COLOR] = colour if colour is not None else c4d.Vector(0.5)
         copy[c4d.MATERIAL_USE_REFLECTION] = False
+        # Transparenz eines Standardmaterials: der Exporter schreibt sie als Alpha 1 − Helligkeit mit ``alphaMode``
+        # ``BLEND`` (gemessen 14.10.2026, RTX-P-021). Andere Materialien bleiben deckend.
+        if material.GetType() == c4d.Mmaterial and material[c4d.MATERIAL_USE_TRANSPARENCY]:
+            copy[c4d.MATERIAL_USE_TRANSPARENCY] = True
+            copy[c4d.MATERIAL_TRANSPARENCY_BRIGHTNESS] = material[c4d.MATERIAL_TRANSPARENCY_BRIGHTNESS]
         texture = self._texture(material) if textured else None
         if texture is not None:
             shader = c4d.BaseShader(c4d.Xbitmap)
@@ -448,11 +477,13 @@ class MaterialSubstitutes:
             copy.InsertShader(shader)
             self.textured += 1
         self.target.InsertMaterial(copy)
+        if copy.GetName() != (material.GetName() or "Material"):
+            self.renamed[copy.GetName()] = material.GetName() or "Material"
         self.by_key[key] = copy
         return copy
 
     def _texture(self, material) -> str | None:
-        """Die Bilddatei im Farbkanal eines Standardmaterials, wenn sie lesbar und höchstens 2 MB groß ist."""
+        """Die Bilddatei im Farbkanal eines Standardmaterials, wenn sie lesbar ist."""
         if material.GetType() != c4d.Mmaterial:
             return None
         shader = material[c4d.MATERIAL_COLOR_SHADER]
@@ -466,9 +497,6 @@ class MaterialSubstitutes:
             folder = self.source_document.GetDocumentPath() or ""
             path = c4d.GenerateTexturePath(folder, name, "") if hasattr(c4d, "GenerateTexturePath") else None
         if not path or not os.path.isfile(path):
-            return None
-        if os.path.getsize(path) > MAX_TEXTURE_BYTES:
-            self.too_large += 1
             return None
         return path
 
@@ -716,14 +744,15 @@ def _image_size(target, size: tuple[int, int] | None) -> None:
     rd[c4d.RDATA_PIXELASPECT] = 1.0
 
 
-def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=()) -> Prepared:
+def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(), materials: bool = True) -> Prepared:
     """Die sichtbaren Polygone und die gewählten Kameras in einem eigenen Exportdokument — das Dokument bleibt unberührt.
 
     Kameras (QC-16) gehen mit ihrer Weltmatrix mit; der glTF-Exporter schreibt sie mit „Flip Z“ richtig herum
     (Blick −Z und Oben +Y des Knotens gleich der gespiegelten Kamera, am Host gemessen,
     ``docs/measurements/2026-10-05-kamera.md``). Mit geht die Kamera der Renderansicht und jede, deren Schlüssel in
     ``extra_cameras`` steht — gewählt ist gewählt, auch eine im Objekt-Manager ausgeblendete. Ein Schlüssel ohne Kamera
-    (gelöscht, umbenannt) zählt nicht. Kameras zählen nicht zu den Objekten der Größenschätzung.
+    (gelöscht, umbenannt) zählt nicht. Kameras zählen nicht zu den Objekten der Größenschätzung. ``materials``
+    ``False`` („ohne Materialien“): keine Stellvertreter, kein Texturtag.
     """
     wanted = set(extra_cameras)
     render = render_camera_key(doc)
@@ -738,11 +767,14 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
         _image_size(target, size)
         objects = triangles = cameras = 0
         lenses: dict = {}
-        materials = MaterialSubstitutes(target, doc)
+        substitutes = MaterialSubstitutes(target, doc) if materials else None
         low = [math.inf] * 3
         high = [-math.inf] * 3
         # Dieselben Schlüssel wie in der Liste: ``Polygonize`` behält Namen und Reihenfolge der Kameras.
         keys = iter([key for key, _number, _obj in _keyed_cameras(source.GetFirstObject())])
+        # „Objekte behalten“ (RTX-P-021): ``Polygonize`` macht aus einer Instanz ein Null mit ihrem Namen und hängt
+        # die Kopie des Originals darunter — mit dem Namen des Originals (gemessen 14.10.2026).
+        instances = {o.GetName() for o in _walk(doc.GetFirstObject()) if o.GetType() == c4d.Oinstance}
         for obj in _walk(source.GetFirstObject()):
             if is_camera(obj):
                 if next(keys) not in wanted:
@@ -758,9 +790,12 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
                 continue
             if not isinstance(obj, c4d.PolygonObject) or not visible(obj, source, kind):
                 continue
-            mesh, count = _baked(obj, objects, materials)
+            mesh, count = _baked(obj, objects, substitutes)
             if mesh is None:
                 continue
+            instance = _instance_name(obj, instances)
+            if instance:
+                mesh.SetName(instance)
             target.InsertObject(mesh)
             objects += 1
             triangles += count
@@ -775,7 +810,8 @@ def prepare(doc, kind: str, size: tuple[int, int] | None = None, extra_cameras=(
         c4d.documents.KillDocument(source)
     if objects == 0:
         return Prepared(target, 0, 0, None, None, cameras, lenses)
-    return Prepared(target, objects, triangles, low, high, cameras, lenses)
+    renamed = dict(substitutes.renamed) if substitutes is not None else {}
+    return Prepared(target, objects, triangles, low, high, cameras, lenses, renamed)
 
 
 @dataclass
@@ -789,14 +825,15 @@ class Estimate:
     size_problem: str | None = None
 
 
-def estimate(doc, kind: str) -> Estimate:
+def estimate(doc, kind: str, materials: bool = True, merge: str = MERGE_BY_MATERIAL) -> Estimate:
     """Sichtbare Objekte, Dreiecke und die Dateigröße — der Hinweis im Dialog, **bevor** übernommen wird.
 
     Die Größe kommt aus einem Export derselben Objekte mit demselben Exporter in ein temporäres Verzeichnis, das danach
     gelöscht wird (Nutzerwunsch vom 10.10.2026: „nach Neu zählen Dateigröße anzeigen“). Ohne Kameras; die fehlen in
-    der Größe (je Kamera einige hundert Bytes).
+    der Größe (je Kamera einige hundert Bytes). Mit der Materialregel wie beim Senden: verkleinerte Texturen zählen
+    mit ihrer neuen Größe.
     """
-    prepared = prepare(doc, kind)
+    prepared = prepare(doc, kind, materials=materials)
     byte_size = None
     problem = None
     folder = None
@@ -810,6 +847,8 @@ def estimate(doc, kind: str) -> Estimate:
             target = os.path.join(folder, "scene.glb")
             try:
                 _save(prepared.document, target)
+                glbmaterials.apply_material_rule(target, materials=materials, merge=merge, scale_image=scale_image,
+                                                 material_names=prepared.material_names)
                 byte_size = os.path.getsize(target)
             except Exception as error:  # noqa: BLE001 — die Zählung gilt trotzdem, nur ohne Größe, mit Grund
                 log_exception("Dateigröße des Modells nicht messbar", error)
@@ -839,7 +878,7 @@ _SETTINGS = (
     ("GLTFEXPORTER_MORPHANIMATIONS", False),
     ("GLTFEXPORTER_SKINANIMATIONS", False),
     ("GLTFEXPORTER_BAKEANIMATIONS", False),
-    ("GLTFEXPORTER_TEXTURES", True),  # nur die eingebetteten Bitmaps der Stellvertreter (≤ 2 MB), RTX-C4D-011
+    ("GLTFEXPORTER_TEXTURES", True),  # die Bitmaps der Stellvertreter (RTX-C4D-011); über 2 MB verkleinert (RTX-P-021)
     ("GLTFEXPORTER_CAMERAS", True),
     ("GLTFEXPORTER_INSTANCES", False),
     ("GLTFEXPORTER_NORMALS", True),
@@ -906,16 +945,19 @@ class Model:
     exporter_scale: float  # gemessen: GLB-Einheiten je Einheit des Dokuments, vor der Korrektur
 
 
-def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=()) -> Model:
+def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=(),
+                 materials: bool = True, merge: str = MERGE_BY_MATERIAL) -> Model:
     """Die sichtbaren Objekte, die Kamera der Renderansicht und die gewählten Kameras als GLB nach
     ``directory/model/scene.glb`` — geprüft, in Metern.
 
     ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). ``extra_cameras``: die
-    Schlüssel weiterer Kameras (``scene_cameras``). Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen tragen
-    keinen Pfad.
+    Schlüssel weiterer Kameras (``scene_cameras``). ``materials`` und ``merge``: die Materialregel
+    (``capture-manifest.md`` 11.6) — „ohne Materialien“ und „nach Material“ oder „Objekte behalten“; sie läuft auf
+    der exportierten Datei, nach Maßstab und Kameras. Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen
+    tragen keinen Pfad.
     """
     meters = meters_per_unit(doc)
-    prepared = prepare(doc, kind, size, extra_cameras)
+    prepared = prepare(doc, kind, size, extra_cameras, materials)
     try:
         if prepared.objects == 0 or prepared.triangles == 0:
             raise ExportError("Keine sichtbare Geometrie: das Modell wäre leer.")
@@ -948,6 +990,11 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
         described = write_camera_extras(target, prepared.lenses) if prepared.cameras else 0
     except Exception:  # noqa: BLE001 — die Datei ist nicht vertrauenswürdig: ohne extras lädt sie wie bisher
         described = 0  # (Shift 0, Objektiv aus yfov); die Aufnahme bricht nie daran ab
+    try:
+        report = glbmaterials.apply_material_rule(target, materials=materials, merge=merge, scale_image=scale_image,
+                                                  material_names=prepared.material_names)
+    except glb.GlbError as error:
+        raise ExportError(str(error)) from None
     sha, size = mf.sha256_file(target)
     scaled = (f"Maßstab des Exporters {factor:g} je Einheit gemessen, auf Meter gesetzt ({correction:g})"
               if abs(correction - 1.0) > SCALE_TOLERANCE else "Maßstab des Exporters in Metern gemessen")
@@ -955,11 +1002,56 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
     if prepared.cameras:
         cameras += f", davon {described} mit Objektiv und Shift (extras)"
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Cinema 4D (Flip Z): sichtbare Objekte polygonisiert, "
-            f"Weltkoordinaten, Normalen wie in Cinema 4D, Materialien als Grundfarbe (Texturen bis 2 MB), ohne "
-            f"Animation; {triangles} Dreiecke; {cameras}; {scaled}.")
+            f"Weltkoordinaten, Normalen wie in Cinema 4D, ohne Animation; {glbmaterials.report_note(report, materials)}; "
+            f"{triangles} Dreiecke; {cameras}; {scaled}.")
     file = mf.CaptureFile(role="model", path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
     return Model(file, geometry_dict(meters), meters, triangles, factor)
+
+
+def scale_image(data: bytes, mime: str, factor: float):
+    """Ein Bild um ``factor`` je Seite verkleinert neu kodieren — mit ``BaseBitmap`` von Cinema 4D.
+
+    Ein PNG mit Alphakanal bleibt PNG (der Kanal wird mitskaliert), alles andere wird JPEG (Qualität 90): ein
+    Foto als PNG wäre bei gleicher Pixelzahl drei- bis fünfmal größer.
+    """
+    folder = tempfile.mkdtemp(prefix="rendertaxi-bild-")
+    try:
+        source = os.path.join(folder, "quelle.png" if mime == "image/png" else "quelle.jpg")
+        with open(source, "wb") as handle:
+            handle.write(data)
+        bitmap = c4d.bitmaps.BaseBitmap()
+        result = bitmap.InitWith(source)
+        if (result[0] if isinstance(result, tuple) else result) != c4d.IMAGERESULT_OK:
+            return None
+        width, height = bitmap.GetBw(), bitmap.GetBh()
+        if not width or not height:
+            return None
+        new_width, new_height = max(1, int(width * factor)), max(1, int(height * factor))
+        alpha = bitmap.GetInternalChannel() if mime == "image/png" else None
+        scaled = c4d.bitmaps.BaseBitmap()
+        if scaled.Init(new_width, new_height, 24) != c4d.IMAGERESULT_OK:
+            return None
+        bitmap.ScaleBicubic(scaled, 0, 0, width - 1, height - 1, 0, 0, new_width - 1, new_height - 1)
+        if alpha is not None:
+            channel = scaled.AddChannel(True, False)
+            for y in range(new_height):
+                for x in range(new_width):
+                    value = bitmap.GetAlphaPixel(alpha, min(width - 1, int(x / factor)), min(height - 1, int(y / factor)))
+                    scaled.SetAlphaPixel(channel, x, y, value)
+        target = os.path.join(folder, "klein.png" if alpha is not None else "klein.jpg")
+        if alpha is not None:
+            saved = scaled.Save(target, c4d.FILTER_PNG, c4d.BaseContainer(), c4d.SAVEBIT_ALPHA)
+        else:
+            settings = c4d.BaseContainer()
+            settings[c4d.JPGSAVER_QUALITY] = 90
+            saved = scaled.Save(target, c4d.FILTER_JPG, settings, c4d.SAVEBIT_NONE)
+        if saved != c4d.IMAGERESULT_OK or not os.path.isfile(target):
+            return None
+        with open(target, "rb") as handle:
+            return handle.read(), "image/png" if alpha is not None else "image/jpeg"
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------

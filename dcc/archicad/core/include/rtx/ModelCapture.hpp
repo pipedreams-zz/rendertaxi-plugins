@@ -45,6 +45,10 @@ struct ModelInput {
 	/** Bildgröße der Kamera: die Rendering-Szene, sonst 0 für das 3D-Fenster. */
 	int width = 0;
 	int height = 0;
+	/** Die Materialregel (RTX-P-021, `capture-manifest.md` 11.6): „ohne Materialien“ ist `false`. */
+	bool materials = true;
+	/** „Nach Material“ (Vorgabe); `false` ist „Objekte behalten“ mit den Element-GUIDs. */
+	bool mergeByMaterial = true;
 };
 
 struct ModelOutput {
@@ -56,6 +60,10 @@ struct ModelOutput {
 	GlbStats stats;
 	bool mergedByMaterial = false;
 	int cameras = 0;
+	/** Materialien und Texturen in der Datei, verkleinerte Texturen (RTX-P-021). */
+	int materials = 0;
+	int textures = 0;
+	int texturesDownscaled = 0;
 	/** Sätze für die Palette: Rückfall je Material, genäherte oder ausgelassene Kameras. */
 	std::vector<std::string> notes;
 };

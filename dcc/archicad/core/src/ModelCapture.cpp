@@ -40,7 +40,7 @@ Result<ModelOutput> AssembleModel (const ModelInput& input, const std::string& d
 								   std::int64_t maxGeometryBytes)
 {
 	ModelOutput out;
-	GlbScene scene = input.scene;
+	GlbScene scene = input.materials ? input.scene : WithoutMaterials (input.scene);
 	const SceneBox box = SceneBoxOf (scene);
 	if (!box.known)
 		return Result<ModelOutput>::Fail (kModelEmpty, "Das 3D-Fenster zeigt keine Geometrie; es wird kein Modell gesendet.");
@@ -74,12 +74,24 @@ Result<ModelOutput> AssembleModel (const ModelInput& input, const std::string& d
 	}
 	out.cameras = static_cast<int> (scene.cameras.size ());
 
-	const Result<GlbFile> file = FinishGlb (scene, maxGeometryBytes);
+	const Result<GlbFile> file = FinishGlb (scene, maxGeometryBytes, GlbServerLimits {}, input.mergeByMaterial);
 	if (!file) return Result<ModelOutput>::Fail (file.GetError ());
 	out.stats = file.Value ().stats;
 	out.mergedByMaterial = file.Value ().mergedByMaterial;
-	if (out.mergedByMaterial)
+	if (file.Value ().mergeFallback)
 		out.notes.push_back ("Zu viele Elemente für einzelne Knoten: das Modell ist je Oberfläche zusammengefasst.");
+	out.materials = static_cast<int> (scene.materials.size ());
+	for (const GlbMaterial& material : scene.materials)
+		if (material.image >= 0) ++out.textures;
+	out.texturesDownscaled = static_cast<int> (scene.texturesDownscaled);
+	if (scene.texturesDownscaled > 0)
+		out.notes.push_back (std::to_string (scene.texturesDownscaled) +
+							 (scene.texturesDownscaled == 1 ? " Textur" : " Texturen") +
+							 " über 2 MB verkleinert.");
+	if (scene.texturesDropped > 0)
+		out.notes.push_back (std::to_string (scene.texturesDropped) +
+							 (scene.texturesDropped == 1 ? " Textur ließ" : " Texturen ließen") +
+							 " sich nicht lesen; dort geht nur die Farbe mit.");
 
 	const std::string folder = directory + "/model";
 	const std::string local = directory + "/" + kModelPath;

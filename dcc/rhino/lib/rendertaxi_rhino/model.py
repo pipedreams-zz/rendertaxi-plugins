@@ -113,19 +113,19 @@ def too_big(size: int, limits: dict | None) -> str | None:
     return None
 
 
-def note(triangles: int, cameras: int, factor: float, correction: float, colors: bool) -> str:
+def note(triangles: int, cameras: int, factor: float, correction: float, materials: str) -> str:
     """Die Zeile ``note`` des Modell-Assets: was in der Datei steht und was gemessen wurde."""
     scaled = (f"Maßstab des Exporters {factor:g} je Einheit gemessen, auf Meter gesetzt ({correction:g})"
               if abs(correction - 1.0) > SCALE_TOLERANCE else "Maßstab des Exporters in Metern gemessen")
     named = {0: "ohne benannte Ansichten", 1: "1 benannte Ansicht als Kamera"}.get(
         cameras, f"{cameras} benannte Ansichten als Kameras")
     return (f"glTF 2.0 binär aus dem glTF-Exporter von Rhino (Z nach Y): sichtbare Objekte als Render-Netze, "
-            f"Blöcke aufgelöst, Weltkoordinaten, {'mit Materialfarben' if colors else 'ohne Materialien'}; "
+            f"Blöcke aufgelöst, Weltkoordinaten; {materials}; "
             f"{triangles} Dreiecke; {named}; {scaled}.")
 
 
 def model_file(path: str, triangles: int, cameras: int, factor: float, correction: float,
-               colors: bool) -> mf.CaptureFile:
+               materials: str) -> mf.CaptureFile:
     sha, size = mf.sha256_file(path)
     return mf.CaptureFile(role=mf.MODEL_ROLE, path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
-                          note=note(triangles, cameras, factor, correction, colors), byte_size=size, sha256=sha)
+                          note=note(triangles, cameras, factor, correction, materials), byte_size=size, sha256=sha)

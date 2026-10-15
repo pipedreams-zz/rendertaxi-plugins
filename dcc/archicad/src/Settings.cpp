@@ -109,6 +109,30 @@ bool SetWays (const WayChoice& ways)
 	return WriteSettings (node);
 }
 
+bool ModelWithoutMaterials ()
+{
+	return Flag (ReadSettings (), "modelWithoutMaterials", false);
+}
+
+bool SetModelWithoutMaterials (bool value)
+{
+	rtx::JsonPtr node = ReadSettings ();
+	node->Set ("modelWithoutMaterials", rtx::Json::MakeBool (value));
+	return WriteSettings (node);
+}
+
+bool ModelKeepObjects ()
+{
+	return Flag (ReadSettings (), "modelKeepObjects", false);
+}
+
+bool SetModelKeepObjects (bool value)
+{
+	rtx::JsonPtr node = ReadSettings ();
+	node->Set ("modelKeepObjects", rtx::Json::MakeBool (value));
+	return WriteSettings (node);
+}
+
 bool ExtraCameras ()
 {
 	return Flag (ReadSettings (), "extraCameras", false);

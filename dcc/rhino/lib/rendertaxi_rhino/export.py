@@ -19,19 +19,27 @@ Vertrag: ``integrations/_shared/docs/capture-manifest.md``, Abschnitt 11 (ADR 00
 * **Schnittebenen** wirken nicht auf die Datei: das Modell geht ganz mit, das Fenster sagt es.
 * **Kameras.** Der Exporter schreibt keine. Jede benannte Ansicht geht als Kamera mit (``camera.gltf_camera``,
   ``glb.add_cameras``), mit dem Seitenverhältnis der Aufnahme; Objektiv und Shift in ``extras``.
+* **Materialien** (RTX-P-021, ``capture-manifest.md`` 11.6). Je Objekt sein Rendermaterial als einfaches Material im
+  kopflosen Dokument — Diffusfarbe und Transparenz — und die Texturkoordinaten des Netzes nach dem Mapping des
+  Objekts (Kanal 1). Bitmap und Deckkraft hängt das Plugin selbst an die Datei (``patch_materials``): mit
+  Bitmaps stürzt der Exporter bei mehreren Objekten ab, die Transparenz schreibt er nicht. Danach die Materialregel auf der Datei: Bilder über 2 MB
+  verkleinert (``scale_image``, Eto), nach Material zusammengeführt oder je Objekt.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass, field
 
 import Rhino
+import System
 
 from . import camera as cam
 from . import model as md
 from . import rhinocapture
 from .rendertaxi_client import glb
+from .rendertaxi_client import glbmaterials
 
 # Die Dichte, mit der der glTF-Exporter von Rhino SubD vernetzt (``SubDSurfaceMeshingDensity``, Vorgabe 4).
 SUBD_DENSITY = 4
@@ -42,7 +50,7 @@ ExportError = md.ExportError
 class Prepared:
     """Die vernetzten sichtbaren Objekte — Weltkoordinaten in Einheiten des Dokuments."""
 
-    meshes: list = field(default_factory=list)  # (Name, Mesh, Farbe oder None)
+    meshes: list = field(default_factory=list)  # (Name, Mesh, Stellvertreter oder None)
     objects: int = 0
     triangles: int = 0
     skipped: int = 0  # sichtbar, aber ohne Fläche (Kurven, Punkte, Texte …)
@@ -134,29 +142,74 @@ def _meshes(doc, obj, geometry):
     return [mesh for mesh in meshes or [] if mesh is not None] or None
 
 
-def _color(doc, obj, attributes):
-    """Die Basisfarbe eines Objekts: Diffusfarbe seines Rendermaterials (Vorderseite)."""
+@dataclass(frozen=True)
+class Substitute:
+    """Was vom Rendermaterial eines Objekts in die Datei geht (RTX-P-021): Name, Diffusfarbe, Transparenz, Bitmap."""
+
+    name: str
+    color: tuple
+    transparency: float
+    texture: str | None
+
+
+def _substitute(doc, obj, attributes) -> Substitute | None:
+    """Das Rendermaterial eines Objekts (Vorderseite) als ``Substitute`` — ``None`` ohne Material.
+
+    ``GetMaterial(True)`` ist das Material, wie Rhino es anzeigt (bei einem Rendermaterial dessen Simulation);
+    ohne zugewiesenes Material (Vorgabe von Rhino, Index −1) gibt es keins: das Objekt steht „ohne Material“.
+    """
     try:
+        if attributes is not None and attributes.MaterialSource == Rhino.DocObjects.ObjectMaterialSource.MaterialFromLayer:
+            index = doc.Layers[attributes.LayerIndex].RenderMaterialIndex
+        else:
+            index = attributes.MaterialIndex if attributes is not None else -1
+        if index < 0:
+            return None
         material = obj.GetMaterial(True) if obj is not None else None
-        if material is None and attributes is not None:
-            index = attributes.MaterialIndex
+        if material is None:
             material = doc.Materials[index] if 0 <= index < doc.Materials.Count else None
-        return material.DiffuseColor if material is not None else None
-    except Exception:  # noqa: BLE001 — ohne lesbares Material ohne Farbe
+        if material is None:
+            return None
+        color = material.DiffuseColor
+        texture = None
+        bitmap = material.GetBitmapTexture()
+        if bitmap is not None:
+            path = bitmap.FileReference.FullPath if bitmap.FileReference is not None else bitmap.FileName
+            texture = path if path and os.path.isfile(path) else None
+        return Substitute(str(material.Name or "Material"), (color.R, color.G, color.B),
+                          float(material.Transparency), texture)
+    except Exception:  # noqa: BLE001 — ein Material, das Rhino nicht liefert, heißt: ohne Material
         return None
+
+
+def _mapped(obj, meshes):
+    """Die Texturkoordinaten nach dem Mapping des Objekts (Kanal 1) — ohne Mapping die des Netzes."""
+    try:
+        mapping, transform = obj.GetTextureMapping(1)
+    except Exception:  # noqa: BLE001 — kein Mapping lesbar: die Koordinaten des Netzes
+        return meshes
+    if mapping is None:
+        return meshes
+    for mesh in meshes:
+        try:
+            mesh.SetTextureCoordinates(mapping, transform, False)
+        except Exception:  # noqa: BLE001
+            continue
+    return meshes
 
 
 def _triangles(mesh) -> int:
     return mesh.Faces.TriangleCount + 2 * mesh.Faces.QuadCount
 
 
-def prepare(doc, colors: bool = False) -> Prepared:
-    """Die sichtbaren Objekte vernetzt, Blöcke aufgelöst — das Dokument bleibt unberührt."""
+def prepare(doc, materials: bool = False) -> Prepared:
+    """Die sichtbaren Objekte vernetzt, Blöcke aufgelöst — das Dokument bleibt unberührt. ``materials``: je Netz
+    der Stellvertreter seines Rendermaterials und die Texturkoordinaten nach dem Mapping des Objekts."""
     prepared = Prepared()
     low = [float("inf")] * 3
     high = [float("-inf")] * 3
 
-    def add(name, meshes, color, transform=None) -> None:
+    def add(name, meshes, substitute, transform=None) -> None:
         nonlocal low, high
         joined = Rhino.Geometry.Mesh()
         for mesh in meshes:
@@ -171,7 +224,7 @@ def prepare(doc, colors: bool = False) -> Prepared:
         for axis, (lo, hi) in enumerate(((box.Min.X, box.Max.X), (box.Min.Y, box.Max.Y), (box.Min.Z, box.Max.Z))):
             low[axis] = min(low[axis], lo)
             high[axis] = max(high[axis], hi)
-        prepared.meshes.append((name, joined, color))
+        prepared.meshes.append((name, joined, substitute))
         prepared.objects += 1
         prepared.triangles += _triangles(joined)
 
@@ -189,7 +242,9 @@ def prepare(doc, colors: bool = False) -> Prepared:
                 if not meshes:
                     prepared.skipped += 1
                     continue
-                add(obj.Name or piece.Name, meshes, _color(doc, piece, piece_attributes) if colors else None,
+                if materials:
+                    meshes = _mapped(piece, meshes)
+                add(obj.Name or piece.Name, meshes, _substitute(doc, piece, piece_attributes) if materials else None,
                     transform)
             continue
         if isinstance(obj, Rhino.DocObjects.ClippingPlaneObject):
@@ -198,7 +253,9 @@ def prepare(doc, colors: bool = False) -> Prepared:
         if not meshes:
             prepared.skipped += 1
             continue
-        add(obj.Name, meshes, _color(doc, obj, obj.Attributes) if colors else None)
+        if materials:
+            meshes = _mapped(obj, meshes)
+        add(obj.Name, meshes, _substitute(doc, obj, obj.Attributes) if materials else None)
     if prepared.objects:
         prepared.low, prepared.high = low, high
     return prepared
@@ -256,12 +313,13 @@ def estimate(doc) -> Estimate:
     return Estimate(prepared.objects, prepared.triangles, prepared.skipped, clipping_planes(doc))
 
 
-def _options(colors: bool):
+def _options(materials: bool):
     options = Rhino.FileIO.FileGltfWriteOptions()
     options.MapZToY = True
-    options.ExportMaterials = bool(colors)
-    options.UseDisplayColorForUnsetMaterials = bool(colors)
-    options.ExportTextureCoordinates = False
+    options.ExportMaterials = bool(materials)
+    # Ein Objekt ohne Material steht „ohne Material“ (11.6), nicht in seiner Anzeigefarbe.
+    options.UseDisplayColorForUnsetMaterials = False
+    options.ExportTextureCoordinates = bool(materials)
     options.ExportVertexNormals = True
     options.ExportOpenMeshes = True
     options.ExportVertexColors = False
@@ -270,24 +328,91 @@ def _options(colors: bool):
     return options
 
 
-def _write(doc, prepared: Prepared, target: str, colors: bool) -> None:
-    """Die Netze in ein kopfloses Dokument mit der Einheit des Nutzers — und von dort als GLB."""
+# Name einer Fassung ohne Bild im kopflosen Dokument; die Regel führt sie wieder unter dem Materialnamen zusammen.
+_WITHOUT_IMAGE = " (ohne Bild)"
+
+
+def _write(doc, prepared: Prepared, target: str, materials: bool) -> tuple[dict, dict, dict]:
+    """Die Netze in ein kopfloses Dokument mit der Einheit des Nutzers — und von dort als GLB.
+
+    Je ``Substitute`` ein Material im kopflosen Dokument mit Diffusfarbe und Transparenz, **ohne** Bitmap: mit
+    Bitmaps stürzt der glTF-Exporter von Rhino 8.35 bei mehreren Objekten ab, nicht jedes Mal
+    (gemessen 14./15.10.2026, ``docs/measurements/2026-10-15-materialien.md``). Die Bilder hängt
+    ``glbmaterials.patch_materials`` danach an, ebenso die Deckkraft, die der Exporter nicht schreibt. Zurück kommen
+    ``(Dateiname → Materialname, Dateiname → Bilddatei, Dateiname → Deckkraft)``.
+    """
     headless = Rhino.RhinoDoc.CreateHeadless(None)
+    names: dict = {}
+    images: dict = {}
+    alphas: dict = {}
     try:
         headless.ModelUnitSystem = doc.ModelUnitSystem
-        for name, mesh, color in prepared.meshes:
+        slots: dict = {}
+        for name, mesh, substitute in prepared.meshes:
             attributes = Rhino.DocObjects.ObjectAttributes()
             if name:
                 attributes.Name = name
-            if color is not None:
-                attributes.ObjectColor = color
-                attributes.ColorSource = Rhino.DocObjects.ObjectColorSource.ColorFromObject
+            if substitute is not None and substitute.texture and mesh.TextureCoordinates.Count != mesh.Vertices.Count:
+                # Ein Netz ohne Texturkoordinaten bekommt die Fassung ohne Bild.
+                substitute = dataclasses.replace(substitute, texture=None, name=substitute.name + _WITHOUT_IMAGE)
+            if materials and substitute is not None:
+                if substitute not in slots:
+                    material = Rhino.DocObjects.Material()
+                    material.Name = substitute.name
+                    material.DiffuseColor = System.Drawing.Color.FromArgb(*substitute.color)
+                    material.Transparency = substitute.transparency
+                    slots[substitute] = headless.Materials.Add(material)
+                    written = headless.Materials[slots[substitute]].Name
+                    names[written] = substitute.name[:-len(_WITHOUT_IMAGE)] \
+                        if substitute.name.endswith(_WITHOUT_IMAGE) else substitute.name
+                    if substitute.texture and written not in images:
+                        images[written] = substitute.texture
+                    if substitute.transparency > 0:
+                        alphas[written] = 1.0 - substitute.transparency
+                attributes.MaterialIndex = slots[substitute]
+                attributes.MaterialSource = Rhino.DocObjects.ObjectMaterialSource.MaterialFromObject
             headless.Objects.AddMesh(mesh, attributes)
-        ok = Rhino.FileIO.FileGltf.Write(target, headless, _options(colors))
+        ok = Rhino.FileIO.FileGltf.Write(target, headless, _options(materials))
     finally:
         headless.Dispose()
     if not ok or not os.path.exists(target):
         raise ExportError("Rhino hat den glTF-Export nicht ausgeführt.")
+    return names, images, alphas
+
+
+def _image_file(path: str):
+    """``(Bytes, mimeType)`` einer Bilddatei (PNG oder JPEG am Kopf erkannt) — ``None`` sonst."""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return data, "image/png"
+    if data[:2] == b"\xff\xd8":
+        return data, "image/jpeg"
+    return None
+
+
+def scale_image(data: bytes, mime: str, factor: float):
+    """Ein Bild um ``factor`` je Seite verkleinert neu kodieren — mit ``Eto.Drawing`` (Rhino 8, macOS und Windows).
+
+    Ein PNG mit Alphakanal (laut Kopf) bleibt PNG, alles andere wird JPEG.
+    """
+    import Eto.Drawing as drawing
+    import System
+
+    stream = System.IO.MemoryStream(System.Array[System.Byte](bytearray(data)))
+    source = drawing.Bitmap(stream)
+    width, height = source.Width, source.Height
+    if not width or not height:
+        return None
+    scaled = drawing.Bitmap(source, max(1, int(width * factor)), max(1, int(height * factor)),
+                            drawing.ImageInterpolation.High)
+    png = mime == "image/png" and glbmaterials.png_has_alpha(data)
+    out = System.IO.MemoryStream()
+    scaled.Save(out, drawing.ImageFormat.Png if png else drawing.ImageFormat.Jpeg)
+    return bytes(bytearray(out.ToArray())), "image/png" if png else "image/jpeg"
 
 
 def named_view_cameras(doc, size, bounds) -> list:
@@ -319,15 +444,18 @@ class Model:
     exporter_scale: float
 
 
-def export_model(doc, directory: str, size, limits: dict | None = None, colors: bool = False,
-                 max_triangles: int = glb.MAX_TRIANGLES) -> Model:
+def export_model(doc, directory: str, size, limits: dict | None = None, materials: bool = True,
+                 max_triangles: int = glb.MAX_TRIANGLES, merge: str = glbmaterials.MERGE_BY_MATERIAL) -> Model:
     """Die sichtbaren Objekte als GLB nach ``directory/model/scene.glb`` — geprüft, in Metern, mit Kameras.
+
+    ``materials`` und ``merge``: die Materialregel (``capture-manifest.md`` 11.6) — „ohne Materialien“ und „nach
+    Material“ oder „Objekte behalten“, auf der Datei nach Maßstab und Kameras.
 
     Grenzen (Dreiecke, ``maxGeometryBytes``, Einheit) greifen **vor** dem Senden. Die Datei liegt im
     Übernahmeordner unter dem Nutzerprofil (0700) und geht mit ihm, sobald die Übernahme abgeschlossen ist.
     """
     meters = meters_per_unit(doc)
-    prepared = prepare(doc, colors)
+    prepared = prepare(doc, materials)
     if prepared.objects == 0 or prepared.triangles == 0:
         raise ExportError("Keine sichtbare Geometrie: das Modell wäre leer.")
     problem = md.too_many(prepared.triangles, max_triangles)
@@ -335,7 +463,7 @@ def export_model(doc, directory: str, size, limits: dict | None = None, colors: 
         raise ExportError(problem)
     target = os.path.join(directory, *md.MODEL_PATH.split("/"))
     os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
-    _write(doc, prepared, target, colors)
+    names, images, alphas = _write(doc, prepared, target, materials)
     try:
         document = glb.read_glb_json(target)
         triangles = glb.glb_triangles(document)
@@ -357,10 +485,21 @@ def export_model(doc, directory: str, size, limits: dict | None = None, colors: 
         cameras = glb.add_cameras(target, named_view_cameras(doc, size, (prepared.low, prepared.high)))
     except Exception:  # noqa: BLE001 — ohne Kameras bleibt die Datei, wie der Exporter sie schrieb
         cameras = 0
+    try:
+        if materials:
+            files = {name: _image_file(path) for name, path in images.items()}
+            # Ein Objekt ohne Material bekommt vom Exporter „Default Material“ (gemessen): es steht ohne Material.
+            glbmaterials.patch_materials(target, textures={name: f for name, f in files.items() if f is not None},
+                                         alphas=alphas, unassigned=() if "Default Material" in names else
+                                         ("Default Material",))
+        report = glbmaterials.apply_material_rule(target, materials=materials, merge=merge, scale_image=scale_image,
+                                                  material_names=names)
+    except glb.GlbError as error:
+        raise ExportError(str(error)) from None
     problem = md.too_big(os.path.getsize(target), limits)
     if problem:
         raise ExportError(problem)
-    file = md.model_file(target, triangles, cameras, factor, correction, colors)
+    file = md.model_file(target, triangles, cameras, factor, correction, glbmaterials.report_note(report, materials))
     return Model(file, md.geometry_dict(meters), meters, triangles, cameras, factor)
 
 

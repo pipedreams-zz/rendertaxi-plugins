@@ -240,6 +240,8 @@ public:
  * Parameter (alle optional):
  *   `directory`   Zielverzeichnis; ohne Angabe ein Ordner im Arbeitsbereich
  *   `savedViews`  `true`: dazu die Kameras aller gespeicherten 3D-Ansichten
+ *   `materials`   `false`: „ohne Materialien“ (RTX-P-021); Vorgabe `true`
+ *   `merge`       `"objects"`: „Objekte behalten“; Vorgabe „nach Material“
  *
  * Antwort: Pfad, Bytes, Dreiecke, Kameras, Elemente, Körper, `rebuilding`
  * (0 Körper ohne Fehler) und der Zustand der Schnittebenen.
@@ -269,9 +271,12 @@ public:
 		}
 		bool savedViews = false;
 		parameters.Get ("savedViews", savedViews);
+		bool materials = true;
+		parameters.Get ("materials", materials);
+		const bool keepObjects = Param (parameters, "merge") == "objects";
 
 		rtx::GlbSceneBuilder builder;
-		const ModelExtraction extraction = ExtractWindowModel (builder);
+		const ModelExtraction extraction = ExtractWindowModel (builder, materials);
 		const CutPlanes cut = ReadCutPlanes ();
 		response.Add ("elements", extraction.elements);
 		response.Add ("bodies", static_cast<Int64> (extraction.bodies));
@@ -291,6 +296,8 @@ public:
 		rtx::ModelInput input;
 		builder.Scene ().generator = std::string ("rdtx.ai Archicad add-on ") + RTX_ADDON_VERSION;
 		input.scene = std::move (builder.Scene ());
+		input.materials = materials;
+		input.mergeByMaterial = !keepObjects;
 		const rtx::Result<rtx::ArchicadProjection> projection = ReadWindowProjection ();
 		if (!projection) {
 			Fail (response, projection.GetError ().message);
@@ -320,6 +327,9 @@ public:
 		response.Add ("meshes", static_cast<Int64> (out.Value ().stats.meshes));
 		response.Add ("cameras", static_cast<Int32> (out.Value ().cameras));
 		response.Add ("mergedByMaterial", out.Value ().mergedByMaterial);
+		response.Add ("materials", static_cast<Int32> (out.Value ().materials));
+		response.Add ("textures", static_cast<Int32> (out.Value ().textures));
+		response.Add ("texturesDownscaled", static_cast<Int32> (out.Value ().texturesDownscaled));
 		response.Add ("viewWarning", GS::UniString (viewWarning.c_str (), CC_UTF8));
 		return response;
 	}

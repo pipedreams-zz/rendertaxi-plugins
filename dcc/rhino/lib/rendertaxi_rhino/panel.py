@@ -20,8 +20,8 @@ import Eto.Drawing as drawing
 import Eto.Forms as forms
 
 from . import host
-from .controller import (BEAUTY, CURRENT_VIEW, MAX_TRIANGLES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, VIEWPORT,
-                         Controller)
+from .controller import (BEAUTY, CURRENT_VIEW, MAX_TRIANGLES, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT,
+                         VIEWPORT, Controller)
 from .rendertaxi_client import frame, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
@@ -321,12 +321,17 @@ class RdtxView:
                                          self.resolution_row, _row("Ausschnitt", self.frame_text), self.passes)
         # Modell (RTX-RH-003)
         self.send_model = _check("Modell senden", self._on_send_model)
-        self.model_colors = _check("Materialfarben mitsenden", self._on_model_colors)
+        self.model_without_materials = _check("ohne Materialien", self._on_model_without_materials)
+        self.model_merge = _dropdown(self._on_model_merge)
+        self.model_merge.ToolTip = ("Nach Material: ein Objekt je Material, benannt wie das Material. "
+                                    "Objekte behalten: ein Objekt je Rhino-Objekt mit seinem Namen.")
         self.model_hint = _label("", wrap=False)
         self.count = _button("Neu zählen", self._guarded(c.count_model))
         self.model_row = _row("Größe", self.model_hint, self.count)
-        self.colors_row = _row("", self.model_colors)
-        self.model_group = self._section("Modell", _row("", self.send_model), self.colors_row, self.model_row)
+        self.merge_row = _row("Zusammenführen", self.model_merge)
+        self.materials_row = _row("", self.model_without_materials)
+        self.model_group = self._section("Modell", _row("", self.send_model), self.merge_row, self.materials_row,
+                                         self.model_row)
         # Übernehmen
         self.summary = _label("")
         self.capture = _button("Bild übernehmen", self._guarded(c.capture))
@@ -411,8 +416,11 @@ class RdtxView:
     def _on_send_model(self, *_):
         self._changed(lambda: self.controller.set_send_model(bool(self.send_model.Checked)))
 
-    def _on_model_colors(self, *_):
-        self._changed(lambda: self.controller.set_model_colors(bool(self.model_colors.Checked)))
+    def _on_model_without_materials(self, *_):
+        self._changed(lambda: self.controller.set_model_without_materials(bool(self.model_without_materials.Checked)))
+
+    def _on_model_merge(self, *_):
+        self._changed(lambda: self.controller.set_model_merge(self.model_merge.SelectedKey))
 
     def _on_kind(self, *_):
         self._changed(lambda: setattr(self.controller.form, "capture_kind", self.kind.SelectedKey))
@@ -600,8 +608,10 @@ class RdtxView:
 
         # Modell
         self.send_model.Checked = form.send_model
-        self.model_colors.Checked = form.model_colors
-        self.colors_row.Visible = self.model_colors.Visible = self.count.Visible = form.send_model
+        self.model_without_materials.Checked = form.model_without_materials
+        _fill(self.model_merge, list(MODEL_MERGES), form.model_merge)
+        self.materials_row.Visible = self.model_without_materials.Visible = self.count.Visible = form.send_model
+        self.merge_row.Visible = self.model_merge.Visible = form.send_model
         self.model_row.Visible = form.send_model
         self.count.Enabled = not busy
         details = c.model_hint()

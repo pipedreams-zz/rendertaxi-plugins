@@ -34,11 +34,13 @@ struct ModelExtraction {
 /**
  * Liest die sichtbare Geometrie des **3D-Fensters** in `builder`: ein Element je
  * Knoten mit GUID, Oberflächenfarbe und Transparenz, Umlaufsinn gegen die
- * Flächennormale. Die Sicht des 3D-Fensters wird dafür ausdrücklich gewählt und
+ * Flächennormale. Mit `materials` (RTX-P-021) dazu je Oberfläche mit Textur
+ * deren Pixel (`ModelerAPI::Texture::GetPixelMap`) und je Ecke die UV
+ * (`Polygon::GetTextureCoordinate`); ohne bleibt die Pixelarbeit aus. Die Sicht des 3D-Fensters wird dafür ausdrücklich gewählt und
  * danach zurückgesetzt — ohne gewählte Sicht liefert ModelAccess nichts
  * (gemessen, QA-01).
  */
-ModelExtraction ExtractWindowModel (rtx::GlbSceneBuilder& builder);
+ModelExtraction ExtractWindowModel (rtx::GlbSceneBuilder& builder, bool materials = true);
 
 /** Zahl der Körper des 3D-Fensters; −1 bei einem Fehler. Für das Warten auf den Neuaufbau. */
 Int32 CountWindowBodies ();

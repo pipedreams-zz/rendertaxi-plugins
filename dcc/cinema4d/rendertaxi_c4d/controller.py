@@ -45,10 +45,14 @@ DEFAULT_SERVER_URL = "https://app.rendertaxi.ai"
 # ``sendExtraCameras`` und ``extraCameras`` (RTX-C4D-010): der Schalter „Zusätzliche Kameras mitsenden" und je
 # Dokumentkennung die gewählten Kameras (Schlüssel aus ``export.scene_cameras``) — eine gemerkte Kamera, die es nicht
 # mehr gibt, verliert ihr Häkchen, nie ein Fehler.
+# ``modelWithoutMaterials`` und ``modelMerge`` (RTX-P-021): „ohne Materialien“ und „nach Material“ (``material``)
+# oder „Objekte behalten“ (``objects``) im Tab „Modell“; ein fremder Wert fällt auf „nach Material“.
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
                     "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "lastTab": "connection",
                     "sendImage": True, "sendModel": False, "sendExtraCameras": False, "extraCameras": {},
-                    "masksOff": []}
+                    "masksOff": [], "modelWithoutMaterials": False, "modelMerge": "material"}
+# Die zwei Formen der GLB-Datei (``glbmaterials.MERGE_MODES``), in der Reihenfolge der Auswahl im Tab „Modell“.
+MODEL_MERGES = ("material", "objects")
 # Höchstens so viele gemerkte Dokumente mit Kamerawahl; das älteste fällt heraus.
 REMEMBERED_DOCUMENTS = 50
 # Höchstens so viele aktive Masken stehen zur Wahl (Tab „Bild“); was darüber liegt, wird weder gezeigt noch gesendet.
@@ -96,6 +100,9 @@ class Form:
     # Kameras im GLB (RTX-C4D-010): die der Renderansicht immer; die gewählten nur mit dem Schalter.
     send_extra_cameras: bool = False
     extra_cameras: set[str] = field(default_factory=set)
+    # Die Materialregel (RTX-P-021, capture-manifest.md 11.6): Materialien an, nach Material zusammengeführt.
+    model_without_materials: bool = False
+    model_merge: str = "material"
 
 
 def masks_and_index(files: list, planned: list, contract_version: str, handshake: dict | None):
@@ -204,6 +211,8 @@ class Controller:
         self.form.send_image = remembered["sendImage"]
         self.form.send_model = remembered["sendModel"]
         self.form.send_extra_cameras = remembered["sendExtraCameras"]
+        self.form.model_without_materials = remembered["modelWithoutMaterials"]
+        self.form.model_merge = remembered["modelMerge"] if remembered["modelMerge"] in MODEL_MERGES else "material"
         # Das Rendern im Picture Viewer (``Rendering`` des Hosts): nur das jüngste, solange es zur Einstellung passt.
         self.rendering = None
         # Wem die Kamerawahl in ``form.extra_cameras`` gehört: das Dokument selbst und seine Kennung (F-01, #310).
@@ -960,6 +969,23 @@ class Controller:
         except (OSError, ValueError, RuntimeError):  # die Wahl gilt trotzdem, nur nicht über den Neustart hinaus
             pass
 
+    def set_model_without_materials(self, on: bool) -> None:
+        self.form.model_without_materials = bool(on)
+        self._remember_model({"modelWithoutMaterials": bool(on)})
+
+    def set_model_merge(self, merge: str) -> None:
+        self.form.model_merge = merge if merge in MODEL_MERGES else "material"
+        self._remember_model({"modelMerge": self.form.model_merge})
+
+    def _remember_model(self, values: dict) -> None:
+        try:
+            SettingsStore(self._directory(), DEFAULT_SETTINGS).save(values)
+        except (OSError, ValueError):  # die Wahl gilt trotzdem, nur nicht über den Neustart hinaus
+            pass
+        self.model_estimate = None  # die Größe hängt an der Wahl: neu zählen
+        if self.form.send_model:
+            self.count_model()
+
     def set_send_extra_cameras(self, on: bool) -> None:
         self.form.send_extra_cameras = bool(on)
         try:
@@ -980,7 +1006,8 @@ class Controller:
         if self.model_problem():
             return
         try:
-            counted = self.adapter.model_estimate(self.form.capture_kind)
+            counted = self.adapter.model_estimate(self.form.capture_kind, not self.form.model_without_materials,
+                                                  self.form.model_merge)
         except (RuntimeError, OSError) as error:  # export.ExportError ist ein RuntimeError
             log_exception("Modellgröße nicht bestimmbar", error)
             return
@@ -1083,7 +1110,8 @@ class Controller:
             contract_version = mf.model_contract_version(handshake)
             model, geometry, camera = self.adapter.export_model(
                 self.form.capture_kind, directory, (width, height), self._progress_in_main,
-                mf.camera_lens_allowed(contract_version), self.chosen_cameras())
+                mf.camera_lens_allowed(contract_version), self.chosen_cameras(),
+                not self.form.model_without_materials, self.form.model_merge)
             if camera is not None:
                 # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.
                 camera["resolution"] = {"width": int(width), "height": int(height)}

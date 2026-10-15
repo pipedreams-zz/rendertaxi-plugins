@@ -34,7 +34,7 @@ import c4d
 from c4d import gui
 
 from . import host
-from .controller import (BEAUTY, MASK_ROWS_MAX, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
+from .controller import (BEAUTY, MASK_ROWS_MAX, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
                          Controller, wrap)
 from .rendertaxi_client import frame
 from .rendertaxi_client import manifest as mf
@@ -103,6 +103,10 @@ ID_SEND_IMAGE = 1231
 ID_SEND_SUMMARY = 1232  # bis 1234: drei Zeilen (SUMMARY_LINES)
 # RTX-C4D-010: Kameras im Modell und das Rendern im Picture Viewer.
 ID_SEND_CAMERAS = 1236
+# RTX-P-021: die Materialregel im Tab „Modell“.
+ID_MODEL_NO_MATERIALS = 1237
+ID_MODEL_MERGE = 1238
+MERGE_LABELS = ("nach Material", "Objekte behalten")  # in der Reihenfolge von controller.MODEL_MERGES
 ID_TAKE = 1074
 ID_CAMERAS = 1240  # die Gruppe der Kameraliste, neu gefüllt, wenn sich die Kameras ändern
 ID_CAMERA_NOTE = 1241
@@ -264,6 +268,12 @@ class RendertaxiDialog(gui.GeDialog):
 
         self._tab_begin("model")
         self._text(0, "GLB der sichtbaren Objekte mit der Kamera der Renderansicht.")
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 0, "")
+        self._text(0, "Zusammenführen")
+        self._combo(ID_MODEL_MERGE, MERGE_LABELS)
+        self.GroupEnd()
+        self._gadgets[ID_MODEL_NO_MATERIALS] = self.AddCheckbox(ID_MODEL_NO_MATERIALS, c4d.BFH_SCALEFIT, 0, 0,
+                                                                "ohne Materialien")
         self._gadgets[ID_MODEL_COUNT] = self.AddButton(ID_MODEL_COUNT, c4d.BFH_LEFT, 0, 0, "Neu zählen")
         for line in range(LINES):
             self._text(ID_MODEL_HINT + line)
@@ -537,6 +547,10 @@ class RendertaxiDialog(gui.GeDialog):
     def _refresh_model(self, busy: bool) -> None:
         controller = self.controller
         self._enable(ID_MODEL_COUNT, not busy and controller.form.send_model)
+        self.SetBool(ID_MODEL_NO_MATERIALS, controller.form.model_without_materials)
+        self.SetInt32(ID_MODEL_MERGE, MODEL_MERGES.index(controller.form.model_merge))
+        self._enable(ID_MODEL_NO_MATERIALS, not busy)
+        self._enable(ID_MODEL_MERGE, not busy)
         hint = controller.model_hint() if controller.form.send_model else "Unter „Übernehmen“ „Modell“ wählen."
         self._lines(ID_MODEL_HINT, hint, width=MODEL_WIDTH)
         self._refresh_cameras(busy)
@@ -677,6 +691,11 @@ class RendertaxiDialog(gui.GeDialog):
             controller.set_send_model(self.GetBool(ID_MODEL))
         elif element_id == ID_SEND_CAMERAS:
             controller.set_send_extra_cameras(self.GetBool(ID_SEND_CAMERAS))
+        elif element_id == ID_MODEL_NO_MATERIALS:
+            controller.set_model_without_materials(self.GetBool(ID_MODEL_NO_MATERIALS))
+        elif element_id == ID_MODEL_MERGE:
+            merges = MODEL_MERGES
+            controller.set_model_merge(merges[max(0, min(len(merges) - 1, self.GetInt32(ID_MODEL_MERGE)))])
         elif ID_MASK_FIRST <= element_id < ID_MASK_FIRST + MAX_MASKS:
             index = element_id - ID_MASK_FIRST
             if self._mask_rows and index < len(self._mask_rows):

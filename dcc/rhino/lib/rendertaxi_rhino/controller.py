@@ -41,11 +41,15 @@ from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewPro
 
 DEFAULT_SERVER_URL = "https://app.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender und Cinema 4D.
-# ``sendImage``, ``sendModel``, ``modelColors``: die Wahl der Wege und der Materialfarben (wie Cinema 4D,
-# RTX-C4D-008) — gemerkt, nie Bedingung fürs Laden.
+# ``sendImage``, ``sendModel``: die Wahl der Wege (wie Cinema 4D, RTX-C4D-008) — gemerkt, nie Bedingung fürs Laden.
+# ``modelWithoutMaterials``, ``modelMerge`` (RTX-P-021): „ohne Materialien“ und „nach Material“ (``material``) oder
+# „Objekte behalten“ (``objects``); ein fremder Wert fällt auf die Vorgabe. ``modelColors`` bis 0.3.x gilt nicht mehr:
+# Materialien sind seit 0.4.0 Vorgabe.
 DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLogging": False,
                     "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "sendImage": True, "sendModel": False,
-                    "modelColors": False}
+                    "modelWithoutMaterials": False, "modelMerge": "material"}
+# Die zwei Formen der GLB-Datei (``glbmaterials.MERGE_MODES``) mit ihrem Text im Fenster.
+MODEL_MERGES = (("material", "nach Material"), ("objects", "Objekte behalten"))
 
 VIEWPORT = "viewport"
 BEAUTY = "beauty"
@@ -82,7 +86,9 @@ class Form:
     resolution: str = RESOLUTION_DOCUMENT
     passes: set = field(default_factory=set)
     send_model: bool = False
-    model_colors: bool = False
+    # Die Materialregel (RTX-P-021, capture-manifest.md 11.6): Materialien an, nach Material zusammengeführt.
+    model_without_materials: bool = False
+    model_merge: str = "material"
 
 
 class State:
@@ -168,7 +174,9 @@ class Controller:
         remembered = self.settings()
         self.form.send_image = remembered["sendImage"]
         self.form.send_model = remembered["sendModel"]
-        self.form.model_colors = remembered["modelColors"]
+        self.form.model_without_materials = remembered["modelWithoutMaterials"]
+        merges = [key for key, _text in MODEL_MERGES]
+        self.form.model_merge = remembered["modelMerge"] if remembered["modelMerge"] in merges else "material"
 
     # -- Ablage und Einstellungen -------------------------------------------
 
@@ -669,9 +677,13 @@ class Controller:
         if self.form.send_model:
             self.count_model()
 
-    def set_model_colors(self, on: bool) -> None:
-        self.form.model_colors = bool(on)
-        self._remember({"modelColors": self.form.model_colors})
+    def set_model_without_materials(self, on: bool) -> None:
+        self.form.model_without_materials = bool(on)
+        self._remember({"modelWithoutMaterials": self.form.model_without_materials})
+
+    def set_model_merge(self, merge: str) -> None:
+        self.form.model_merge = merge if merge in [key for key, _text in MODEL_MERGES] else "material"
+        self._remember({"modelMerge": self.form.model_merge})
 
     def model_problem(self) -> str | None:
         """Warum das Modell nicht geht — im Fenster **vor** dem Senden, beim Übernehmen als Fehler."""
@@ -769,8 +781,9 @@ class Controller:
                 raise ValueError("Ohne Kamera geht das Modell nicht allein: bitte eine Modellansicht aktivieren "
                                  "(kein Layout) oder Bild und Modell senden.")
             self._progress_in_main("Modell exportieren", 70 if chosen.image else 10)
-            model_file, geometry = self.adapter.export_model(directory, size_taken, limits, self.form.model_colors,
-                                                             MAX_TRIANGLES)
+            model_file, geometry = self.adapter.export_model(directory, size_taken, limits,
+                                                             not self.form.model_without_materials, MAX_TRIANGLES,
+                                                             self.form.model_merge)
             files.append(model_file)
             if camera is not None:
                 # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.

@@ -3,7 +3,9 @@
 // glTF und der Umlaufsinn stehen jetzt im Kern (`rtx::GlbSceneBuilder`).
 #include "ModelExport.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <map>
 
 #include "AttributeIndex.hpp"
@@ -13,6 +15,8 @@
 #include "ModelMaterial.hpp"
 #include "ModelMeshBody.hpp"
 #include "Polygon.hpp"
+#include "Texture.hpp"
+#include "TextureCoordinate.hpp"
 #include "Vertex.hpp"
 
 #include "HostInfo.hpp"
@@ -22,6 +26,49 @@ namespace rtxaddon {
 namespace {
 
 using Vec3 = rtx::GlbSceneBuilder::Vec3;
+using Vec2 = rtx::GlbSceneBuilder::Vec2;
+
+/**
+ * Die Pixel einer Archicad-Textur als RGBA von oben — leer, wenn sie nicht verfügbar ist. ARGB über die ganze
+ * Pixelkarte; Graustufen und Schwarzweiß Pixel für Pixel über `GetPixelColor`. Ein Alphakanal zählt nur, wenn
+ * er auch genutzt wird (dann PNG, sonst JPEG).
+ */
+rtx::RgbaImage Pixels (const ModelerAPI::Texture& texture)
+{
+	rtx::RgbaImage image;
+	if (!texture.IsAvailable ()) return image;
+	const Int32 width = texture.GetPixelMapXSize ();
+	const Int32 height = texture.GetPixelMapYSize ();
+	if (width <= 0 || height <= 0 || static_cast<std::int64_t> (width) * height > 64ll * 1024 * 1024) return image;
+	image.width = width;
+	image.height = height;
+	image.rgba.resize (static_cast<std::size_t> (width) * height * 4);
+	bool usesAlpha = false;
+	if (texture.GetPixelType () == ModelerAPI::Texture::ARGBPixelType) {
+		std::vector<ModelerAPI::Texture::ARGBPixel> map (static_cast<std::size_t> (width) * height);
+		texture.GetPixelMap (map.data ());
+		for (std::size_t i = 0; i < map.size (); ++i) {
+			image.rgba[i * 4] = map[i].red;
+			image.rgba[i * 4 + 1] = map[i].green;
+			image.rgba[i * 4 + 2] = map[i].blue;
+			image.rgba[i * 4 + 3] = texture.HasAlphaChannel () ? map[i].alpha : 255;
+			usesAlpha = usesAlpha || image.rgba[i * 4 + 3] < 255;
+		}
+	} else {
+		for (Int32 y = 0; y < height; ++y)
+			for (Int32 x = 0; x < width; ++x) {
+				ModelerAPI::Color color;
+				texture.GetPixelColor (x, y, &color);
+				std::uint8_t* p = &image.rgba[(static_cast<std::size_t> (y) * width + x) * 4];
+				p[0] = static_cast<std::uint8_t> (std::lround (std::clamp (color.red, 0.0, 1.0) * 255.0));
+				p[1] = static_cast<std::uint8_t> (std::lround (std::clamp (color.green, 0.0, 1.0) * 255.0));
+				p[2] = static_cast<std::uint8_t> (std::lround (std::clamp (color.blue, 0.0, 1.0) * 255.0));
+				p[3] = 255;
+			}
+	}
+	image.alpha = usesAlpha;
+	return image;
+}
 
 std::string Utf8 (const GS::UniString& text)
 {
@@ -52,8 +99,9 @@ private:
 
 class Converter final {
 public:
-	Converter (const ModelerAPI::Model& model, rtx::GlbSceneBuilder& builder, ModelExtraction& counts) :
-		model (model), builder (builder), counts (counts)
+	Converter (const ModelerAPI::Model& model, rtx::GlbSceneBuilder& builder, ModelExtraction& counts,
+			   bool materials) :
+		model (model), builder (builder), counts (counts), materials (materials)
 	{
 	}
 
@@ -79,6 +127,25 @@ private:
 	const ModelerAPI::Model& model;
 	rtx::GlbSceneBuilder& builder;
 	ModelExtraction& counts;
+	const bool materials;
+	/** Größe einer Texturkachel in Metern je Bild: `GetTextureCoordinate` liefert Meter, glTF Kacheln. */
+	std::map<std::int32_t, std::pair<double, double>> tileOf;
+
+	/** Die Textur des Materials, nach der Regel kodiert — ihr Index oder −1 (keine, „ohne Materialien“). */
+	std::int32_t Image (const ModelerAPI::Polygon& polygon)
+	{
+		if (!materials || !polygon.HasMaterialTexture ()) return -1;
+		ModelerAPI::AttributeIndex iTex (ModelerAPI::AttributeIndex::TextureIndex);
+		polygon.GetMaterialTextureIndex (iTex);
+		if (!iTex.IsValid ()) return -1;
+		const std::int32_t known = builder.KnownImage (iTex.GetIndex ());
+		if (known != -2) return known;
+		ModelerAPI::Texture texture;
+		polygon.GetMaterialTexture (&texture);
+		const std::int32_t image = builder.Image (iTex.GetIndex (), Pixels (texture));
+		if (image >= 0) tileOf[image] = {texture.GetXSize (), texture.GetYSize ()};
+		return image;
+	}
 
 	std::uint32_t Material (const ModelerAPI::Polygon& polygon)
 	{
@@ -90,7 +157,16 @@ private:
 		model.GetMaterial (iMat, &material);
 		const ModelerAPI::Color color = material.GetSurfaceColor ();
 		return builder.Material (key, Utf8 (material.GetName ()), color.red, color.green, color.blue,
-								 material.GetTransparency ());
+								 material.GetTransparency (), Image (polygon));
+	}
+
+	/** Die Kachelgröße des Bildes am Material in Metern — (0, 0) ohne Textur. */
+	std::pair<double, double> Tile (std::uint32_t material)
+	{
+		const rtx::GlbScene& scene = builder.Scene ();
+		if (material >= scene.materials.size () || scene.materials[material].image < 0) return {0.0, 0.0};
+		const auto found = tileOf.find (scene.materials[material].image);
+		return found != tileOf.end () ? found->second : std::pair<double, double> {1.0, 1.0};
 	}
 
 	void Body (const ModelerAPI::MeshBody& body)
@@ -112,7 +188,7 @@ private:
 				for (Int32 c = 1; c <= convexCount; ++c) {
 					ModelerAPI::ConvexPolygon convex;
 					polygon.GetConvexPolygon (c, &convex);
-					Convex (body, convex, {faceNormal.x, faceNormal.y, faceNormal.z}, material);
+					Convex (body, polygon, convex, {faceNormal.x, faceNormal.y, faceNormal.z}, material);
 				}
 			} catch (const GS::Exception&) {
 				++counts.polygonErrors;
@@ -120,9 +196,15 @@ private:
 		}
 	}
 
-	void Convex (const ModelerAPI::MeshBody& body, const ModelerAPI::ConvexPolygon& convex, Vec3 faceNormal,
-				 std::uint32_t material)
+	void Convex (const ModelerAPI::MeshBody& body, const ModelerAPI::Polygon& polygon,
+				 const ModelerAPI::ConvexPolygon& convex, Vec3 faceNormal, std::uint32_t material)
 	{
+		const std::pair<double, double> tile = Tile (material);
+		const bool textured = tile.first != 0.0 || tile.second != 0.0;
+		// Eine Kachel, deren Größe Archicad nicht nennt, gilt als 1 m.
+		const double width = tile.first > 1e-9 ? tile.first : 1.0;
+		const double height = tile.second > 1e-9 ? tile.second : 1.0;
+		std::vector<Vec2> uvs;
 		const Int32 n = convex.GetVertexCount ();
 		if (n < 3) return;
 		std::vector<Vec3> corners;
@@ -135,14 +217,21 @@ private:
 			corners.push_back ({v.x, v.y, v.z});
 			const ModelerAPI::Vector normal = convex.GetNormalVectorByVertex (i);
 			normals.push_back ({normal.x, normal.y, normal.z});
+			if (textured) {
+				// `GetTextureCoordinate` liefert Meter in der Ebene der Textur (gemessen 15.10.2026: u = x am Morph),
+				// glTF Kacheln: geteilt durch die Kachelgröße. Archicad zählt v von unten, glTF von oben.
+				ModelerAPI::TextureCoordinate uv;
+				polygon.GetTextureCoordinate (&v, &uv);
+				uvs.push_back ({uv.u / width, 1.0 - uv.v / height});
+			}
 		}
-		builder.AddConvexPolygon (material, corners, normals, faceNormal);
+		builder.AddConvexPolygon (material, corners, normals, faceNormal, uvs);
 	}
 };
 
 } // namespace
 
-ModelExtraction ExtractWindowModel (rtx::GlbSceneBuilder& builder)
+ModelExtraction ExtractWindowModel (rtx::GlbSceneBuilder& builder, bool materials)
 {
 	ModelExtraction result;
 	const auto t0 = std::chrono::steady_clock::now ();
@@ -161,7 +250,7 @@ ModelExtraction ExtractWindowModel (rtx::GlbSceneBuilder& builder)
 			return result;
 		}
 	}
-	Converter converter (model, builder, result);
+	Converter converter (model, builder, result, materials);
 	converter.Run ();
 	result.milliseconds =
 		std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();

@@ -29,6 +29,7 @@
 #include "rtx/PluginApi.hpp"
 #include "rtx/Platform.hpp"
 #include "rtx/Sha256.hpp"
+#include "rtx/TextureImage.hpp"
 #include "rtx/TransferStore.hpp"
 
 using namespace rtx;
@@ -372,20 +373,246 @@ RTX_TEST (GlbZuVieleElementeFallenAufEinMeshJeMaterialZurueck)
 	limits.maxMeshes = 2;
 	const GlbScene scene = TestScene ();
 	RTX_CHECK_EQ (CountGlb (scene).meshes, std::uint64_t (3));
-	const Result<GlbFile> file = FinishGlb (scene, 0, limits);
+	// „Objekte behalten“ gewählt, aber zu viele Elemente: derselbe Weg wie „nach Material“, als Rückfall.
+	const Result<GlbFile> file = FinishGlb (scene, 0, limits, false);
 	RTX_CHECK (file.IsOk ());
 	RTX_CHECK (file.Value ().mergedByMaterial);
+	RTX_CHECK (file.Value ().mergeFallback);
 	const JsonPtr json = GlbJson (file.Value ().bytes);
-	RTX_CHECK_EQ (json->Get ("meshes")->Items ().size (), std::size_t (1));
-	RTX_CHECK_EQ (json->Get ("meshes")->Items ()[0]->Get ("primitives")->Items ().size (), std::size_t (2));
+	RTX_CHECK_EQ (json->Get ("meshes")->Items ().size (), std::size_t (2));
+	RTX_CHECK_EQ (json->Get ("meshes")->Items ()[0]->Get ("primitives")->Items ().size (), std::size_t (1));
 	RTX_CHECK_EQ (file.Value ().stats.triangles, std::uint64_t (36));
 
-	// Ohne Grenze bleibt es ein Knoten je Element.
-	const Result<GlbFile> normal = FinishGlb (scene, 0);
+	// Ohne Grenze bleibt es mit „Objekte behalten“ ein Knoten je Element.
+	const Result<GlbFile> normal = FinishGlb (scene, 0, GlbServerLimits {}, false);
 	RTX_CHECK (normal.IsOk ());
 	RTX_CHECK (!normal.Value ().mergedByMaterial);
 	RTX_CHECK_EQ (normal.Value ().stats.meshes, std::uint64_t (3));
 }
+
+RTX_TEST (GlbNachMaterialIstVorgabeUndBenenntDieKnotenNachDemMaterial)
+{
+	// RTX-P-021: ein Knoten je Material, benannt wie das Material; die GUIDs nur mit „Objekte behalten“.
+	const Result<GlbFile> file = FinishGlb (TestScene (), 0);
+	RTX_CHECK (file.IsOk ());
+	if (!file) return;
+	RTX_CHECK (file.Value ().mergedByMaterial);
+	RTX_CHECK (!file.Value ().mergeFallback);
+	const JsonPtr json = GlbJson (file.Value ().bytes);
+	const auto& nodes = json->Get ("nodes")->Items ();
+	RTX_CHECK_EQ (nodes.size (), std::size_t (2));
+	RTX_CHECK_EQ (nodes[0]->Get ("name")->StringOr (""), std::string ("Grau"));
+	RTX_CHECK_EQ (nodes[1]->Get ("name")->StringOr (""), std::string ("Glass - Clear Fast"));
+	RTX_CHECK_EQ (json->Get ("meshes")->Items ()[1]->Get ("name")->StringOr (""), std::string ("Glass - Clear Fast"));
+	RTX_CHECK_EQ (file.Value ().stats.triangles, std::uint64_t (36));
+	RTX_CHECK (json->Get ("materials")->Items ()[1]->Get ("alphaMode")->StringOr ("") == "BLEND");
+
+	const Result<GlbFile> kept = FinishGlb (TestScene (), 0, GlbServerLimits {}, false);
+	RTX_CHECK (kept.IsOk ());
+	if (!kept) return;
+	RTX_CHECK_EQ (GlbJson (kept.Value ().bytes)->Get ("nodes")->Items ()[0]->Get ("name")->StringOr (""),
+				  std::string ("0F0A1B2C-0000-4000-8000-00000000000A"));
+}
+
+RTX_TEST (GlbOhneMaterialienEinKnotenOhneMaterial)
+{
+	const Result<GlbFile> file = FinishGlb (WithoutMaterials (TestScene ()), 0);
+	RTX_CHECK (file.IsOk ());
+	if (!file) return;
+	const JsonPtr json = GlbJson (file.Value ().bytes);
+	RTX_CHECK (json->Get ("materials") == nullptr);
+	RTX_CHECK_EQ (json->Get ("nodes")->Items ().size (), std::size_t (1));
+	RTX_CHECK_EQ (json->Get ("nodes")->Items ()[0]->Get ("name")->StringOr (""), std::string (kGlbNoMaterialName));
+	RTX_CHECK (json->Get ("meshes")->Items ()[0]->Get ("primitives")->Items ()[0]->Get ("material") == nullptr);
+	RTX_CHECK_EQ (file.Value ().stats.triangles, std::uint64_t (36));
+}
+
+namespace {
+
+RgbaImage Checker (int width, int height, bool alpha = false)
+{
+	RgbaImage image;
+	image.width = width;
+	image.height = height;
+	image.alpha = alpha;
+	image.rgba.resize (static_cast<std::size_t> (width) * height * 4);
+	for (int y = 0; y < height; ++y)
+		for (int x = 0; x < width; ++x) {
+			std::uint8_t* p = &image.rgba[(static_cast<std::size_t> (y) * width + x) * 4];
+			const bool dark = ((x / 2) + (y / 2)) % 2 == 0;
+			p[0] = dark ? 40 : 200;
+			p[1] = dark ? 20 : 160;
+			p[2] = dark ? 10 : 120;
+			p[3] = alpha && x < width / 2 ? 0 : 255;
+		}
+	return image;
+}
+
+/** Rauschen in 2400 × 2400 — als JPEG weit über 2 MB, wie ein Scan. */
+RgbaImage Noise (int side)
+{
+	RgbaImage image;
+	image.width = image.height = side;
+	image.rgba.resize (static_cast<std::size_t> (side) * side * 4);
+	std::uint32_t seed = 0x2545F491u;
+	for (std::size_t i = 0; i < image.rgba.size (); ++i) {
+		seed = seed * 1103515245u + 12345u;
+		image.rgba[i] = (i % 4 == 3) ? 255 : static_cast<std::uint8_t> (seed >> 16);
+	}
+	return image;
+}
+
+/** Ein Kodierer für die Schleife ohne Bildbibliothek: Bytes wie Pixel × 3. */
+Result<EncodedImage> FakeEncode (const RgbaImage& image)
+{
+	EncodedImage out;
+	out.bytes.assign (static_cast<std::size_t> (image.width) * image.height * 3, 0);
+	out.mimeType = "image/jpeg";
+	out.width = image.width;
+	out.height = image.height;
+	return Result<EncodedImage>::Ok (std::move (out));
+}
+
+} // namespace
+
+RTX_TEST (TexturWirdGemitteltVerkleinert)
+{
+	const RgbaImage small = DownscaleImage (Checker (8, 4), 4, 2);
+	RTX_CHECK_EQ (small.width, 4);
+	RTX_CHECK_EQ (small.height, 2);
+	// Je Zielpixel 2 × 2 Quellpixel derselben Farbe — das Schachbrett der Kantenlänge 2 bleibt erhalten.
+	RTX_CHECK_EQ (static_cast<int> (small.rgba[0]), 40);
+	RTX_CHECK_EQ (static_cast<int> (small.rgba[4]), 200);
+	// 2 × 2 Felder in 1 Pixel: der Mittelwert.
+	const RgbaImage one = DownscaleImage (Checker (4, 4), 1, 1);
+	RTX_CHECK_EQ (static_cast<int> (one.rgba[0]), 120);
+}
+
+RTX_TEST (TexturUeberZweiMegabyteWirdVerkleinertNichtWeggelassen)
+{
+	const Result<EncodedImage> big = TextureForGlb (Checker (2000, 1000), kMaxTextureBytes, &FakeEncode);
+	RTX_CHECK (big.IsOk ());
+	if (!big) return;
+	RTX_CHECK (big.Value ().downscaled);
+	RTX_CHECK (big.Value ().bytes.size () <= kMaxTextureBytes);
+	RTX_CHECK (big.Value ().width < 2000 && big.Value ().width > 500);
+	RTX_CHECK_EQ (big.Value ().width / big.Value ().height, 2);  // Seitenverhältnis bleibt
+	const Result<EncodedImage> fits = TextureForGlb (Checker (100, 100), kMaxTextureBytes, &FakeEncode);
+	RTX_CHECK (fits.IsOk () && !fits.Value ().downscaled && fits.Value ().width == 100);
+}
+
+#if defined (__APPLE__) || defined (_WIN32)
+RTX_TEST (TexturWirdMitDemSystemKodiert)
+{
+	// Ohne Alphakanal JPEG, mit PNG — ImageIO unter macOS, WIC unter Windows.
+	const Result<EncodedImage> jpeg = EncodeImage (Checker (16, 8));
+	RTX_CHECK (jpeg.IsOk ());
+	if (jpeg) {
+		RTX_CHECK_EQ (jpeg.Value ().mimeType, std::string ("image/jpeg"));
+		RTX_CHECK (jpeg.Value ().bytes.size () > 4 && jpeg.Value ().bytes[0] == 0xFF && jpeg.Value ().bytes[1] == 0xD8);
+	}
+	const Result<EncodedImage> png = EncodeImage (Checker (16, 8, true));
+	RTX_CHECK (png.IsOk ());
+	if (png) {
+		RTX_CHECK_EQ (png.Value ().mimeType, std::string ("image/png"));
+		RTX_CHECK (png.Value ().bytes.size () > 26 && png.Value ().bytes[1] == 'P' && png.Value ().bytes[25] == 6);
+	}
+	// Ein Scan in 2400 × 2400: verkleinert bis unter 2 MB.
+	const Result<EncodedImage> scan = TextureForGlb (Noise (2400));
+	RTX_CHECK (scan.IsOk ());
+	if (scan) {
+		RTX_CHECK (scan.Value ().downscaled);
+		RTX_CHECK (scan.Value ().bytes.size () <= kMaxTextureBytes);
+		RTX_CHECK (scan.Value ().width < 2400 && scan.Value ().width > 400);
+	}
+}
+
+RTX_TEST (TexturMitAlphaMachtDasMaterialTransparent)
+{
+	// F-02 an #532: eine PNG-Textur mit durchsichtigen Pixeln bei Oberflächentransparenz 0 → BLEND, in beiden Formen.
+	GlbSceneBuilder builder;
+	RgbaImage transparent = Checker (16, 8, true);
+	const std::uint32_t laub = builder.Material (1, "Laub", 0.2, 0.5, 0.1, 0.0, builder.Image (21, transparent));
+	const std::uint32_t holz = builder.Material (2, "Holz", 0.6, 0.4, 0.2, 0.0, builder.Image (22, Checker (16, 8)));
+	const std::uint32_t glas = builder.Material (3, "Glas", 0.6, 0.8, 0.9, 0.6);
+	RTX_CHECK (builder.Scene ().images[0].alpha);
+	RTX_CHECK (!builder.Scene ().images[1].alpha);
+	builder.BeginElement ("A");
+	AddBox (builder, laub, {0, 0, 0}, {1, 1, 1});
+	builder.BeginElement ("B");
+	AddBox (builder, holz, {2, 0, 0}, {3, 1, 1});
+	builder.BeginElement ("C");
+	AddBox (builder, glas, {4, 0, 0}, {5, 1, 1});
+	for (const bool merge : {true, false}) {
+		const Result<GlbFile> file = FinishGlb (builder.Scene (), 0, GlbServerLimits {}, merge);
+		RTX_CHECK (file.IsOk ());
+		if (!file) continue;
+		const JsonPtr json = GlbJson (file.Value ().bytes);
+		const auto& materials = json->Get ("materials")->Items ();
+		RTX_CHECK_EQ (materials[laub]->Get ("alphaMode")->StringOr (""), std::string ("BLEND"));
+		RTX_CHECK (materials[holz]->Get ("alphaMode") == nullptr);  // deckende Textur bleibt deckend
+		RTX_CHECK_EQ (materials[glas]->Get ("alphaMode")->StringOr (""), std::string ("BLEND"));
+		RTX_CHECK (Near (At (materials[glas]->Get ("pbrMetallicRoughness")->Get ("baseColorFactor"), 3), 0.4, 1e-6));
+	}
+}
+
+RTX_TEST (GlbTraegtTexturUndUv)
+{
+	GlbSceneBuilder builder;
+	const std::int32_t image = builder.Image (11, Checker (16, 8));
+	RTX_CHECK_EQ (image, 0);
+	RTX_CHECK_EQ (builder.KnownImage (11), 0);
+	RTX_CHECK_EQ (builder.KnownImage (12), -2);
+	const std::uint32_t holz = builder.Material (5, "Holz", 0.6, 0.4, 0.2, 0.0, image);
+	const std::uint32_t grau = builder.Material (3, "Grau", 0.5, 0.5, 0.5, 0.0);
+	builder.BeginElement ("A");
+	builder.AddConvexPolygon (holz, {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, {}, {0, 0, 1},
+							  {{0, 1}, {1, 1}, {1, 0}, {0, 0}});
+	builder.BeginElement ("B");
+	builder.AddConvexPolygon (holz, {{2, 0, 0}, {3, 0, 0}, {3, 1, 0}}, {}, {0, 0, 1});  // ohne UV: (0, 0)
+	AddBox (builder, grau, {5, 5, 0}, {6, 6, 1});
+	for (const bool merge : {true, false}) {
+		const Result<GlbFile> file = FinishGlb (builder.Scene (), 0, GlbServerLimits {}, merge);
+		RTX_CHECK (file.IsOk ());
+		if (!file) continue;
+		const std::vector<std::uint8_t>& bytes = file.Value ().bytes;
+		const JsonPtr json = GlbJson (bytes);
+		const JsonPtr material = json->Get ("materials")->Items ()[holz];
+		RTX_CHECK_EQ (material->Get ("pbrMetallicRoughness")->Get ("baseColorTexture")->Get ("index")->IntOr (-1), 0);
+		RTX_CHECK (Near (At (material->Get ("pbrMetallicRoughness")->Get ("baseColorFactor"), 0), 1.0, 1e-9));
+		RTX_CHECK (json->Get ("materials")->Items ()[grau]->Get ("pbrMetallicRoughness")->Get ("baseColorTexture") ==
+				   nullptr);
+		RTX_CHECK_EQ (json->Get ("textures")->Items ()[0]->Get ("source")->IntOr (-1), 0);
+		const JsonPtr picture = json->Get ("images")->Items ()[0];
+		RTX_CHECK_EQ (picture->Get ("mimeType")->StringOr (""), std::string ("image/jpeg"));
+		// Die Bytes des Bildes stehen in seiner Sicht, beginnend mit dem JPEG-Kopf.
+		const JsonPtr view = json->Get ("bufferViews")->Items ()[picture->Get ("bufferView")->IntOr (0)];
+		const std::size_t bin = 20 + U32 (bytes, 12) + 8;
+		const std::size_t at = bin + static_cast<std::size_t> (view->Get ("byteOffset")->IntOr (0));
+		RTX_CHECK (bytes[at] == 0xFF && bytes[at + 1] == 0xD8);
+		RTX_CHECK_EQ (static_cast<std::size_t> (view->Get ("byteLength")->IntOr (0)), builder.Scene ().images[0].bytes.size ());
+		// UV nur am Primitiv mit Textur.
+		std::size_t withUv = 0, withoutUv = 0;
+		for (const JsonPtr& mesh : json->Get ("meshes")->Items ())
+			for (const JsonPtr& prim : mesh->Get ("primitives")->Items ()) {
+				const bool uv = prim->Get ("attributes")->Get ("TEXCOORD_0") != nullptr;
+				const bool textured = prim->Get ("material")->IntOr (-1) == static_cast<std::int64_t> (holz);
+				RTX_CHECK_EQ (uv, textured);
+				(uv ? withUv : withoutUv) += 1;
+			}
+		RTX_CHECK_EQ (withUv, merge ? std::size_t (1) : std::size_t (2));
+		RTX_CHECK_EQ (withoutUv, std::size_t (1));
+		RTX_CHECK_EQ (file.Value ().stats.triangles, std::uint64_t (2 + 1 + 12));
+	}
+	// Ohne Materialien: keine Bilder, keine UV.
+	const Result<GlbFile> plain = FinishGlb (WithoutMaterials (builder.Scene ()), 0);
+	RTX_CHECK (plain.IsOk ());
+	if (plain) {
+		const JsonPtr json = GlbJson (plain.Value ().bytes);
+		RTX_CHECK (json->Get ("images") == nullptr && json->Get ("textures") == nullptr);
+	}
+}
+#endif
 
 RTX_TEST (GlbGrenzenGreifenVorDemSendenUndNennenDieZahl)
 {
@@ -930,7 +1157,8 @@ RTX_TEST (GlbGoldenDateiDerTestszene)
 		RTX_CHECK (mapped.IsOk ());
 		if (mapped) scene.cameras.push_back (mapped.Value ().gltf);
 	}
-	const Result<GlbFile> file = FinishGlb (scene, 209715200);
+	// Je Element (die GUIDs), wie bis 1.2: die Fixture gilt den Kameras, nicht der Zusammenführung.
+	const Result<GlbFile> file = FinishGlb (scene, 209715200, GlbServerLimits {}, false);
 	RTX_CHECK (file.IsOk ());
 	if (!file) return;
 	const std::vector<std::uint8_t>& bytes = file.Value ().bytes;
@@ -1059,6 +1287,7 @@ RTX_TEST (ModellWirdNachDemHandshakeZusammengestellt)
 	input.extra.push_back ({"Kaputt", "view:C", broken});
 	input.width = 1024;
 	input.height = 768;
+	input.mergeByMaterial = false;  // je Element: die Knoten unten zählen Elemente und Kameras
 
 	const Result<ModelOutput> out = AssembleModel (input, directory, 6, 209715200);
 	RTX_CHECK (out.IsOk ());
@@ -1076,6 +1305,20 @@ RTX_TEST (ModellWirdNachDemHandshakeZusammengestellt)
 	const auto& nodes = json->Get ("nodes")->Items ();
 	RTX_CHECK_EQ (nodes[3]->Get ("name")->StringOr (""), std::string ("RTX Zweifluchtpunkt"));
 	RTX_CHECK_EQ (nodes[5]->Get ("name")->StringOr (""), std::string ("RTX Perspektive #2"));
+
+	// Vorgabe „nach Material“ (RTX-P-021): zwei Materialknoten vor den Kameras; „ohne Materialien“: einer.
+	ModelInput merged = input;
+	merged.mergeByMaterial = true;
+	const Result<ModelOutput> byMaterial = AssembleModel (merged, directory, 6, 209715200);
+	RTX_CHECK (byMaterial.IsOk ());
+	RTX_CHECK_EQ (byMaterial.Value ().materials, 2);
+	RTX_CHECK_EQ (byMaterial.Value ().textures, 0);
+	RTX_CHECK_EQ (byMaterial.Value ().notes.size (), std::size_t (1));  // kein Satz zum Rückfall
+	merged.materials = false;
+	const Result<ModelOutput> plain = AssembleModel (merged, directory, 6, 209715200);
+	RTX_CHECK (plain.IsOk ());
+	RTX_CHECK_EQ (plain.Value ().materials, 0);
+	RTX_CHECK_EQ (plain.Value ().stats.meshes, std::uint64_t (1));
 
 	// Unter 1.4 entfällt der Kamerablock mit Shift; die Datei trägt die Kamera weiter.
 	const Result<ModelOutput> older = AssembleModel (input, directory, 3, 209715200);

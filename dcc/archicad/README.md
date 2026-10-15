@@ -12,6 +12,22 @@ Der Weg ist der host-neutrale Vertrag aus
 den Blender, Cinema 4D und Rhino benutzen. Modellversionen, Diff und
 Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
+## Änderungen
+
+### 1.3.0 (Materialien und Texturen, RTX-P-021)
+
+- **Texturen**: je Oberfläche mit Textur die Pixel aus `ModelerAPI::Texture` als eingebettetes JPEG oder PNG
+  (mit Alphakanal), die UV aus `Polygon::GetTextureCoordinate`. Texturen über 2 MB werden verkleinert, nicht
+  weggelassen (ImageIO bzw. WIC, keine neue Bibliothek). Regel:
+  [`capture-manifest.md`, Abschnitt 11.6](../../_shared/docs/capture-manifest.md).
+- **„Nach Material zusammenführen“ ist Vorgabe**: ein Knoten je Oberfläche, benannt wie die Oberfläche.
+  Bisher war das nur der Rückfall bei zu vielen Elementen. Die Element-GUIDs als Knotennamen gibt es mit
+  **„Objekte behalten (GUIDs)“**.
+- **„ohne Materialien“**: keine Oberflächen, Bilder und UV, ein Knoten „ohne Material“.
+- Beide Einstellungen stehen in der Palette unter „Zusätzliche Kameras“ und werden gemerkt; die JSON-Schnittstelle
+  `rendertaxi.ExportModel` kennt sie als `materials` und `merge`.
+- Messprotokoll: [`../docs/measurements/2026-10-15-materialien.md`](../docs/measurements/2026-10-15-materialien.md).
+
 ## Bauen und installieren
 
 ```bash

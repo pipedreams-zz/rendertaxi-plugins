@@ -35,6 +35,16 @@ struct WayChoice {
 WayChoice Ways ();
 bool SetWays (const WayChoice& ways);
 
+/**
+ * Die Materialregel (RTX-P-021, `capture-manifest.md` 11.6): „ohne
+ * Materialien“ (Vorgabe aus, also Materialien an) und „Objekte behalten“
+ * (Vorgabe aus, also nach Material zusammengeführt).
+ */
+bool ModelWithoutMaterials ();
+bool SetModelWithoutMaterials (bool value);
+bool ModelKeepObjects ();
+bool SetModelKeepObjects (bool value);
+
 /** „Zusätzliche Kameras mitsenden" (wie Cinema 4D, RTX-C4D-010); Vorgabe aus. */
 bool ExtraCameras ();
 bool SetExtraCameras (bool value);

@@ -456,10 +456,18 @@ class RTX_Props(PropertyGroup):
                ("CAMERA", "Szenenkamera", "Die aktive Kamera der Szene")],
         default="VIEW",
     )
-    model_materials: BoolProperty(
-        name="Materialien und Texturen",
-        description="Materialien und Texturen in die GLB-Datei einbetten; die Datei wird größer",
+    model_without_materials: BoolProperty(
+        name="ohne Materialien",
+        description=("Die GLB-Datei ohne Materialien, Texturen und UV senden. Sonst geht je Material die "
+                     "Basisfarbe mit und eine Diffustextur bis 2 MB, größere verkleinert"),
         default=False,
+    )
+    model_merge: EnumProperty(
+        name="Zusammenführen",
+        description="Wie die Objekte in der GLB-Datei stehen",
+        items=[("material", "nach Material", "Ein Objekt je Material, benannt wie das Material"),
+               ("objects", "Objekte behalten", "Ein Objekt je Blender-Objekt mit seinem Namen")],
+        default="material",
     )
 
 
@@ -867,7 +875,8 @@ def build_capture(context, props: RTX_Props, directory: str, handshake: dict | N
         wm.progress_begin(0, 100)
         try:
             wm.progress_update(10)
-            files.append(export.export_model(context, directory, props.model_materials))
+            files.append(export.export_model(context, directory, not props.model_without_materials,
+                                                 props.model_merge))
             wm.progress_update(90)
         finally:
             wm.progress_end()
@@ -1257,8 +1266,9 @@ class RTX_PT_panel(Panel):
     def _model(self, layout, context, props):
         """Modell senden: Größe und Grenzen vor dem Senden, die Kamera, und was nicht mitgeht."""
         row = layout.row()
-        row.prop(props, "model_materials")
+        row.prop(props, "model_without_materials")
         row.operator(RTX_OT_count_model.bl_idname, text="", icon="FILE_REFRESH")
+        layout.row().prop(props, "model_merge", expand=True)
         if not props.send_model:
             return
         problem = model_problem(context, props, STATE.handshake)

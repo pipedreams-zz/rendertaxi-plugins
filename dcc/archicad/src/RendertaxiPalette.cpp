@@ -262,7 +262,9 @@ RendertaxiPalette::RendertaxiPalette () :
 	imageCheck (GetReference (), ImageCheckId),
 	modelCheck (GetReference (), ModelCheckId),
 	extraCamerasCheck (GetReference (), ExtraCamerasCheckId),
-	camerasButton (GetReference (), CamerasButtonId)
+	camerasButton (GetReference (), CamerasButtonId),
+	noMaterialsCheck (GetReference (), NoMaterialsCheckId),
+	mergePopUp (GetReference (), MergePopUpId)
 {
 	rtx::SetLogFile (LogPath ());
 
@@ -298,6 +300,15 @@ RendertaxiPalette::RendertaxiPalette () :
 		modelCheck.SetState (shownModel);
 		extraCamerasCheck.SetState (shownExtraCameras);
 	}
+	// Die Materialregel (RTX-P-021): Materialien an, nach Material zusammengeführt — gemerkt in `settings.json`.
+	mergePopUp.AppendItem ();
+	mergePopUp.SetItemText (1, U ("Nach Material zusammenführen"));
+	mergePopUp.AppendItem ();
+	mergePopUp.SetItemText (2, U ("Objekte behalten (GUIDs)"));
+	shownNoMaterials = ModelWithoutMaterials ();
+	shownKeepObjects = ModelKeepObjects ();
+	noMaterialsCheck.SetState (shownNoMaterials);
+	mergePopUp.SelectItem (shownKeepObjects ? 2 : 1);
 
 	// Projektwechsel machen Projektname und Projektschlüssel ungültig. Ohne
 	// diese Benachrichtigung müsste der Leerlauf beides bei jedem Tick neu
@@ -1068,6 +1079,9 @@ void RendertaxiPalette::RefreshFromState ()
 		modelCheck.SetStatus (!busy);
 		extraCamerasCheck.SetStatus (!busy);
 	}
+	// Materialien und Zusammenführen gelten nur für das Modell.
+	noMaterialsCheck.SetStatus (!busy && modelCheck.IsChecked ());
+	mergePopUp.SetStatus (!busy && modelCheck.IsChecked ());
 	// „Kameras…" nur, wenn zusätzliche Kameras überhaupt mitgehen.
 	camerasButton.SetStatus (!busy && modelCheck.IsChecked () && extraCamerasCheck.IsChecked ());
 	openButton.SetStatus (!url.empty ());
@@ -1361,6 +1375,16 @@ void RendertaxiPalette::ReadWayChecks ()
 		SetExtraCameras (extra);
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		shared.dirty = true;
+	}
+	const bool noMaterials = noMaterialsCheck.IsChecked ();
+	const bool keepObjects = mergePopUp.GetSelectedItem () == 2;
+	if (noMaterials != shownNoMaterials) {
+		shownNoMaterials = noMaterials;
+		SetModelWithoutMaterials (noMaterials);
+	}
+	if (keepObjects != shownKeepObjects) {
+		shownKeepObjects = keepObjects;
+		SetModelKeepObjects (keepObjects);
 	}
 }
 
@@ -2216,7 +2240,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		if (plan.model) {
 			shared.SetProgress ("Modell wird aus dem 3D-Fenster gelesen…");
 			rtx::GlbSceneBuilder builder;
-			const ModelExtraction extraction = ExtractWindowModel (builder);
+			const bool materials = !noMaterialsCheck.IsChecked ();
+			const ModelExtraction extraction = ExtractWindowModel (builder, materials);
 			if (!extraction.error.empty ()) {
 				shared.SetProgress (extraction.error);
 				return;
@@ -2234,6 +2259,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 			}
 			builder.Scene ().generator = std::string ("rdtx.ai Archicad add-on ") + RTX_ADDON_VERSION;
 			model.scene = std::move (builder.Scene ());
+			model.materials = materials;
+			model.mergeByMaterial = mergePopUp.GetSelectedItem () != 2;
 
 			const rtx::Result<rtx::ArchicadProjection> projection = ReadWindowProjection ();
 			if (!projection) {

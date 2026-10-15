@@ -95,11 +95,14 @@ class RhinoAdapter:
 
         return export.estimate(rhinocapture.active_document())
 
-    def export_model(self, directory: str, size, limits, colors: bool, max_triangles: int):
-        """``(CaptureFile, geometry)`` — die GLB-Datei im Übernahmeordner, geprüft, mit den benannten Ansichten."""
+    def export_model(self, directory: str, size, limits, materials: bool, max_triangles: int,
+                     merge: str = "material"):
+        """``(CaptureFile, geometry)`` — die GLB-Datei im Übernahmeordner, geprüft, mit den benannten Ansichten;
+        ``materials`` und ``merge`` nach der Materialregel (RTX-P-021)."""
         from . import export
 
-        model = export.export_model(rhinocapture.active_document(), directory, size, limits, colors, max_triangles)
+        model = export.export_model(rhinocapture.active_document(), directory, size, limits, materials, max_triangles,
+                                    merge)
         return model.file, model.geometry
 
     def pass_rows(self):

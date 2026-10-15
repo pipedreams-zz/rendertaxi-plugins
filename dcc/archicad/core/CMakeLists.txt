@@ -29,6 +29,7 @@ add_library (rtxcore STATIC
 	src/PluginApi.cpp
 	src/ProjectList.cpp
 	src/Sha256.cpp
+	src/TextureImage.cpp
 	src/TokenStore.cpp
 	src/TokenStoreKeychain.cpp
 	src/TokenStoreWinCred.cpp

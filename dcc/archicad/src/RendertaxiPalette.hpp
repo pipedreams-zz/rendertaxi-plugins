@@ -174,7 +174,9 @@ private:
 		ModelCheckId = 48,
 		ExtraCamerasCheckId = 49,
 		CamerasButtonId = 50,
-		MarkIconId = 51
+		MarkIconId = 51,
+		NoMaterialsCheckId = 52,
+		MergePopUpId = 53
 	};
 
 	RendertaxiPalette ();
@@ -359,6 +361,9 @@ private:
 	DG::CheckBox modelCheck;
 	DG::CheckBox extraCamerasCheck;
 	DG::Button camerasButton;
+	/** Die Materialregel (RTX-P-021): „ohne Materialien“ und „nach Material“ (1) oder „Objekte behalten“ (2). */
+	DG::CheckBox noMaterialsCheck;
+	DG::PopUp mergePopUp;
 
 	std::unique_ptr<rtx::HttpClient> http;
 	std::unique_ptr<rtx::TokenStore> tokens;
@@ -446,6 +451,8 @@ private:
 	bool shownImage = true;
 	bool shownModel = false;
 	bool shownExtraCameras = false;
+	bool shownNoMaterials = false;
+	bool shownKeepObjects = false;
 	/** Erscheinung, zu der das Palettensymbol passt; -1 vor dem ersten Setzen (RTX-P-019). */
 	int shownAppearance = -1;
 	/** Archicad baut das 3D-Modell neu auf; die Übernahme startet danach von selbst (QA-09). */
