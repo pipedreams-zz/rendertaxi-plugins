@@ -23,6 +23,7 @@ from . import host
 from .controller import (BEAUTY, CURRENT_VIEW, MAX_TRIANGLES, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT,
                          VIEWPORT, Controller)
 from .rendertaxi_client import frame, ways
+from .rendertaxi_client.transport import UPDATE_DISMISS, UPDATE_LINK
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
 
@@ -264,8 +265,14 @@ class RdtxView:
         self.settings.Content = _stack(_row("Server", self.server), _row("Gerät", self.device),
                                        _row("", self.debug), _row("", self.save))
         self.login_row = _stack(self.open_login, self.cancel_login, horizontal=True)
+        # Neue Version (RTX-P-022): eine ruhige Zeile mit Link, nicht blockierend, für diese Sitzung ausblendbar.
+        self.update_text = _label("")
+        self.update_open = _button(UPDATE_LINK, self._guarded(c.open_update))
+        self.update_dismiss = _button(UPDATE_DISMISS, self._guarded(c.dismiss_update))
+        self.update_row = _stack(self.update_text, _stack(self.update_open, self.update_dismiss, horizontal=True))
         self.connection = self._section("Verbindung", self.status, self.code, self.login_row,
-                                        _stack(self.connect, self.sign_out, horizontal=True), self.settings)
+                                        _stack(self.connect, self.sign_out, horizontal=True), self.update_row,
+                                        self.settings)
         # Projekt
         self.project = _dropdown(self._on_project)
         self.refresh_button = _button("Aktualisieren", self._guarded(c.refresh))
@@ -536,6 +543,11 @@ class RdtxView:
         self.connect.Enabled = not busy
         self.sign_out.Visible = state.connected
         self.sign_out.Enabled = not busy
+        hint = c.notice.hint if state.connected else None
+        self.update_row.Visible = self.update_text.Visible = hint is not None
+        self.update_text.Text = hint["text"] if hint else ""
+        self.update_open.Visible = bool(hint and hint.get("url"))
+        self.update_dismiss.Visible = hint is not None
         self.save.Enabled = not busy
         connected = state.connected
         if self._connected_shown != connected:

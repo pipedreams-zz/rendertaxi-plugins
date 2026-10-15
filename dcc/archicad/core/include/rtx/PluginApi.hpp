@@ -103,6 +103,8 @@ struct HandshakeInfo {
 	std::string updateStatus;
 	std::string updateMessage;
 	std::string updateUrl;
+	/** Seit RTX-P-022, optional: die neueste Fassung (`update.latestVersion`); ein älterer Server lässt sie weg. */
+	std::string updateLatestVersion;
 
 	/** Seit 1.7.0 (RTX-P-015); ohne Feld `known == false`. */
 	CanvasDefault canvasDefault;
@@ -118,6 +120,21 @@ struct HandshakeInfo {
 	/** `update_required` verbietet jede Übernahme (§4). */
 	bool BlocksTransfer () const { return updateStatus == "update_required"; }
 };
+
+/**
+ * Die Hinweiszeile bei `update_available` (RTX-P-022) — dieselbe Regel wie
+ * `rendertaxi_client.transport.handshake_hint`: „Neue Version {latestVersion}
+ * verfügbar“, ohne Fassung „Eine neue Version ist verfügbar“; ein Link nur auf
+ * `https`. `update_required` ist kein Hinweis, er blockiert (`BlocksTransfer`).
+ */
+struct UpdateHint {
+	bool show = false;
+	std::string text;
+	std::string url;
+	std::string version;
+};
+
+UpdateHint UpdateHintOf (const HandshakeInfo& handshake);
 
 /** Das Gerät, wie `auth/device` und `plugin/me` es führen (§5.1). */
 struct DeviceIdentity {

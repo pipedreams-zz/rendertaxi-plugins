@@ -540,6 +540,7 @@ Result<HandshakeInfo> PluginApiClient::Handshake (const DeviceIdentity& device,
 		info.updateStatus = TextField (update, "status");
 		info.updateMessage = TextField (update, "message");
 		info.updateUrl = TextField (update, "url");
+		info.updateLatestVersion = TextField (update, "latestVersion");
 	}
 	// Seit 1.7.0 (RTX-P-015). Ein älterer Server nennt sie nicht; das ist
 	// kein Fehler, die Palette zeigt dann den Satz ohne Zahl.
@@ -912,6 +913,29 @@ Status PluginApiClient::Abort (const std::string& captureId, const std::string& 
 	// erreicht.
 	if (status == 200 || status == 404) return Status::Ok ();
 	return Status::Fail (ErrorFromResponse (response.Value ()));
+}
+
+UpdateHint UpdateHintOf (const HandshakeInfo& handshake)
+{
+	UpdateHint hint;
+	if (handshake.updateStatus != "update_available") return hint;
+	hint.show = true;
+	// Nur eine Fassung aus Ziffern und Punkten (MAJOR.MINOR.PATCH) kommt in den Satz.
+	const std::string& version = handshake.updateLatestVersion;
+	int dots = 0;
+	bool digits = !version.empty () && version.size () <= 32;
+	for (std::size_t i = 0; digits && i < version.size (); ++i) {
+		if (version[i] == '.') {
+			digits = i > 0 && i + 1 < version.size () && version[i - 1] != '.';
+			++dots;
+		} else {
+			digits = version[i] >= '0' && version[i] <= '9';
+		}
+	}
+	if (digits && dots == 2) hint.version = version;
+	hint.text = hint.version.empty () ? "Eine neue Version ist verfügbar" : "Neue Version " + hint.version + " verfügbar";
+	if (handshake.updateUrl.rfind ("https://", 0) == 0) hint.url = handshake.updateUrl;
+	return hint;
 }
 
 } // namespace rtx

@@ -37,6 +37,7 @@ from . import host
 from .controller import (BEAUTY, MASK_ROWS_MAX, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
                          Controller, wrap)
 from .rendertaxi_client import frame
+from .rendertaxi_client.transport import UPDATE_DISMISS, UPDATE_LINK
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception
 
@@ -104,6 +105,11 @@ ID_SEND_SUMMARY = 1232  # bis 1234: drei Zeilen (SUMMARY_LINES)
 # RTX-C4D-010: Kameras im Modell und das Rendern im Picture Viewer.
 ID_SEND_CAMERAS = 1236
 # RTX-P-021: die Materialregel im Tab „Modell“.
+# RTX-P-022: der Update-Hinweis im Tab „Verbindung“.
+ID_UPDATE_GROUP = 1242
+ID_UPDATE_TEXT = 1243
+ID_UPDATE_OPEN = 1244
+ID_UPDATE_DISMISS = 1245
 ID_MODEL_NO_MATERIALS = 1237
 ID_MODEL_MERGE = 1238
 MERGE_LABELS = ("nach Material", "Objekte behalten")  # in der Reihenfolge von controller.MODEL_MERGES
@@ -209,6 +215,12 @@ class RendertaxiDialog(gui.GeDialog):
         self._gadgets[ID_OPEN_LOGIN] = self.AddButton(ID_OPEN_LOGIN, c4d.BFH_SCALEFIT, 0, 0, "Im Browser öffnen")
         self._gadgets[ID_CANCEL] = self.AddButton(ID_CANCEL, c4d.BFH_SCALEFIT, 0, 0, "Abbrechen")
         self._gadgets[ID_SIGN_OUT] = self.AddButton(ID_SIGN_OUT, c4d.BFH_SCALEFIT, 0, 0, "Abmelden")
+        self.GroupEnd()
+        # Neue Version (RTX-P-022): eine ruhige Zeile mit Link im Tab „Verbindung“ (Nutzer, 15.10.2026), nicht blockierend, für diese Sitzung ausblendbar.
+        self.GroupBegin(ID_UPDATE_GROUP, c4d.BFH_SCALEFIT, 3, 1, "")
+        self._text(ID_UPDATE_TEXT)
+        self._gadgets[ID_UPDATE_OPEN] = self.AddButton(ID_UPDATE_OPEN, c4d.BFH_RIGHT, 0, 0, UPDATE_LINK)
+        self._gadgets[ID_UPDATE_DISMISS] = self.AddButton(ID_UPDATE_DISMISS, c4d.BFH_RIGHT, 0, 0, UPDATE_DISMISS)
         self.GroupEnd()
         # Beschriftung so breit wie nötig, das Feld nimmt den Rest der Zeile (Host, 07.10.2026).
         self.GroupBegin(ID_GRP_SETTINGS, c4d.BFH_SCALEFIT, 2, 0, "Einstellungen")
@@ -597,6 +609,14 @@ class RendertaxiDialog(gui.GeDialog):
         """Der feste Bereich: Wege, der Satz dazu, Knopf, Fortsetzen und Verwerfen."""
         controller = self.controller
         connected = state.connected
+        hint = controller.notice.hint if connected else None
+        if self._labels.get(ID_UPDATE_GROUP) != [str(hint)]:
+            self.HideElement(ID_UPDATE_GROUP, hint is None)
+            if hint is not None:
+                self.SetString(ID_UPDATE_TEXT, hint["text"])
+                self.HideElement(ID_UPDATE_OPEN, not hint.get("url"))
+            self.LayoutChanged(ID_TAB["connection"])
+            self._labels[ID_UPDATE_GROUP] = [str(hint)]
         self.SetBool(ID_SEND_IMAGE, form.send_image)
         self.SetBool(ID_MODEL, form.send_model)
         self._enable(ID_SEND_IMAGE, connected and not busy)
@@ -665,6 +685,8 @@ class RendertaxiDialog(gui.GeDialog):
             ID_RESUME: controller.resume,
             ID_DISCARD: controller.discard,
             ID_OPEN_RESULT: controller.open_result,
+            ID_UPDATE_OPEN: controller.open_update,
+            ID_UPDATE_DISMISS: controller.dismiss_update,
             ID_MODEL_COUNT: controller.count_model,
         }
         if element_id in actions:

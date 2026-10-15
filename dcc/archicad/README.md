@@ -14,6 +14,13 @@ Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
 ## Änderungen
 
+### 1.3.1 (Update-Hinweis, RTX-P-022)
+
+- **Neue Version verfügbar:** Meldet der Server `update_available`, steht eine ruhige Zeile „Neue Version … verfügbar“
+  im Bereich „Verbindung“ der Palette, mit „Zur Downloadseite“ und „Ausblenden“; alles darunter rückt um eine Zeile nach unten. Das Plugin arbeitet normal weiter; die Zeile bleibt für diese Sitzung ausgeblendet, bis eine neuere
+  Fassung erscheint. `update_required` blockiert wie bisher. Das Plugin lädt nichts selbst herunter.
+  Regel: [`docs/api/plugin-api-v1.md`, Abschnitt 4](../../../docs/api/plugin-api-v1.md).
+
 ### 1.3.0 (Materialien und Texturen, RTX-P-021)
 
 - **Texturen**: je Oberfläche mit Textur die Pixel aus `ModelerAPI::Texture` als eingebettetes JPEG oder PNG

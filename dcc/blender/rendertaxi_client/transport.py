@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import threading
 import urllib.error
@@ -401,6 +402,8 @@ def _needs_new_key(session: dict) -> bool:
     return session.get("state") in ("expired", "aborted")
 
 
+_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+
 #: Was der Dialog sagt, wenn Server und Plugin keine gemeinsame Manifestfassung haben (RTX-M2-030).
 #: Fassung und Verhandlungsergebnis stehen im Protokoll.
 VERSION_MISMATCH = ("Plugin und Server passen nicht zusammen. Bitte die Plugin-Fassung verwenden, "
@@ -417,6 +420,56 @@ def handshake_problem(handshake: dict) -> str | None:
     if update.get("status") == "update_required":
         return update.get("message") or "Bitte das Plugin aktualisieren; diese Fassung nimmt der Server nicht mehr an."
     return None
+
+
+#: Die Hinweiszeile bei ``update_available`` (RTX-P-022) — ruhig, ohne Alarmton (``docs/design/gui-shell/texte/``).
+UPDATE_HINT = "Neue Version {version} verfügbar"
+UPDATE_HINT_WITHOUT_VERSION = "Eine neue Version ist verfügbar"
+#: Die Beschriftung des Links auf ``update.url`` und des Knopfs, der die Zeile für diese Sitzung ausblendet.
+UPDATE_LINK = "Zur Downloadseite"
+UPDATE_DISMISS = "Ausblenden"
+
+
+def handshake_hint(handshake: dict | None) -> dict | None:
+    """Die Hinweiszeile bei ``update_available`` — ``{"text", "url", "version"}`` oder ``None`` (RTX-P-022).
+
+    Eine Regel für alle Python-Hosts, das Archicad-Add-on spiegelt sie in C++: ``update_required`` blockiert
+    weiter über ``handshake_problem`` und ist hier kein Hinweis; ``current`` und ``unknown`` geben nichts.
+    ``update.latestVersion`` fehlt bei einem Server vor RTX-P-022 — dann steht der Satz ohne Zahl. Ein Link
+    nur auf ``https``: das Plugin öffnet keine fremde Adresse aus einer kaputten Antwort.
+    """
+    update = (handshake or {}).get("update") or {}
+    if update.get("status") != "update_available":
+        return None
+    version = update.get("latestVersion")
+    version = version if isinstance(version, str) and _VERSION.match(version) else None
+    url = update.get("url")
+    url = url if isinstance(url, str) and url.startswith("https://") else None
+    text = UPDATE_HINT.format(version=version) if version else UPDATE_HINT_WITHOUT_VERSION
+    return {"text": text, "url": url, "version": version}
+
+
+class UpdateNotice:
+    """Die Hinweiszeile einer Sitzung: einmal angeboten, für diese Sitzung ausblendbar (RTX-P-022).
+
+    Jeder Handshake liefert den Hinweis neu; ``offer`` zeigt ihn, bis der Nutzer ihn ausblendet — dann bleibt
+    er für dieselbe Version bis zum Neustart des Hosts weg. Eine neuere Version zeigt ihn wieder.
+    """
+
+    def __init__(self) -> None:
+        self.hint: dict | None = None
+        self._dismissed: str | None = None
+
+    def offer(self, handshake: dict | None) -> dict | None:
+        hint = handshake_hint(handshake)
+        key = (hint or {}).get("version") or ""
+        self.hint = None if hint is None or (self._dismissed is not None and self._dismissed == key) else hint
+        return self.hint
+
+    def dismiss(self) -> None:
+        if self.hint is not None:
+            self._dismissed = self.hint.get("version") or ""
+        self.hint = None
 
 
 def supports_model(handshake: dict | None) -> bool:

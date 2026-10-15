@@ -165,6 +165,14 @@ void FakePlatform::SetCanvasDefault (std::string aspectRatio, int longEdgePx)
 	canvasLongEdgePx = longEdgePx;
 }
 
+void FakePlatform::SetUpdate (std::string status, std::string url, std::string latestVersion)
+{
+	std::lock_guard<std::mutex> guard (mutex);
+	updateStatus = std::move (status);
+	updateUrl = std::move (url);
+	updateLatestVersion = std::move (latestVersion);
+}
+
 void FakePlatform::SetCaptureMaxMinor (int minor)
 {
 	std::lock_guard<std::mutex> guard (mutex);
@@ -805,9 +813,11 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 		root->Set ("limits", limits);
 
 		JsonPtr update = rtx::Json::MakeObject ();
-		update->Set ("status", rtx::Json::MakeString ("current"));
-		update->Set ("message", rtx::Json::MakeNull ());
-		update->Set ("url", rtx::Json::MakeNull ());
+		update->Set ("status", rtx::Json::MakeString (updateStatus));
+		update->Set ("message", updateStatus == "current" ? rtx::Json::MakeNull ()
+														  : rtx::Json::MakeString ("Eine neuere Pluginversion ist verfügbar."));
+		update->Set ("url", updateUrl.empty () ? rtx::Json::MakeNull () : rtx::Json::MakeString (updateUrl));
+		if (!updateLatestVersion.empty ()) update->Set ("latestVersion", rtx::Json::MakeString (updateLatestVersion));
 		root->Set ("update", update);
 		if (canvasLongEdgePx > 0) {
 			JsonPtr canvas = rtx::Json::MakeObject ();

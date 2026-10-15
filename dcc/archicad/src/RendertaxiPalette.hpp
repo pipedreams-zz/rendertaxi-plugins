@@ -97,6 +97,8 @@ struct SharedState {
 	std::string createdProjectId;
 	std::string createdProjectName;
 	bool signedIn = false;
+	/** Der Hinweis auf eine neue Fassung aus dem jüngsten Handshake (RTX-P-022); `show == false` ohne. */
+	rtx::UpdateHint updateHint;
 	bool busy = false;
 	bool dirty = false;
 
@@ -176,7 +178,10 @@ private:
 		CamerasButtonId = 50,
 		MarkIconId = 51,
 		NoMaterialsCheckId = 52,
-		MergePopUpId = 53
+		MergePopUpId = 53,
+		UpdateTextId = 54,
+		UpdateOpenButtonId = 55,
+		UpdateDismissButtonId = 56
 	};
 
 	RendertaxiPalette ();
@@ -364,6 +369,15 @@ private:
 	/** Die Materialregel (RTX-P-021): „ohne Materialien“ und „nach Material“ (1) oder „Objekte behalten“ (2). */
 	DG::CheckBox noMaterialsCheck;
 	DG::PopUp mergePopUp;
+	/** Neue Version (RTX-P-022): Zeile, Link auf die Downloadseite, „Ausblenden“ für diese Sitzung. */
+	DG::LeftText updateText;
+	DG::Button updateOpenButton;
+	DG::Button updateDismissButton;
+	/** Die zuletzt gezeigte Zeile (Text|Adresse) und die ausgeblendete Fassung dieser Sitzung. */
+	std::string shownUpdate = "-";
+	std::string updateUrl;
+	bool updateDismissed = false;
+	std::string dismissedUpdateVersion;
 
 	std::unique_ptr<rtx::HttpClient> http;
 	std::unique_ptr<rtx::TokenStore> tokens;

@@ -264,7 +264,10 @@ RendertaxiPalette::RendertaxiPalette () :
 	extraCamerasCheck (GetReference (), ExtraCamerasCheckId),
 	camerasButton (GetReference (), CamerasButtonId),
 	noMaterialsCheck (GetReference (), NoMaterialsCheckId),
-	mergePopUp (GetReference (), MergePopUpId)
+	mergePopUp (GetReference (), MergePopUpId),
+	updateText (GetReference (), UpdateTextId),
+	updateOpenButton (GetReference (), UpdateOpenButtonId),
+	updateDismissButton (GetReference (), UpdateDismissButtonId)
 {
 	rtx::SetLogFile (LogPath ());
 
@@ -287,6 +290,9 @@ RendertaxiPalette::RendertaxiPalette () :
 	createRadio.Select ();
 	cancelButton.Disable ();
 	openButton.Disable ();
+	updateText.Hide ();
+	updateOpenButton.Hide ();
+	updateDismissButton.Hide ();
 	projectRefreshButton.Disable ();
 	newProjectButton.Disable ();
 	buildText.SetText (U (rtx::BuildLine (RTX_BUILD_COMMIT, RTX_ADDON_BUILD_DATE)));
@@ -329,6 +335,8 @@ RendertaxiPalette::RendertaxiPalette () :
 	// Ansichtswechsel.
 	nameEdit.Attach (*this);
 	openButton.Attach (*this);
+	updateOpenButton.Attach (*this);
+	updateDismissButton.Attach (*this);
 	viewRefreshButton.Attach (*this);
 	projectRefreshButton.Attach (*this);
 	newProjectButton.Attach (*this);
@@ -914,9 +922,11 @@ void RendertaxiPalette::RefreshFromState ()
 	std::string viewpointsProjectId;
 	std::string createdProjectId;
 	std::string createdProjectName;
+	rtx::UpdateHint updateHint;
 	{
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		if (!shared.dirty) return;
+		updateHint = shared.updateHint;
 		createdProjectId = shared.createdProjectId;
 		createdProjectName = shared.createdProjectName;
 		shared.createdProjectId.clear ();
@@ -946,6 +956,26 @@ void RendertaxiPalette::RefreshFromState ()
 	if (connection != shownConnection) {
 		connectionStatus.SetText (U (connection));
 		shownConnection = connection;
+	}
+	// Neue Version (RTX-P-022): nur angemeldet, nur bis „Ausblenden“ für dieselbe Fassung; blockiert nichts.
+	const bool showUpdate = signedIn && updateHint.show &&
+							!(updateDismissed && dismissedUpdateVersion == updateHint.version);
+	const std::string update = showUpdate ? updateHint.text + "|" + updateHint.url : std::string ();
+	if (update != shownUpdate) {
+		shownUpdate = update;
+		updateUrl = showUpdate ? updateHint.url : std::string ();
+		updateText.SetText (U (showUpdate ? updateHint.text : std::string ()));
+		if (showUpdate) {
+			updateText.Show ();
+			updateDismissButton.Show ();
+		} else {
+			updateText.Hide ();
+			updateDismissButton.Hide ();
+		}
+		if (showUpdate && !updateHint.url.empty ())
+			updateOpenButton.Show ();
+		else
+			updateOpenButton.Hide ();
 	}
 	// Umgebrochen statt abgeschnitten, über so viele Zeilen, wie der Bereich
 	// hat: die letzte nimmt notfalls den Rest, aber „…" ist hier die Ausnahme
@@ -1176,6 +1206,17 @@ void RendertaxiPalette::ButtonClicked (const DG::ButtonClickEvent& ev)
 	else if (ev.GetSource () == &captureButton) StartCapture ();
 	else if (ev.GetSource () == &cancelButton) CancelRunningJob ();
 	else if (ev.GetSource () == &openButton) OpenResultInBrowser ();
+	else if (ev.GetSource () == &updateOpenButton) {
+		// Nur die Downloadseite — das Add-on lädt nichts selbst herunter (RTX-P-022).
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		if (!updateUrl.empty ()) shared.browserToOpen = updateUrl;
+		shared.dirty = true;
+	} else if (ev.GetSource () == &updateDismissButton) {
+		std::lock_guard<std::mutex> guard (shared.mutex);
+		updateDismissed = true;
+		dismissedUpdateVersion = shared.updateHint.version;
+		shared.dirty = true;
+	}
 	else if (ev.GetSource () == &viewRefreshButton) RefreshSavedViews (true);
 	else if (ev.GetSource () == &projectRefreshButton) {
 		refreshGate.Mark (std::chrono::steady_clock::now ());
@@ -1552,6 +1593,7 @@ void RendertaxiPalette::StartSignIn ()
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
 			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 			shared.dirty = true;
@@ -1684,6 +1726,7 @@ void RendertaxiPalette::RefreshProjectList ()
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		if (handshake) {
 			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
 			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 		}
@@ -2476,6 +2519,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
 			shared.highestMinor = minor;
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 		}

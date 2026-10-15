@@ -57,6 +57,11 @@ public:
 	 */
 	void SetCanvasDefault (std::string aspectRatio, int longEdgePx);
 	/**
+	 * `update` des Handshakes (RTX-P-022): Status, Adresse und neueste
+	 * Fassung; leere Adresse oder Fassung lassen das Feld weg bzw. `null`.
+	 */
+	void SetUpdate (std::string status, std::string url, std::string latestVersion);
+	/**
 	 * Die höchste MINOR des Capture-Manifests, die der Handshake nennt
 	 * (`versions[].maxMinor`, `negotiation.highestSupportedVersion`). Ohne
 	 * Aufruf 0, wie der Server, gegen den das Add-on zuerst gebaut wurde.
@@ -172,6 +177,9 @@ private:
 	bool alwaysExpire = false;
 	std::string canvasAspectRatio;
 	int canvasLongEdgePx = 0;
+	std::string updateStatus = "current";
+	std::string updateUrl;
+	std::string updateLatestVersion;
 	bool rejectNextFile = false;
 	int captureMaxMinor = 0;
 	std::string highestSupportedVersionText;

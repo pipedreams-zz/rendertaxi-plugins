@@ -219,6 +219,52 @@ RTX_TEST (HandshakeWirdVomServerBewertetUndNichtVomClientGeraten)
 	RTX_CHECK_EQ (handshake.Value ().contracts[1].availability, std::string ("planned"));
 }
 
+// --- RTX-P-022: Hinweis auf eine neue Fassung --------------------------------
+
+RTX_TEST (UpdateHinweisNenntFassungUndLinkUndBlockiertNicht)
+{
+	const auto hintFor = [] (const std::string& status, const std::string& url, const std::string& version) {
+		Harness harness;
+		harness.platform.SetUpdate (status, url, version);
+		const Result<HandshakeInfo> handshake = harness.api->Handshake (MakeDevice (harness.deviceId), nullptr);
+		RTX_CHECK (handshake.IsOk ());
+		return std::make_pair (handshake.Value (), UpdateHintOf (handshake.Value ()));
+	};
+	{
+		const auto [info, hint] = hintFor ("update_available", "https://app.rendertaxi.ai/plugins", "1.3.2");
+		RTX_CHECK (!info.BlocksTransfer ());
+		RTX_CHECK (hint.show);
+		RTX_CHECK_EQ (hint.text, std::string ("Neue Version 1.3.2 verfügbar"));
+		RTX_CHECK_EQ (hint.url, std::string ("https://app.rendertaxi.ai/plugins"));
+		RTX_CHECK_EQ (hint.version, std::string ("1.3.2"));
+	}
+	{
+		// Ein Server vor RTX-P-022 nennt keine Fassung: der Satz ohne Zahl.
+		const auto [info, hint] = hintFor ("update_available", "", "");
+		RTX_CHECK (hint.show);
+		RTX_CHECK_EQ (hint.text, std::string ("Eine neue Version ist verfügbar"));
+		RTX_CHECK (hint.url.empty ());
+	}
+	{
+		// Nur https, nur eine Fassung aus Zahlen — geprüft ohne Server, der Vertrag ließe beides nicht zu.
+		HandshakeInfo odd;
+		odd.updateStatus = "update_available";
+		odd.updateUrl = "http://evil.example/x";
+		odd.updateLatestVersion = "neu.1.2";
+		const UpdateHint hint = UpdateHintOf (odd);
+		RTX_CHECK (hint.show && hint.url.empty () && hint.version.empty ());
+	}
+	{
+		const auto [info, hint] = hintFor ("update_required", "https://app.rendertaxi.ai/plugins", "1.3.2");
+		RTX_CHECK (info.BlocksTransfer ());
+		RTX_CHECK (!hint.show);
+	}
+	{
+		const auto [info, hint] = hintFor ("current", "", "");
+		RTX_CHECK (!hint.show);
+	}
+}
+
 // --- RTX-P-015: die Canvas-Vorgabe kommt aus dem Handshake -------------------
 
 RTX_TEST (CanvasVorgabeKommtAusDemHandshakeOderFehlt)

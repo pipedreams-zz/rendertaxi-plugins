@@ -35,8 +35,8 @@ from .rendertaxi_client.log import log_exception, set_debug
 from .rendertaxi_client.store import CredentialStore, SettingsStore, TransferStore, has_local_material
 from .rendertaxi_client.glb import MAX_TRIANGLES
 from .rendertaxi_client.transport import (ApiClient, ApiError, Cancelled, NewProject, Transfer, Unauthorized,
-                                          handshake_problem, normalize_server_url, prepare, project_choices,
-                                          project_name_problem, supports_model)
+                                          UpdateNotice, handshake_problem, normalize_server_url, prepare,
+                                          project_choices, project_name_problem, supports_model)
 
 DEFAULT_SERVER_URL = "https://app.rendertaxi.ai"
 # ``dataPassBitDepth``: Bittiefe der Datenpässe (8 oder 16), Standard wie in Blender (RTX-P-012).
@@ -199,6 +199,8 @@ class Controller:
     def __init__(self, adapter):
         self.adapter = adapter
         self.state = State()
+        # Der Update-Hinweis dieser Sitzung (RTX-P-022): übersteht Ab- und Anmelden, ausgeblendet bis zum Neustart.
+        self.notice = UpdateNotice()
         self.form = Form()
         self._jobs: list[Job] = []
         # Die letzte Zählung für „Modell mitsenden": (Aufnahmeart, Objekte, Dreiecke, Bytes oder None) — nur ein Hinweis.
@@ -395,6 +397,7 @@ class Controller:
             self.state.identity = identity
             self.state.handshake = handshake
             self.state.message = ""
+            self.notice.offer(handshake)
 
         job.post(apply)
         self._load_targets(job, api)
@@ -1278,6 +1281,14 @@ class Controller:
             job.post(lambda: self._set_message("Angefangene Übernahme verworfen."))
 
         return self.start_job("discard", work)
+
+    def open_update(self) -> None:
+        """Die Downloadseite im Browser — das Plugin lädt nichts selbst herunter (RTX-P-022)."""
+        if self.notice.hint and self.notice.hint.get("url"):
+            self.adapter.open_url(self.notice.hint["url"])
+
+    def dismiss_update(self) -> None:
+        self.notice.dismiss()
 
     def open_result(self) -> None:
         if self.state.result and self.state.result.get("openUrl"):

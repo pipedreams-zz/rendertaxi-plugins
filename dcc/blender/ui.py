@@ -40,9 +40,10 @@ from bpy.types import Operator, Panel, PropertyGroup
 from . import capture, export, settings
 from .rendertaxi_client import auth, frame, ways
 from .rendertaxi_client import manifest as mf
-from .rendertaxi_client.transport import (PROJECT_NAME_MAX_LENGTH, ApiClient, ApiError, Cancelled, NewProject,
-                                          Transfer, Unauthorized, handshake_problem, normalize_server_url, prepare,
-                                          project_choices, project_name_problem, supports_model)
+from .rendertaxi_client.transport import (PROJECT_NAME_MAX_LENGTH, UPDATE_DISMISS, UPDATE_LINK, ApiClient, ApiError,
+                                          Cancelled, NewProject, Transfer, Unauthorized, UpdateNotice,
+                                          handshake_problem, normalize_server_url, prepare, project_choices,
+                                          project_name_problem, supports_model)
 from .settings import CredentialStore, TransferStore, log, log_exception
 
 # --------------------------------------------------------------------------
@@ -73,6 +74,8 @@ class State:
 
 
 STATE = State()
+# Der Update-Hinweis einer Blender-Sitzung (RTX-P-022): bleibt über Ab- und Anmelden, ausgeblendet bis zum Neustart.
+NOTICE = UpdateNotice()
 # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
 NEW_PROJECT = NewProject()
 
@@ -252,6 +255,7 @@ def _connected(job: Job, api: ApiClient, handshake: dict, identity: dict) -> Non
         STATE.identity = identity
         STATE.handshake = handshake
         STATE.message = ""
+        NOTICE.offer(handshake)
 
     job.post(apply)
     _load_targets(job, api)
@@ -1049,6 +1053,28 @@ class RTX_OT_count_model(Operator):
         return {"FINISHED"}
 
 
+class RTX_OT_open_update(Operator):
+    bl_idname = "rendertaxi.open_update"
+    bl_label = UPDATE_LINK
+    bl_description = "Die Downloadseite der Plugins im Browser öffnen; das Plugin lädt nichts selbst herunter"
+
+    def execute(self, _context):
+        if NOTICE.hint and NOTICE.hint.get("url"):
+            bpy.ops.wm.url_open(url=NOTICE.hint["url"])
+        return {"FINISHED"}
+
+
+class RTX_OT_dismiss_update(Operator):
+    bl_idname = "rendertaxi.dismiss_update"
+    bl_label = UPDATE_DISMISS
+    bl_description = "Den Hinweis auf die neue Version bis zum nächsten Start von Blender ausblenden"
+
+    def execute(self, _context):
+        NOTICE.dismiss()
+        _redraw()
+        return {"FINISHED"}
+
+
 class RTX_OT_open_result(Operator):
     bl_idname = "rendertaxi.open_result"
     bl_label = "Blickpunkt im Browser öffnen"
@@ -1179,6 +1205,15 @@ class RTX_PT_panel(Panel):
                 row.operator(RTX_OT_connect.bl_idname, icon="LINKED")
             if STATE.server:
                 body.label(text=STATE.server, icon="WORLD")
+
+        # -- Neue Version (RTX-P-022): ruhig, nicht blockierend, ausblendbar --
+        if STATE.connected and NOTICE.hint:
+            box = layout.box()
+            _wrapped(box, NOTICE.hint["text"], "INFO")
+            row = box.row(align=True)
+            if NOTICE.hint.get("url"):
+                row.operator(RTX_OT_open_update.bl_idname, icon="URL")
+            row.operator(RTX_OT_dismiss_update.bl_idname, text="", icon="X")  # „Ausblenden“ als Tooltip
 
         if not STATE.connected:
             self._status(layout)
@@ -1365,6 +1400,8 @@ CLASSES = (
     RTX_OT_discard,
     RTX_OT_count_model,
     RTX_OT_open_result,
+    RTX_OT_open_update,
+    RTX_OT_dismiss_update,
     RTX_PT_panel,
 )
 
