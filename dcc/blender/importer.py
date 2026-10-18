@@ -11,7 +11,11 @@ die Kameras des Blickpunkts als glTF-Kameras mit ``extras.rendertaxi.camera`` un
 * **Sammlung** „rendertaxi <Export> <Datum>" mit einem Wurzelobjekt (Empty) gleichen Namens; alle
   obersten Objekte der Datei hängen daran. Die Sammlung trägt die Kennung des Assets: derselbe
   Export ersetzt sie nach Rückfrage, statt eine zweite anzulegen — die bisherige geht erst, wenn die
-  neue vollständig steht; scheitert der Import, bleibt sie mit allen Bearbeitungen.
+  neue vollständig steht; scheitert der Import, bleibt sie mit allen Bearbeitungen. Gesucht und
+  ersetzt wird nur im Sammlungsbaum der Zielszene: eine andere Szene behält ihren Import, auch wenn
+  sie dieselbe Sammlung verknüpft (dann wird sie in der Zielszene nur gelöst; geteilte übergeordnete
+  Sammlungen ersetzt die Zielszene durch flache Kopien, die der anderen bleiben unverändert), und
+  Objekte, die auch außerhalb der ersetzten Sammlung liegen, bleiben dort.
 * **Kameras**: Objektiv, Sensor, Sensorbezug und Shift setzt die eine Rückrechnung
   ``rendertaxi_client.model_import.host_camera`` — der Importer kennt nur ``yfov`` (vertikal).
   Welche Definition zu welchem Kameraobjekt gehört, sagt eine Nummer, die vor dem Import in
@@ -51,35 +55,91 @@ class ImportProblem(RuntimeError):
     """Ein Import, der nicht gelang — mit einem Satz für das Panel."""
 
 
-def find_collection(asset_id: str):
-    """Die Sammlung, in die dieser Export schon importiert wurde — oder ``None``."""
-    import bpy
-
-    for collection in bpy.data.collections:
+def find_collection(asset_id: str, scene):
+    """Die Sammlung im Baum von ``scene``, in die dieser Export schon importiert wurde — oder ``None``."""
+    for collection in _tree_of(scene.collection):
         if collection.get(ASSET_KEY) == asset_id:
             return collection
     return None
 
 
-def remove_collection(collection) -> None:
-    """Sammlung, ihre Objekte (auch in Untersammlungen) und deren nun unbenutzte Daten entfernen."""
+def _tree_of(collection):
+    """Alle Sammlungen unter ``collection`` (ohne sie selbst), jede einmal."""
+    def walk(current):
+        for child in current.children:
+            yield child
+            yield from walk(child)
+
+    return list(dict.fromkeys(walk(collection)))
+
+
+def _parents_of(collection) -> list:
+    """Sammlungen (auch Szenensammlungen), die ``collection`` als Untersammlung führen."""
     import bpy
 
-    def all_children(current):
-        for child in current.children:
-            yield from all_children(child)
-            yield child
+    holders = [*bpy.data.collections, *(scene.collection for scene in bpy.data.scenes)]
+    return [holder for holder in holders if collection.name in holder.children
+            and holder.children[collection.name] == collection]
 
-    objects = list(dict.fromkeys(_objects_of(collection)))
+
+def in_other_scene(collection, scene) -> bool:
+    """Ob eine andere Szene als ``scene`` ``collection`` in ihrem Sammlungsbaum führt."""
+    import bpy
+
+    return any(collection in _tree_of(other.collection) for other in bpy.data.scenes if other != scene)
+
+
+def unlink_from_scene(collection, scene) -> None:
+    """``collection`` aus dem Baum von ``scene`` lösen — Sammlung und Objekte bleiben für die übrigen Szenen.
+
+    Ein Elternteil, das auch eine andere Szene führt, bleibt unverändert: die Zielszene bekommt an
+    seiner Stelle eine flache Kopie ohne ``collection`` (dieselben Objekte und übrigen Untersammlungen),
+    und das gilt so weiter nach oben bis zu einem Vorfahren, der nur der Zielszene gehört.
+    """
+    _replace_in_scene(collection, None, scene)
+
+
+def _replace_in_scene(old, new, scene) -> None:
+    """Im Baum von ``scene`` ``old`` durch ``new`` ersetzen (``None``: nur lösen) — geteilte Eltern als Kopie."""
+    tree = {scene.collection, *_tree_of(scene.collection)}
+    for parent in _parents_of(old):
+        if parent not in tree:
+            continue
+        if parent == scene.collection or not in_other_scene(parent, scene):
+            parent.children.unlink(old)
+            if new is not None:
+                parent.children.link(new)
+            continue
+        # Collection.copy() ist flach: Objekte und Untersammlungen werden verknüpft, nicht dupliziert.
+        own = parent.copy()
+        own.children.unlink(old)
+        if new is not None:
+            own.children.link(new)
+        _replace_in_scene(parent, own, scene)
+
+
+def remove_collection(collection) -> None:
+    """Sammlung, ihre Objekte (auch in Untersammlungen) und deren nun unbenutzte Daten entfernen.
+
+    Was auch außerhalb liegt — ein Objekt in einer fremden Sammlung, eine Untersammlung mit weiterem
+    Elternteil —, wird nur gelöst, nicht gelöscht.
+    """
+    import bpy
+
+    removed = {collection}
+    for child in _tree_of(collection):
+        if all(parent in removed for parent in _parents_of(child)):
+            removed.add(child)
+    objects = list(dict.fromkeys(obj for current in removed for obj in current.objects
+                                 if all(user in removed for user in obj.users_collection)))
     # Verknüpfte Duplikate teilen ihre Daten: jeder Block nur einmal, sonst ist er beim zweiten Mal schon weg.
     data = list(dict.fromkeys(obj.data for obj in objects if obj.data is not None))
     for obj in objects:
         bpy.data.objects.remove(obj, do_unlink=True)
     for block in data:
         _remove_unused(block)
-    for child in list(all_children(collection)):
-        bpy.data.collections.remove(child)
-    bpy.data.collections.remove(collection)
+    for current in removed:
+        bpy.data.collections.remove(current)
 
 
 def _objects_of(collection):
@@ -166,7 +226,8 @@ def import_export(context, path: str, entry: dict, *, replace: bool = False) -> 
     """
     import bpy
 
-    existing = find_collection(entry["assetId"])
+    scene = context.scene
+    existing = find_collection(entry["assetId"], scene)
     if existing is not None and not replace:
         raise ImportProblem(f"Dieser Export steht schon in der Szene („{existing.name}“).")
     try:
@@ -177,11 +238,13 @@ def import_export(context, path: str, entry: dict, *, replace: bool = False) -> 
 
     # Der Ersatz entsteht neben dem bisherigen Import; dieser geht erst, wenn der neue vollständig steht.
     # Bis dahin trägt die neue Sammlung keine Kennung, und der bisherige Import gibt seine Namen frei —
-    # scheitert der neue, bekommt er sie zurück.
-    aside = _set_aside(existing) if existing is not None else []
+    # scheitert der neue, bekommt er sie zurück. Führt eine andere Szene dieselbe Sammlung, behält sie
+    # ihre Namen; der Ersatz bekommt dann Blenders Nummer.
+    shared = existing is not None and in_other_scene(existing, scene)
+    aside = _set_aside(existing) if existing is not None and not shared else []
     name = mi.collection_name(entry)
     collection = bpy.data.collections.new(name)
-    context.scene.collection.children.link(collection)
+    scene.collection.children.link(collection)
     before = set(bpy.data.objects)
     try:
         root, cameras = _build(context, path, collection, name, entry, origin, definitions, before)
@@ -195,8 +258,14 @@ def import_export(context, path: str, entry: dict, *, replace: bool = False) -> 
         raise
     imported = [obj for obj in collection.objects if obj is not root]
     collection[ASSET_KEY] = entry["assetId"]
-    if existing is not None:
+    if shared:
+        unlink_from_scene(existing, scene)
+    elif existing is not None:
         remove_collection(existing)
+        # Was außerhalb der Sammlung weiterlebt, bekommt seinen Namen zurück.
+        for block, own in aside:
+            with contextlib.suppress(ReferenceError):
+                block.name = own
 
     instances = sum(1 for obj in imported if _instance_of(obj) is not None)
     placed = mi.geo_root_transform(origin)

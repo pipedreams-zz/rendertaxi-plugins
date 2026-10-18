@@ -10,7 +10,7 @@ Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: Cinema 4D **2026** (macOS oder Windows); ältere Fassungen
 werden nicht unterstützt — das Plugin lädt dort, zeigt aber nur einen Hinweis.
 Die Zip `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (etwa
-`rendertaxi-cinema4d2026-0.6.2-2026.10.09.zip`) von der
+`rendertaxi-cinema4d2026-0.8.0-2026.10.18.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 Das Plugin ist Python — kein Installationsprogramm, kein Build.
@@ -149,6 +149,34 @@ dieser Kamera.
 
 Der Server muss den Modellweg kennen; tut er es nicht, sagt das Fenster es, und
 übernommen wird nur ohne Modell.
+
+## Exporte aus rendertaxi laden (ab 0.8.0)
+
+Was in rendertaxi exportiert wurde (**Blickpunkt › Allgemein › Exportieren…** oder Rechtsklick im
+Strukturbaum), lässt sich zurück in Cinema 4D holen — Modelle mit ihrer Lage und die Kameras des
+Blickpunkts.
+
+1. Im Tab **Projekt** das Projekt wählen.
+2. Im Tab **Modell** unter **Exporte aus rendertaxi** auf **Exporte laden** klicken. Die Liste zeigt je
+   Export Name, Zeitpunkt, wie viele Modelle und Kameras er trägt und seinen Bezug.
+3. **Importieren** legt oben im Objekt-Manager ein Null-Objekt „rendertaxi <Export> <Datum>" an. Darunter
+   liegt je Modell ein eigenes Objekt (nichts wird verschmolzen) mit seinen Teilen und die Kameras mit
+   Brennweite, Sensor und **Film Offset**, wie sie in rendertaxi gespeichert sind. Materialien kommen
+   so mit, wie sie in der Datei stehen.
+
+- **Lage:** Ein Export mit Bezug „Nullpunkt des Rahmens" liegt am Ursprung. Ein georeferenzierter Export
+  behält seine kleinen Koordinaten; das Null-Objekt trägt den Versatz (Ost, Höhe, Nord) und die Drehung
+  um den Nordwinkel, und der Bezug steht als Benutzerdatum **rendertaxi Bezug** am Null-Objekt.
+- **Einheit:** Die Objekte erscheinen in der Einheit aus **Projekteinstellungen › Projektmaßstab**. Das
+  Plugin prüft nach dem Import, dass Maßstab und Spiegelung zur Datei passen; passt etwas nicht, bleibt
+  nichts im Dokument, und das Fenster sagt, warum.
+- **Bildformat:** Die Kameras gelten für das Seitenverhältnis des Rahmens (Benutzerdatum
+  **rendertaxi Rahmenverhältnis** an der Kamera). Die Rendervoreinstellung ändert der Import nicht.
+  Parallelkameras werden nicht übernommen; das Fenster nennt ihre Zahl.
+- **Noch einmal importieren:** Steht derselbe Export schon im Dokument, heißt der Knopf **Ersetzen** und
+  fragt vorher; Null-Objekt, Objekte und Materialien des Imports werden ersetzt, nicht verdoppelt.
+- Die Einstellungen des glTF-Importers (**Edit › Preferences › Import/Export › glTF Import**) setzt das
+  Plugin nur für den einen Import und stellt sie danach wieder her.
 
 ## Rahmengröße
 

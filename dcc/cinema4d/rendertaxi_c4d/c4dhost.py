@@ -13,7 +13,7 @@ import webbrowser
 import c4d
 from c4d import gui
 
-from . import capture, corona, export, host, pictureviewer
+from . import capture, corona, export, host, importer, pictureviewer
 from .controller import BEAUTY
 
 
@@ -50,6 +50,19 @@ class Cinema4DAdapter:
     def camera_name(self) -> str | None:
         """Der Name des Kameraobjekts der Renderansicht — Vorschlag für einen neuen Blickpunkt."""
         return capture.camera_name(capture.active_document())
+
+    def ask_yes_no(self, text: str) -> bool:
+        """Eine Ja/Nein-Frage (``gui.QuestionDialog``) — „Ersetzen?“ beim wiederholten Import."""
+        return bool(gui.QuestionDialog(text))
+
+    def find_import(self, asset_id: str) -> str | None:
+        """Der Name des Null-Objekts, unter dem dieser Export im aktiven Dokument steht — ``None`` ohne."""
+        root = importer.find_import(capture.active_document(), asset_id)
+        return None if root is None else root.GetName()
+
+    def import_export(self, document, path: str, entry: dict, replace: bool) -> dict:
+        """Den heruntergeladenen Export in ``document`` importieren (Rückweg, RTX-C4D-012)."""
+        return importer.import_export(document, path, entry, replace=replace)
 
     def ask_text(self, title: str, preset: str = "") -> str | None:
         """Eine Zeile Text vom Nutzer (``gui.InputDialog``); ``None`` bei „Abbrechen"."""

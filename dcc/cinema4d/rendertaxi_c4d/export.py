@@ -199,6 +199,12 @@ def contract_shift(offset_x: float, offset_y: float, width: int, height: int) ->
     return float(offset_x) * width / longer, -float(offset_y) * height / longer
 
 
+def film_offset_of(shift_x: float, shift_y: float, width: float, height: float) -> tuple[float, float]:
+    """Die Umkehrung von ``contract_shift``: ``shift`` des Vertrags → Film Offset X und Y (Rückweg, RTX-C4D-012)."""
+    longer = max(width, height)
+    return float(shift_x) * longer / width, -float(shift_y) * longer / height
+
+
 def camera_dict(*, position, direction, up, fov: tuple[str, float], near: float | None, far: float | None,
                 meters: float, lens: dict | None = None, shift: tuple[float, float] | None = None) -> dict:
     """Der Kamerablock des Vertrags (Abschnitt 11.3) aus Werten im Weltraum von Cinema 4D.
@@ -245,6 +251,30 @@ def _fits(expected_low, expected_high, factor, glb_low, glb_high, tolerance) -> 
                and abs(glb_high[a] - factor * expected_high[a]) <= tolerance for a in range(3))
 
 
+MIRRORED, UNMIRRORED, DISTORTED = "mirrored", "unmirrored", "distorted"
+
+
+def hull_fit(scene_low, scene_high, glb_low, glb_high) -> tuple[str, float]:
+    """Wie die Hülle einer GLB zur Hülle der Szene in Cinema 4D passt — ``(Befund, Faktor)``.
+
+    Der Faktor ist GLB-Einheiten je Einheit des Dokuments (Verhältnis der Diagonalen). ``MIRRORED``: an Z
+    gespiegelt bis auf diesen Faktor, wie Flip Z es verlangt; ``UNMIRRORED``: dasselbe ohne Spiegelung;
+    ``DISTORTED``: verschoben, verzerrt oder ohne Ausdehnung (Faktor 0). Die eine Regel für Export (RTX-C4D-003)
+    und Import (RTX-C4D-012); was daraus folgt, sagt jeder Weg mit seinem Satz.
+    """
+    scene_diagonal = math.dist(scene_low, scene_high)
+    glb_diagonal = math.dist(glb_low, glb_high)
+    if scene_diagonal == 0 or glb_diagonal == 0:
+        return DISTORTED, 0.0
+    factor = glb_diagonal / scene_diagonal
+    tolerance = BOUNDS_TOLERANCE * glb_diagonal
+    if _fits(*mirrored_bounds(scene_low, scene_high), factor, glb_low, glb_high, tolerance):
+        return MIRRORED, factor
+    if _fits(scene_low, scene_high, factor, glb_low, glb_high, tolerance):
+        return UNMIRRORED, factor
+    return DISTORTED, factor
+
+
 def exporter_scale(scene_low, scene_high, glb_low, glb_high) -> float:
     """Der Maßstab des Exporters (GLB-Einheiten je Einheit des Dokuments) — gemessen an der Hülle.
 
@@ -252,15 +282,12 @@ def exporter_scale(scene_low, scene_high, glb_low, glb_high) -> float:
     gleichförmigen Faktor. Alles andere ist ein ``ExportError``: eine
     fehlende Spiegelung nennt QC-01, jede andere Abweichung QC-01 und QC-02.
     """
-    scene_diagonal = math.dist(scene_low, scene_high)
-    glb_diagonal = math.dist(glb_low, glb_high)
-    if scene_diagonal == 0 or glb_diagonal == 0:
-        raise ExportError("Das Modell hat keine Ausdehnung.")
-    factor = glb_diagonal / scene_diagonal
-    tolerance = BOUNDS_TOLERANCE * glb_diagonal
-    if _fits(*mirrored_bounds(scene_low, scene_high), factor, glb_low, glb_high, tolerance):
+    verdict, factor = hull_fit(scene_low, scene_high, glb_low, glb_high)
+    if verdict == MIRRORED:
         return factor
-    if _fits(scene_low, scene_high, factor, glb_low, glb_high, tolerance):
+    if factor == 0:
+        raise ExportError("Das Modell hat keine Ausdehnung.")
+    if verdict == UNMIRRORED:
         raise ExportError("Der glTF-Export liefert das Modell seitenverkehrt („Flip Z“ fehlt). "
                           "Das Bild lässt sich ohne Modell übernehmen.")
     raise ExportError("Der glTF-Export hat das Modell verschoben oder verzerrt. "

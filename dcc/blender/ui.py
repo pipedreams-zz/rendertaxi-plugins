@@ -1150,7 +1150,7 @@ class RTX_OT_import_export(Operator):
         return next((e for e in STATE.exports.get(project_id, []) if e["assetId"] == self.asset_id), None)
 
     def invoke(self, context, event):
-        existing = importer.find_collection(self.asset_id)
+        existing = importer.find_collection(self.asset_id, context.scene)
         if existing is not None:
             self.replace = True
             return context.window_manager.invoke_confirm(
@@ -1167,7 +1167,7 @@ class RTX_OT_import_export(Operator):
         if not entry["hasFile"]:
             _set_error("Dieser Export hat noch keine Datei.")
             return {"CANCELLED"}
-        existing = importer.find_collection(entry["assetId"])
+        existing = importer.find_collection(entry["assetId"], context.scene)
         if existing is not None and not self.replace:
             _set_error(f"Dieser Export steht schon in der Szene („{existing.name}“). Zum Ersetzen erneut "
                        "„Importieren“ wählen und bestätigen.")
@@ -1403,7 +1403,7 @@ class RTX_PT_panel(Panel):
             column = body.column()
             column.active = props.send_model
             self._model(column, context, props)
-            self._exports(body, props, busy)
+            self._exports(body, context, props, busy)
 
         # -- Übernehmen (fest) ----------------------------------------------
         self._transfer(layout.box(), context, props, busy)
@@ -1466,7 +1466,7 @@ class RTX_PT_panel(Panel):
         if why:
             _wrapped(layout, f"Ohne Kamera: {why}", "ERROR" if chosen.model_only else "INFO")
 
-    def _exports(self, layout, props, busy):
+    def _exports(self, layout, context, props, busy):
         """Rückweg (RTX-B-005): die Exporte des Projekts, je einer mit „Importieren" oder „Ersetzen"."""
         header, body = layout.panel("RTX_section_exports", default_closed=False)
         header.label(text="Exporte aus rendertaxi", icon="IMPORT")
@@ -1494,7 +1494,7 @@ class RTX_PT_panel(Panel):
             if not entry["hasFile"]:
                 _wrapped(box, "Noch ohne Datei.", "INFO")
                 continue
-            existing = importer.find_collection(entry["assetId"])
+            existing = importer.find_collection(entry["assetId"], context.scene)
             row = box.row()
             row.enabled = not busy
             button = row.operator(RTX_OT_import_export.bl_idname, text="Ersetzen" if existing else "Importieren",

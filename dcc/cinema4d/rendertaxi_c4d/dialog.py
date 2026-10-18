@@ -13,7 +13,9 @@ Bereich „Übernehmen".
   sonst ``keep``); Rahmengröße Canvas-Vorgabe oder Render-Einstellung (``size``).
 * **Bild** — Viewport oder Beauty mit optionalen Pässen; Größe aus dem Dokument oder dem Blickpunkt-Rahmen;
   „Bittiefe der Datenpässe" (8 oder 16 Bit, sofort gemerkt, Wortlaut aus dem gemeinsamen Client).
-* **Modell** — Größe zählen, Grenzen und Kamera der Renderansicht, bevor gesendet wird.
+* **Modell** — Größe zählen, Grenzen und Kamera der Renderansicht, bevor gesendet wird; darunter **Exporte aus
+  rendertaxi** (Rückweg, RTX-C4D-012): „Exporte laden“, je Export eine Zeile mit „Importieren“ oder — steht er schon
+  im Dokument — „Ersetzen“ (nach Rückfrage).
 * **Übernehmen** (fest darunter) — die Wege „Bild" und „Modell" (einzeln oder zusammen, ``ways.plan``), der Satz,
   was gesendet wird, der Knopf, Fortsetzen oder Verwerfen einer angefangenen Übernahme, Fortschritt, Meldungen
   und „Blickpunkt im Browser öffnen" (``result.openUrl``).
@@ -34,7 +36,7 @@ import c4d
 from c4d import gui
 
 from . import host
-from .controller import (BEAUTY, MASK_ROWS_MAX, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
+from .controller import (BEAUTY, EXPORTS_SHOWN, MASK_ROWS_MAX, MODEL_MERGES, RESOLUTION_DOCUMENT, RESOLUTION_VIEWPOINT, TAKE_LABEL, VIEWPORT,
                          Controller, wrap)
 from .rendertaxi_client import frame
 from .rendertaxi_client.transport import UPDATE_DISMISS, UPDATE_LINK
@@ -118,6 +120,11 @@ ID_CAMERAS = 1240  # die Gruppe der Kameraliste, neu gefüllt, wenn sich die Kam
 ID_CAMERA_NOTE = 1241
 ID_CAMERA_FIRST = 1300  # bis 1300 + MAX_CAMERAS - 1
 MAX_CAMERAS = 40
+# Rückweg (RTX-C4D-012): „Exporte laden“, die Liste (je Export Text und Knopf), ein Satz darunter.
+ID_EXPORTS_LOAD = 1270
+ID_EXPORTS = 1271  # die Gruppe der Liste, neu gefüllt, wenn sich Exporte oder ihr Stand im Dokument ändern
+ID_EXPORTS_NOTE = 1272
+ID_EXPORT_FIRST = 1600  # je Export: Text 1600 + 2·i, Knopf 1601 + 2·i
 # Die Gruppen von früher: „Projekt und Blickpunkt" sind jetzt zwei Tabs, „Bild übernehmen" der Tab Bild.
 ID_GRP_TARGET = ID_TAB_BODY["project"]
 ID_GRP_CAPTURE = ID_TAB_BODY["image"]
@@ -161,6 +168,8 @@ class RendertaxiDialog(gui.GeDialog):
         self._camera_rows: list[tuple[str, str]] | None = None
         # Die Maskenliste im Tab „Bild“: (Buffer-ID, Beschriftung) je Häkchen.
         self._mask_rows: list[tuple[int, str]] | None = None
+        # Die Exportliste im Tab „Modell“: (Asset-Kennung, Beschriftung, Knopftext) je Zeile.
+        self._export_rows: list[tuple[str, str, str]] | None = None
 
     # -- Aufbau ---------------------------------------------------------------
 
@@ -200,6 +209,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._shown_lines = {}
         self._camera_rows = None
         self._mask_rows = None
+        self._export_rows = None
         self.SetTitle(f"rendertaxi.ai {host.PLUGIN_VERSION}")
         self.GroupBegin(ID_MAIN, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, 1, 0, "")
         self.GroupBorderSpace(8, 8, 8, 8)
@@ -293,6 +303,11 @@ class RendertaxiDialog(gui.GeDialog):
         self.GroupBegin(ID_CAMERAS, c4d.BFH_SCALEFIT, 1, 0, "")
         self.GroupEnd()
         self._text(ID_CAMERA_NOTE)
+        self._text(0, "Exporte aus rendertaxi")
+        self._gadgets[ID_EXPORTS_LOAD] = self.AddButton(ID_EXPORTS_LOAD, c4d.BFH_LEFT, 0, 0, "Exporte laden")
+        self.GroupBegin(ID_EXPORTS, c4d.BFH_SCALEFIT, 2, 0, "")
+        self.GroupEnd()
+        self._text(ID_EXPORTS_NOTE)
         self._tab_end("model")
         self.GroupEnd()  # Tabs
 
@@ -566,6 +581,27 @@ class RendertaxiDialog(gui.GeDialog):
         hint = controller.model_hint() if controller.form.send_model else "Unter „Übernehmen“ „Modell“ wählen."
         self._lines(ID_MODEL_HINT, hint, width=MODEL_WIDTH)
         self._refresh_cameras(busy)
+        self._refresh_exports(busy)
+
+    def _refresh_exports(self, busy: bool) -> None:
+        """Die Exporte des Projekts — je einer mit „Importieren“ oder „Ersetzen“; ohne Datei ist der Knopf aus."""
+        controller = self.controller
+        self._enable(ID_EXPORTS_LOAD, not busy and bool(controller.form.project_id))
+        rows = controller.export_rows() or []
+        wanted = [(row["assetId"], row["label"][:NOTE_WIDTH],
+                   "Ersetzen" if row["imported"] else ("Importieren" if row["hasFile"] else "Ohne Datei"))
+                  for row in rows]
+        if wanted != self._export_rows:
+            self.LayoutFlushGroup(ID_EXPORTS)
+            for index, (_asset_id, label, button) in enumerate(wanted):
+                self.AddStaticText(ID_EXPORT_FIRST + 2 * index, c4d.BFH_SCALEFIT, 0, 0, label, 0)
+                self._gadgets[ID_EXPORT_FIRST + 2 * index + 1] = self.AddButton(
+                    ID_EXPORT_FIRST + 2 * index + 1, c4d.BFH_RIGHT, 0, 0, button)
+            self.LayoutChanged(ID_EXPORTS)
+            self._export_rows = wanted
+        for index, row in enumerate(rows):
+            self._enable(ID_EXPORT_FIRST + 2 * index + 1, not busy and row["hasFile"])
+        self.SetString(ID_EXPORTS_NOTE, controller.exports_note())
 
     def _refresh_cameras(self, busy: bool) -> None:
         """Die Kameras der Szene mit Häkchen — neu aufgebaut, wenn sich Kameras oder Namen ändern.
@@ -688,6 +724,7 @@ class RendertaxiDialog(gui.GeDialog):
             ID_UPDATE_OPEN: controller.open_update,
             ID_UPDATE_DISMISS: controller.dismiss_update,
             ID_MODEL_COUNT: controller.count_model,
+            ID_EXPORTS_LOAD: controller.load_exports,
         }
         if element_id in actions:
             actions[element_id]()
@@ -722,6 +759,10 @@ class RendertaxiDialog(gui.GeDialog):
             index = element_id - ID_MASK_FIRST
             if self._mask_rows and index < len(self._mask_rows):
                 controller.set_mask(self._mask_rows[index][0], self.GetBool(element_id))
+        elif ID_EXPORT_FIRST <= element_id < ID_EXPORT_FIRST + 2 * EXPORTS_SHOWN and (element_id - ID_EXPORT_FIRST) % 2:
+            index = (element_id - ID_EXPORT_FIRST) // 2
+            if self._export_rows and index < len(self._export_rows):
+                controller.import_export(self._export_rows[index][0])
         elif ID_CAMERA_FIRST <= element_id < ID_CAMERA_FIRST + MAX_CAMERAS:
             index = element_id - ID_CAMERA_FIRST
             if self._camera_rows and index < len(self._camera_rows):

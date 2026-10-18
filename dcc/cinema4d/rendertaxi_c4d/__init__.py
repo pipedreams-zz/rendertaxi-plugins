@@ -11,6 +11,7 @@ Module:
 
 * ``host``        Plugin-ID, Version, Host des gemeinsamen Clients
 * ``capture``     Viewport, Beauty, Pässe, Laufzeitprobe, Dokumentkennung (``c4d``)
+* ``importer``    Rückweg: ein Export aus rendertaxi unter ein Null-Objekt (``c4d``, RTX-C4D-012)
 * ``c4dhost``     Brücke zum Controller: Nutzerordner, Dokument, Statusleiste (``c4d``)
 * ``controller``  Zustand, Hintergrundarbeit, Übernahme — ohne ``c4d``
 * ``dialog``      das Werkzeugfenster (``c4d.gui.GeDialog``)
