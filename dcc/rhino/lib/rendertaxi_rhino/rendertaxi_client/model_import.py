@@ -322,3 +322,65 @@ def geo_root_transform(origin: dict | None) -> dict:
         "location": (origin["east"], origin["north"], origin["height"]),
         "rotationZ": -math.radians(origin["northAngleDeg"]),
     }
+
+
+# --------------------------------------------------------------------------
+# Instanzen und Kameraknoten (RTX-RH-005)
+# --------------------------------------------------------------------------
+
+
+def export_instances(document: dict) -> list[dict]:
+    """Die Wurzelknoten der Instanzen eines Exports, in der Reihenfolge der Szene.
+
+    ``{"node", "name", "instanceId", "role"}`` je Wurzelknoten mit ``extras.rendertaxi.instance``; ``name`` ist
+    der Knotenname (leer, wenn er fehlt). Ein Wurzelknoten ohne diese Angabe ist keine Instanz (Kameras).
+    """
+    nodes = document.get("nodes") or [] if isinstance(document, dict) else []
+    found = []
+    for index in glb._roots(document):
+        node = nodes[index] if isinstance(index, int) and 0 <= index < len(nodes) else None
+        extras = node.get("extras") if isinstance(node, dict) else None
+        own = extras.get(glb.CAMERA_EXTRAS_KEY) if isinstance(extras, dict) else None
+        instance = own.get("instance") if isinstance(own, dict) else None
+        if not isinstance(instance, dict):
+            continue
+        found.append({"node": index, "name": str(node.get("name") or ""),
+                      "instanceId": str(instance.get("id") or ""), "role": str(instance.get("role") or "")})
+    return found
+
+
+def _normalized(vector) -> tuple[float, float, float] | None:
+    length = math.sqrt(sum(c * c for c in vector))
+    if not length or not math.isfinite(length):
+        return None
+    return tuple(c / length for c in vector)
+
+
+def camera_poses(document: dict) -> list[dict]:
+    """Jeder Kameraknoten der Szene mit seiner Weltlage im Exportraum (Meter, +Y oben).
+
+    ``{"node", "camera", "name", "position", "direction", "up", "definition"}``: ``direction`` ist die −Z-Achse,
+    ``up`` die +Y-Achse der Weltmatrix (glTF: die Kamera blickt entlang ihres −Z), beide normiert;
+    ``camera`` der Index der Definition. Knoten mit unbrauchbarer Matrix oder Definition fehlen.
+    """
+    nodes = document.get("nodes") or [] if isinstance(document, dict) else []
+    definitions = document.get("cameras") or [] if isinstance(document, dict) else []
+    poses = []
+    stack = [(index, glb._IDENTITY) for index in glb._roots(document)]
+    while stack:
+        index, parent = stack.pop()
+        node = nodes[index] if isinstance(index, int) and 0 <= index < len(nodes) else None
+        if not isinstance(node, dict):
+            continue
+        world = glb._compose(parent, glb._local(node))
+        camera = node.get("camera")
+        if isinstance(camera, int) and not isinstance(camera, bool) and 0 <= camera < len(definitions):
+            direction = _normalized((-world[2], -world[6], -world[10]))
+            up = _normalized((world[1], world[5], world[9]))
+            position = (world[3], world[7], world[11])
+            if direction is not None and up is not None and all(math.isfinite(c) for c in position):
+                poses.append({"node": index, "camera": camera, "name": str(node.get("name") or ""),
+                              "position": position, "direction": direction, "up": up,
+                              "definition": definitions[camera]})
+        stack.extend((child, world) for child in node.get("children", []))
+    return sorted(poses, key=lambda pose: pose["node"])

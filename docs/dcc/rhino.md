@@ -118,9 +118,36 @@ Unter **Modell** schaltet **Modell senden** das Modell zu. Unter **Bild** schalt
   Dateigröße, die der Server nennt) prüft das Plugin **vor** dem Senden.
 - **Schnittebenen** wirken nicht auf das Modell; es geht ganz mit.
 
+- **Georeferenz:** Hat die Datei einen **Erdanker** (Befehl `EarthAnchorPoint`:
+  Breite, Länge, Höhe über dem Meeresspiegel, Nordrichtung), geht seine Lage mit:
+  rendertaxi kennt dann Ost, Nord, Höhe und Nordwinkel des Dateinullpunkts. Ohne
+  Erdanker — oder mit einer Höhe über Gelände — geht das Modell ohne Georeferenz;
+  die Zeile unter **Modell** sagt, warum.
+
 Deine Datei bleibt dabei unverändert: Das Plugin vernetzt in einer eigenen
 Kopie, speichert nichts im Dokument und löscht die Modelldatei nach der
 Übertragung.
+
+## Aus rendertaxi importieren
+
+In der Webanwendung exportierst du einen Blickpunkt mit seinen Modellen und
+Kameras (**Blickpunkt › Allgemein › Exportieren …**). In der Palette holt der
+Abschnitt **Aus rendertaxi** ihn zurück:
+
+1. Projekt wählen, **Exporte laden**.
+2. Den Export in der Liste wählen und **Importieren**.
+
+- **Ebenen:** alles liegt unter der Ebene „rendertaxi ‹Export› ‹Datum›“, jedes
+  Modell auf einer eigenen Unterebene.
+- **Kameras** werden **benannte Ansichten** mit dem Namen der Ebene davor — mit
+  derselben Brennweite, demselben Seitenverhältnis und Shift wie in rendertaxi.
+- **Lage:** Das Modell liegt wie im Rahmen, in der Einheit deiner Datei. Ein
+  georeferenzierter Export nennt seinen Bezug als Benutzertext der Ebene und des
+  Dokuments („rendertaxi Projektursprung“).
+- **Noch einmal importieren** fragt, ob der alte Import ersetzt werden soll; er
+  verschwindet erst, wenn der neue gelungen ist.
+- Klappt der Import nicht, bleibt nichts im Dokument; die Palette sagt, warum.
+  **Rückgängig** nimmt einen Import als einen Schritt zurück.
 
 ## Rahmengröße
 

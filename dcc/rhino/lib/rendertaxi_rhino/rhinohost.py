@@ -34,6 +34,14 @@ def user_dir() -> str:
     return base
 
 
+def _active_or_none():
+    """Das aktive Dokument oder ``None`` — für Abfragen, die ohne Dokument einfach „nichts“ heißen."""
+    try:
+        return rhinocapture.active_document()
+    except rhinocapture.CaptureError:
+        return None
+
+
 class RhinoAdapter:
     """Was der Controller vom Host braucht, für das aktive Dokument."""
 
@@ -75,6 +83,35 @@ class RhinoAdapter:
         result, text = Rhino.UI.Dialogs.ShowEditBox(host.MARK, title, preset, False)
         return text if result and isinstance(text, str) and text.strip() else None
 
+    def ask_yes_no(self, text: str) -> bool:
+        """Eine Ja/Nein-Frage — „Ersetzen?“ beim wiederholten Import (RTX-RH-005)."""
+        import Rhino
+
+        answer = Rhino.UI.Dialogs.ShowMessage(text, host.MARK, Rhino.UI.ShowMessageButton.YesNo,
+                                              Rhino.UI.ShowMessageIcon.Question)
+        return answer == Rhino.UI.ShowMessageResult.Yes
+
+    def import_document(self):
+        """Das aktive Dokument — der Rückweg importiert in das Dokument, das beim Klick aktiv war."""
+        return rhinocapture.active_document()
+
+    def same_document(self, first, second) -> bool:
+        return first is not None and second is not None and first.RuntimeSerialNumber == second.RuntimeSerialNumber
+
+    def find_import(self, asset_id: str):
+        """Der Name der obersten Ebene, unter der dieser Export im aktiven Dokument steht — ``None`` ohne."""
+        from . import importer
+
+        doc = _active_or_none()
+        root = importer.find_import(doc, asset_id) if doc is not None else None
+        return None if root is None else root.Name
+
+    def import_export(self, document, path: str, entry: dict, replace: bool) -> dict:
+        """Den heruntergeladenen Export in ``document`` importieren (Rückweg, RTX-RH-005)."""
+        from . import importer
+
+        return importer.import_export(document, path, entry, replace=replace)
+
     def probe(self, model: bool = False) -> dict:
         """``source.host.capabilities``; ``geometryExport`` und ``cameraExport`` nur, wenn ein Modell mitgeht."""
         doc = rhinocapture.active_document()
@@ -89,6 +126,14 @@ class RhinoAdapter:
         from . import export
 
         return export.unit_problem(rhinocapture.active_document())
+
+    def model_georeference(self) -> str:
+        """Was der Erdanker für ``geometry.georeference`` ergibt — die Zeile der Modellnotiz (RTX-RH-005)."""
+        from . import export
+        from . import model as md
+
+        doc = rhinocapture.active_document()
+        return md.anchor_georeference(export.earth_anchor(doc), export.meters_per_unit(doc))[1]
 
     def model_estimate(self):
         from . import export

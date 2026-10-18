@@ -447,3 +447,91 @@ def read_camera_extras(definition) -> dict | None:
     lens = block.get("lens")
     shift = block.get("shift")
     return camera_extras(lens if isinstance(lens, dict) else None, shift if isinstance(shift, dict) else None)
+
+
+# --------------------------------------------------------------------------
+# Genaue Hülle aus den Punkten (Rückweg, RTX-RH-005)
+# --------------------------------------------------------------------------
+
+_BIN = 0x004E4942
+_FLOAT = 5126
+
+
+def _binary_chunk(rest: bytes) -> bytes | None:
+    """Der BIN-Chunk hinter dem JSON-Chunk — ``None`` ohne."""
+    if len(rest) < 8:
+        return None
+    length, kind = struct.unpack_from("<II", rest, 0)
+    return rest[8:8 + length] if kind == _BIN else None
+
+
+def _points(document: dict, binary: bytes | None, accessor_index: int):
+    """Die Punkte eines ``POSITION``-Accessors — ``None``, wenn sie nicht als einfache float-Punkte lesbar sind."""
+    accessors = document.get("accessors") or []
+    views = document.get("bufferViews") or []
+    accessor = accessors[accessor_index] if 0 <= accessor_index < len(accessors) else None
+    if (binary is None or not isinstance(accessor, dict) or accessor.get("componentType") != _FLOAT
+            or accessor.get("type") != "VEC3" or "sparse" in accessor or accessor.get("normalized")):
+        return None
+    view = views[accessor["bufferView"]] if isinstance(accessor.get("bufferView"), int) else None
+    if not isinstance(view, dict) or view.get("buffer", 0) != 0:
+        return None
+    stride = view.get("byteStride") or 12
+    start = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
+    count = int(accessor.get("count", 0))
+    if start + stride * max(count - 1, 0) + 12 > len(binary):
+        return None
+    return [struct.unpack_from("<3f", binary, start + stride * i) for i in range(count)]
+
+
+def world_point_bounds(path: str, root: int | None = None) -> tuple[list, list] | None:
+    """``(min, max)`` der **Punkte** der Szene (oder des Teilbaums ``root``) im Exportraum — ``None`` ohne Geometrie.
+
+    Anders als ``world_bounds`` (die acht Ecken je Primitiv, wie der Server) die genaue Hülle: jeder Punkt mit
+    der Weltmatrix seines Knotens. So vergleicht ein Plugin nach einem Import, was der Host angelegt hat — der
+    Host kennt nur die Punkte, nicht die Hülle der Datei. Ein Accessor, der sich nicht als float-Punkte lesen
+    lässt (quantisiert, dünn besetzt), geht mit seinen acht Ecken ein.
+    """
+    document, rest = _read(path)
+    binary = _binary_chunk(rest)
+    nodes = document.get("nodes") or []
+    meshes = document.get("meshes") or []
+    accessors = document.get("accessors") or []
+    low = [math.inf] * 3
+    high = [-math.inf] * 3
+    parents = {child: index for index, node in enumerate(nodes) for child in node.get("children", [])}
+    if root is None:
+        stack = [(index, _IDENTITY) for index in _roots(document)]
+    else:
+        matrix, chain, at = _IDENTITY, [], parents.get(root)
+        while at is not None:
+            chain.append(at)
+            at = parents.get(at)
+        for index in reversed(chain):
+            matrix = _compose(matrix, _local(nodes[index]))
+        stack = [(root, matrix)]
+    while stack:
+        index, parent = stack.pop()
+        node = nodes[index]
+        world = _compose(parent, _local(node))
+        mesh = node.get("mesh")
+        if isinstance(mesh, int) and mesh < len(meshes):
+            for primitive in meshes[mesh].get("primitives", []):
+                source = (primitive.get("attributes") or {}).get("POSITION")
+                if not isinstance(source, int) or source >= len(accessors):
+                    continue
+                points = _points(document, binary, source)
+                if points is None:
+                    lo, hi = accessors[source].get("min"), accessors[source].get("max")
+                    if not (isinstance(lo, list) and isinstance(hi, list) and len(lo) == 3 and len(hi) == 3):
+                        raise GlbError("Ein POSITION-Accessor der GLB-Datei nennt kein min/max.")
+                    points = [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+                for point in points:
+                    mapped = _apply(world, point)
+                    for axis in range(3):
+                        low[axis] = min(low[axis], mapped[axis])
+                        high[axis] = max(high[axis], mapped[axis])
+        stack.extend((child, world) for child in node.get("children", []))
+    if low[0] == math.inf:
+        return None
+    return low, high

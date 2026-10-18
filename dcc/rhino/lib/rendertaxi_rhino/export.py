@@ -499,8 +499,43 @@ def export_model(doc, directory: str, size, limits: dict | None = None, material
     problem = md.too_big(os.path.getsize(target), limits)
     if problem:
         raise ExportError(problem)
-    file = md.model_file(target, triangles, cameras, factor, correction, glbmaterials.report_note(report, materials))
-    return Model(file, md.geometry_dict(meters), meters, triangles, cameras, factor)
+    georeference, georeference_note = md.anchor_georeference(earth_anchor(doc), meters)
+    file = md.model_file(target, triangles, cameras, factor, correction, glbmaterials.report_note(report, materials),
+                         georeference_note)
+    return Model(file, md.geometry_dict(meters, georeference), meters, triangles, cameras, factor)
+
+
+def _zero_name(anchor) -> str:
+    """Der Höhenbezug des Erdankers: ``EarthBasepointElevationCoordinateSystem`` (seit 8.5), sonst
+    ``EarthBasepointElevationZero``; der Name des Werts (``MeanSeaLevel`` …)."""
+    for name in ("EarthBasepointElevationCoordinateSystem", "EarthBasepointElevationZero"):
+        try:
+            value = getattr(anchor, name)
+        except Exception:  # noqa: BLE001 — vor 8.5 fehlt die erste Eigenschaft
+            continue
+        text = str(value).rsplit(".", 1)[-1]
+        if text and text != "Unset":
+            return text
+    return "Unset"
+
+
+def earth_anchor(doc) -> md.EarthAnchor | None:
+    """Der Erdanker des Dokuments (``RhinoDoc.EarthAnchorPoint``) — ``None``, wenn er nicht lesbar ist."""
+    try:
+        anchor = doc.EarthAnchorPoint
+        base, north, east = anchor.ModelBasePoint, anchor.ModelNorth, anchor.ModelEast
+        return md.EarthAnchor(
+            is_set=bool(anchor.EarthLocationIsSet()),
+            latitude=float(anchor.EarthBasepointLatitude),
+            longitude=float(anchor.EarthBasepointLongitude),
+            elevation=float(anchor.EarthBasepointElevation),
+            elevation_zero=_zero_name(anchor),
+            base_point=(float(base.X), float(base.Y), float(base.Z)),
+            north=(float(north.X), float(north.Y), float(north.Z)),
+            east=(float(east.X), float(east.Y), float(east.Z)),
+        )
+    except Exception:  # noqa: BLE001 — ein unlesbarer Anker heißt: keine Georeferenz, nie ein gescheiterter Export
+        return None
 
 
 def probe(doc) -> dict:

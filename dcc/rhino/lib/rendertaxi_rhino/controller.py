@@ -26,11 +26,13 @@ import os
 import queue
 import re
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass, field
 
 from . import host  # noqa: F401 — setzt den Host des Clients, bevor ihn jemand benutzt
-from .rendertaxi_client import auth, frame, glb, ways
+from . import rueckweg
+from .rendertaxi_client import auth, frame, glb, model_import, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log, log_exception, set_debug
 from .rendertaxi_client.store import (CredentialStore, SettingsStore, TransferStore, has_local_material, read_json,
@@ -65,6 +67,16 @@ PASS_ROLES = ("depth", "normal", "albedo", "object-id", "material-id")
 MAX_TRIANGLES = glb.MAX_TRIANGLES
 NO_MODEL_SERVER = "Dieser Server nimmt noch keine Modelle an; das Bild lässt sich ohne Modell übernehmen."
 VIEWS_FILE = "views.json"
+# Rückweg (RTX-RH-005): so viele Exporte zeigt der Abschnitt „Aus rendertaxi“, der jüngste zuerst.
+EXPORTS_SHOWN = 12
+# Der Name eines Exports in seiner Zeile wird gekürzt, nie Zeitpunkt und Zusammenfassung.
+EXPORT_NAME_SHOWN = 32
+# Ohne bekannte Größe: höchstens so viel, wie ein Modell-Asset überhaupt sein darf (2 GiB).
+EXPORT_DOWNLOAD_MAX = 2 * 1024 * 1024 * 1024
+
+
+class ImportProblem(RuntimeError):
+    """Ein Import aus rendertaxi, der nicht gelang — mit einem Satz für die Palette (``importer`` wirft ihn)."""
 
 
 @dataclass
@@ -110,6 +122,9 @@ class State:
         self.result: dict | None = None
         self.job: Job | None = None
         self.deferred_viewpoints: str | None = None
+        # Rückweg (RTX-RH-005): die Exporte je Projekt (``model_import.export_entries``) und der letzte Import.
+        self.exports: dict[str, list[dict]] = {}
+        self.last_import: dict | None = None
 
 
 class Job:
@@ -734,6 +749,13 @@ class Controller:
         if named:
             parts.append(f"Kameras in der Datei: {len(named)} benannte Ansichten." if len(named) != 1
                          else "Kamera in der Datei: 1 benannte Ansicht.")
+        try:
+            georeference = self.adapter.model_georeference()
+        except Exception as error:  # noqa: BLE001 — ein unlesbarer Erdanker ist nur ein fehlender Hinweis
+            log_exception("Erdanker nicht lesbar", error)
+            georeference = ""
+        if georeference:
+            parts.append(georeference[:1].upper() + georeference[1:] + ".")
         return " ".join(parts)
 
     # -- Übernahme ------------------------------------------------------------
@@ -927,6 +949,124 @@ class Controller:
             job.post(lambda: self._set_message("Angefangene Übernahme verworfen."))
 
         return self.start_job("discard", work)
+
+    # -- Rückweg: Exporte aus rendertaxi (RTX-RH-005) ----------------------
+
+    def load_exports(self) -> bool:
+        """„Exporte laden“: die Exporte des gewählten Projekts über die Asset-Liste lesen."""
+        project_id = self.form.project_id
+        if not self.state.connected or not project_id:
+            self._set_error("Erst verbinden und ein Projekt wählen.")
+            return False
+        server = self.state.server
+        token = CredentialStore(self._directory()).token(server)
+
+        def work(job: Job) -> None:
+            entries = model_import.export_entries(ApiClient(server, token).model_exports(project_id))
+
+            def apply():
+                self.state.exports[project_id] = entries
+                count = len(entries)
+                self._set_message("Keine Exporte in diesem Projekt." if not count else
+                                  f"{count} Export{'e' if count != 1 else ''} geladen.")
+
+            job.post(apply)
+
+        return self.start_job("exports", work)
+
+    def export_rows(self) -> list[dict] | None:
+        """Die Exporte des gewählten Projekts für die Palette — ``None``, solange sie nicht geladen sind.
+
+        Je Zeile ``assetId``, ``label`` (Name, Zeitpunkt, Modelle, Kameras, Bezug), ``hasFile`` und ``imported``
+        (steht schon im aktiven Dokument → „Ersetzen“).
+        """
+        entries = self.state.exports.get(self.form.project_id or "")
+        if entries is None:
+            return None
+        rows = []
+        for entry in entries[:EXPORTS_SHOWN]:
+            created = model_import.created_text(entry)
+            summary = model_import.entry_summary(entry)
+            name = entry["name"]
+            if len(name) > EXPORT_NAME_SHOWN:
+                name = name[:EXPORT_NAME_SHOWN - 1] + "…"
+            try:
+                imported = self.adapter.find_import(entry["assetId"]) is not None
+            except Exception:  # noqa: BLE001 — ohne Dokument steht nichts im Dokument
+                imported = False
+            rows.append({"assetId": entry["assetId"], "hasFile": entry["hasFile"], "imported": imported,
+                         "label": f"{name} — {created + ' · ' if created else ''}{summary}"})
+        return rows
+
+    def exports_note(self) -> str:
+        entries = self.state.exports.get(self.form.project_id or "")
+        if entries is None:
+            return "Exporte aus rendertaxi: Blickpunkt › Allgemein › Exportieren … in der Webanwendung."
+        if not entries:
+            return "Keine Exporte in diesem Projekt. In rendertaxi: Blickpunkt › Allgemein › Exportieren …"
+        if len(entries) > EXPORTS_SHOWN:
+            return f"Die {EXPORTS_SHOWN} jüngsten von {len(entries)} Exporten."
+        return ""
+
+    def import_export(self, asset_id: str) -> bool:
+        """„Importieren“ oder „Ersetzen“: herunterladen im Hintergrund, importieren im UI-Faden.
+
+        Steht der Export schon im Dokument, fragt Rhino vorher; „Nein“ lässt alles, wie es ist. Importiert wird in
+        das Dokument, das beim Klick aktiv war — ist es danach nicht mehr aktiv, bricht der Import mit einem Satz ab.
+        """
+        entry = next((e for e in self.state.exports.get(self.form.project_id or "", []) if e["assetId"] == asset_id),
+                     None)
+        if not self.state.connected or entry is None:
+            self._set_error("Dieser Export steht nicht in der Liste. Exporte neu laden.")
+            return False
+        if not entry["hasFile"]:
+            self._set_error("Dieser Export hat noch keine Datei.")
+            return False
+        if self.state.job is not None:
+            self._set_error("Es läuft schon ein Vorgang. Erst abwarten oder abbrechen.")
+            return False
+        existing = self.adapter.find_import(asset_id)
+        replace = existing is not None
+        if replace and not self.adapter.ask_yes_no(
+                f"„{existing}“ steht schon im Dokument. Ebenen, Objekte, benannte Ansichten und Materialien "
+                "dieses Imports durch den Export ersetzen?"):
+            self._set_message("Nicht ersetzt.")
+            return False
+        document = self.adapter.import_document()
+        server = self.state.server
+        token = CredentialStore(self._directory()).token(server)
+        limit = entry["byteSize"] if isinstance(entry.get("byteSize"), int) else EXPORT_DOWNLOAD_MAX
+
+        def work(job: Job) -> None:
+            folder = tempfile.mkdtemp(prefix="rdtxai-export-")
+            path = os.path.join(folder, "export.glb")
+            try:
+                ApiClient(server, token).download_asset(asset_id, path, max_bytes=limit, cancel=job.cancel)
+            except BaseException:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+
+            def apply():
+                try:
+                    if not self.adapter.same_document(document, self.adapter.import_document()):
+                        self._set_error("Das Dokument wurde gewechselt. Import nicht ausgeführt — erneut wählen.")
+                        return
+                    result = self.adapter.import_export(document, path, entry, replace)
+                except ImportProblem as error:
+                    self._set_error(str(error))
+                    return
+                except Exception as error:  # nie still: ins Protokoll, und eine lesbare Zeile in die Palette
+                    log_exception("Import gescheitert", error)
+                    self._set_error("Import gescheitert — Einzelheiten stehen im Protokoll.")
+                    return
+                finally:
+                    shutil.rmtree(folder, ignore_errors=True)
+                self.state.last_import = result
+                self._set_message(rueckweg.import_summary(result))
+
+            job.post(apply)
+
+        return self.start_job("import", work)
 
     def open_update(self) -> None:
         """Die Downloadseite im Browser — das Plugin lädt nichts selbst herunter (RTX-P-022)."""

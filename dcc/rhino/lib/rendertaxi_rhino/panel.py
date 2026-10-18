@@ -5,7 +5,8 @@ erzeugt es, je Dokumentfenster eines), oder — geht das nicht — ein schwebend
 Aufbau wie Rhinos eigene Paletten („Eigenschaften"): Abschnitte mit Überschrift, darin Zeilen mit Beschriftung
 links und Wert rechts, Bedienelemente in Rhinos Größe (macOS: 11 pt, Steuerelementgröße „Small", gemessen an
 „Eigenschaften" in Rhino 8.35). Bereiche: Verbindung (Einstellungen aufklappbar), Projekt, Blickpunkt, Bild,
-Modell, Übernehmen; im Fuß Version und Build-Kennung. Lange Sätze stehen im Tooltip, die Zeile ist kurz.
+Modell, Aus rendertaxi (Rückweg: Exporte laden und importieren, RTX-RH-005), Übernehmen; im Fuß Version und
+Build-Kennung. Lange Sätze stehen im Tooltip, die Zeile ist kurz.
 
 Die Palette zeichnet nur; jede Handlung geht an den ``Controller``. Listen wählen über Kennungen (``Key``),
 nie über Positionen. Jeder Klick läuft über ``_guarded``: eine Ausnahme wird ein Satz in der Palette, kein
@@ -339,6 +340,15 @@ class RdtxView:
         self.materials_row = _row("", self.model_without_materials)
         self.model_group = self._section("Modell", _row("", self.send_model), self.merge_row, self.materials_row,
                                          self.model_row)
+        # Aus rendertaxi (Rückweg, RTX-RH-005): Exporte des Projekts laden, einen wählen, importieren oder ersetzen.
+        self.load_exports = _button("Exporte laden", self._guarded(c.load_exports))
+        self.export_choice = _dropdown(self._on_export)
+        self.import_button = _button("Importieren", self._guarded(self._import_selected))
+        self.exports_note = _label("")
+        self.export_row = _row("Export", self.export_choice)
+        self.import_row = _row("", self.import_button)
+        self.exports_group = self._section("Aus rendertaxi", _row("", self.load_exports), self.export_row,
+                                           self.import_row, self.exports_note)
         # Übernehmen
         self.summary = _label("")
         self.capture = _button("Bild übernehmen", self._guarded(c.capture))
@@ -361,7 +371,7 @@ class RdtxView:
         self.about = _button("Über …", self._guarded(self._show_about))
 
         body = self._section(None, self.connection, self.project_group, self.viewpoint_group, self.image_group,
-                             self.model_group, self.transfer_group, _stack(self.footer, self.about, horizontal=True),
+                             self.model_group, self.exports_group, self.transfer_group, _stack(self.footer, self.about, horizontal=True),
                              spacing=SECTION_SPACING)
         body.Padding = drawing.Padding(PADDING)
         scroll = forms.Scrollable()
@@ -428,6 +438,14 @@ class RdtxView:
 
     def _on_model_merge(self, *_):
         self._changed(lambda: self.controller.set_model_merge(self.model_merge.SelectedKey))
+
+    def _on_export(self, *_):
+        self._changed(lambda: None)
+
+    def _import_selected(self) -> None:
+        asset_id = self.export_choice.SelectedKey
+        if asset_id:
+            self.controller.import_export(asset_id)
 
     def _on_kind(self, *_):
         self._changed(lambda: setattr(self.controller.form, "capture_kind", self.kind.SelectedKey))
@@ -556,7 +574,7 @@ class RdtxView:
             self._connected_shown = connected
 
         for group in (self.project_group, self.viewpoint_group, self.image_group, self.model_group,
-                      self.transfer_group):
+                      self.exports_group, self.transfer_group):
             group.Visible = connected
         if not connected:
             self._messages(state)
@@ -631,6 +649,9 @@ class RdtxView:
         self.model_hint.ToolTip = details
         self.model_hint.Visible = bool(self.model_hint.Text)
 
+        # Aus rendertaxi
+        self._refresh_exports(busy)
+
         # Übernehmen
         try:
             chosen = c.chosen()
@@ -652,6 +673,27 @@ class RdtxView:
         self._messages(state)
         self.open_result.Visible = bool(state.result and state.result.get("openUrl"))
 
+    def _refresh_exports(self, busy: bool) -> None:
+        """Die Exporte des Projekts in einer Liste; der Knopf heißt „Ersetzen“, wenn der gewählte schon im Dokument
+        steht, und ist aus, solange der Export keine Datei hat."""
+        c = self.controller
+        self.load_exports.Enabled = not busy and bool(c.form.project_id)
+        rows = c.export_rows() or []
+        selected = self.export_choice.SelectedKey
+        if selected not in [row["assetId"] for row in rows]:
+            selected = rows[0]["assetId"] if rows else ""
+        _fill(self.export_choice, [(row["assetId"], row["label"]) for row in rows], selected)
+        row = next((row for row in rows if row["assetId"] == selected), None)
+        self.export_row.Visible = self.export_choice.Visible = bool(rows)
+        self.import_row.Visible = self.import_button.Visible = row is not None
+        if row is not None:
+            self.export_choice.ToolTip = row["label"]
+            self.import_button.Text = ("Ersetzen" if row["imported"] else "Importieren") if row["hasFile"] \
+                else "Ohne Datei"
+            self.import_button.Enabled = not busy and row["hasFile"]
+        self.exports_note.Text = c.exports_note()
+        self.exports_note.Visible = bool(self.exports_note.Text)
+
     def _messages(self, state) -> None:
         if state.progress:
             text, percent = state.progress
@@ -662,7 +704,7 @@ class RdtxView:
             self.progress.Visible = False
             self.progress_text.Visible = state.job is not None
             self.progress_text.Text = "Bitte warten …" if state.job is not None else ""
-        self.cancel.Visible = state.job is not None and state.job.label in ("transfer", "connect")
+        self.cancel.Visible = state.job is not None and state.job.label in ("transfer", "connect", "import")
         self.message.Text = state.error or state.message or ""
         self.message.Visible = bool(self.message.Text)
         self.message.TextColor = drawing.Colors.Red if state.error else drawing.SystemColors.ControlText
