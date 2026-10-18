@@ -449,4 +449,36 @@ CutPlanes ReadCutPlanes ()
 	return planes;
 }
 
+bool ReadGeoLocation (rtx::ArchicadGeoLocation& location)
+{
+	API_GeoLocation geo {};
+	const GSErrCode error = ACAPI_GeoLocation_GetGeoLocation (&geo);
+	if (error != NoError) {
+		rtx::LogLine ("Georeferenz: ACAPI_GeoLocation_GetGeoLocation meldet " + std::to_string (error) + ".");
+		return false;
+	}
+	const auto utf8 = [] (const GS::UniString& text) { return std::string (text.ToCStr (0, MaxUSize, CC_UTF8).Get ()); };
+	const API_GeoReferenceData& data = geo.geoReferenceData;
+	location.name = utf8 (data.name);
+	location.description = utf8 (data.description);
+	location.geodeticDatum = utf8 (data.geodeticDatum);
+	location.verticalDatum = utf8 (data.verticalDatum);
+	location.mapProjection = utf8 (data.mapProjection);
+	location.mapZone = utf8 (data.mapZone);
+	location.eastings = data.eastings;
+	location.northings = data.northings;
+	location.orthogonalHeight = data.orthogonalHeight;
+	location.xAxisAbscissa = data.xAxisAbscissa;
+	location.xAxisOrdinate = data.xAxisOrdinate;
+	location.scale = data.scale;
+	location.surveyPoint[0] = geo.surveyPointPosition.x;
+	location.surveyPoint[1] = geo.surveyPointPosition.y;
+	location.surveyPoint[2] = geo.surveyPointPosition.z;
+	API_Tranmat transform {};
+	location.hasSurveyTransform = ACAPI_SurveyPoint_GetSurveyPointTransformation (&transform) == NoError;
+	if (location.hasSurveyTransform)
+		for (int i = 0; i < 12; ++i) location.surveyTransform[i] = transform.tmx[i];
+	return true;
+}
+
 } // namespace rtxaddon

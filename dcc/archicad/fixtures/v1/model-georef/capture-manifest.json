@@ -1,0 +1,148 @@
+{
+  "contract": "rendertaxi.plugin.capture-manifest",
+  "contractVersion": "1.6.0",
+  "captureId": "01a2c4e6-0f00-7000-8000-00000000a013",
+  "createdAt": "2026-10-18T12:00:00.000Z",
+  "source": {
+    "host": {
+      "key": "archicad",
+      "version": "28.1",
+      "build": "7006",
+      "capabilities": {
+        "viewportCapture": {
+          "state": "available"
+        },
+        "cameraExport": {
+          "state": "available"
+        },
+        "geometryExport": {
+          "state": "available"
+        },
+        "modelOnlyCapture": {
+          "state": "available"
+        }
+      }
+    },
+    "plugin": {
+      "identifier": "ai.rendertaxi.plugin.archicad",
+      "version": "1.4.0"
+    },
+    "machine": {
+      "os": "macos",
+      "architecture": "arm64"
+    },
+    "fileName": "Wohnhaus Süd.pln"
+  },
+  "project": {
+    "platformProjectId": null,
+    "sourceProjectKey": "archicad:project:test"
+  },
+  "view": {
+    "sourceViewKey": "archicad:view:3d",
+    "displayName": "RTX Perspektive"
+  },
+  "intent": {},
+  "camera": {
+    "space": "export",
+    "projection": "perspective",
+    "position": [
+      24.000000,
+      1.600000,
+      12.000000
+    ],
+    "direction": [
+      -0.707106781,
+      0.000000000,
+      -0.707106781
+    ],
+    "up": [
+      0.000000000,
+      1.000000000,
+      0.000000000
+    ],
+    "fieldOfView": {
+      "axis": "horizontal",
+      "angle": 1.047197551
+    },
+    "clip": {
+      "near": 0.100000,
+      "far": null
+    },
+    "shift": {
+      "x": 0.000000,
+      "y": 0.168402
+    },
+    "resolution": {
+      "width": 1600,
+      "height": 600
+    }
+  },
+  "geometry": {
+    "assetPath": "model/scene.glb",
+    "units": {
+      "sourceUnitScaleToMeter": 1.000000
+    },
+    "axes": {
+      "handedness": "right",
+      "upAxis": "z"
+    },
+    "origin": [
+      0.000000,
+      0.000000,
+      0.000000
+    ],
+    "georeference": {
+      "epsg": 25832,
+      "origin": {
+        "easting": 294395.597044,
+        "northing": 5628834.823612,
+        "height": 173.000000
+      },
+      "axisConvention": {
+        "handedness": "right",
+        "upAxis": "y"
+      },
+      "unit": "meter",
+      "transformChain": [
+        {
+          "order": 1,
+          "sourceFrame": "model",
+          "targetFrame": "project",
+          "kind": "rotation",
+          "parameters": {
+            "axis": "y",
+            "angleRadians": -0.296705973
+          },
+          "provenance": "plugin-reported"
+        }
+      ]
+    }
+  },
+  "contentHash": "25a47506c2d1c4a4b456062eae9b9ffcfc0949750780efaf1dd055882d021121",
+  "assets": [
+    {
+      "role": "viewport",
+      "path": "viewport.png",
+      "status": "present",
+      "mediaType": "image/png",
+      "byteSize": 1234,
+      "sha256": "0ed28aa21d0a18018cf62067568aaa60b4fb517044e4f7df23bfd23d2e79ca4e",
+      "image": {
+        "width": 1600,
+        "height": 600,
+        "colorSpace": "srgb",
+        "bitDepth": 8,
+        "sampleFormat": "uint",
+        "channels": "rgba"
+      }
+    },
+    {
+      "role": "model",
+      "path": "model/scene.glb",
+      "status": "present",
+      "mediaType": "model/gltf-binary",
+      "byteSize": 4308,
+      "sha256": "a184ad0458fedef969a2b5809f8beec5d8f98b24f9bc104983094a044e4dc29b"
+    }
+  ]
+}

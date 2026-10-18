@@ -8,6 +8,7 @@
 
 add_library (rtxcore STATIC
 	src/ArchicadCamera.cpp
+	src/ArchicadGeoreference.cpp
 	src/Canonical.cpp
 	src/CaptureManifest.cpp
 	src/CaptureTransfer.cpp

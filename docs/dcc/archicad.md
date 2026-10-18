@@ -9,7 +9,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 ## Installation
 
 Voraussetzung: Archicad 28. Die Zip `rendertaxi-archicad28-<Version>-<Release>.zip` (etwa
-`rendertaxi-archicad28-1.3.1-2026.10.09.zip`) von der
+`rendertaxi-archicad28-1.4.0-2026.10.18.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**) und
 entpacken. Sie enthält `macos/rendertaxi.bundle` und `win/rendertaxi.apx`.
@@ -138,6 +138,17 @@ Modell lässt das Bild des Blickpunkts stehen, eines nur mit Bild das Modell.
 - **Grenzen:** vor dem Senden prüft das Add-on Größe und Dreiecke gegen den
   Server. Ist das Modell zu groß, sagt die Palette, um wie viel — den
   3D-Ausschnitt verkleinern und erneut übernehmen.
+- **Georeferenz (ab 1.4.0):** trägt das Projekt in den Standorteinstellungen
+  (Bereich **Vermessungspunkt** mit den Georeferenz-Parametern) eine
+  Georeferenz, geht sie mit dem Modell mit: Bezugssystem, Lage des
+  Projektursprungs in Landeskoordinaten und die Drehung gegen Gitter-Nord. In
+  der Webanwendung kann das Modell dann am Projektursprung und neben einem
+  Umgebungsmodell liegen. Das Bezugssystem braucht einen EPSG-Code im Namen
+  oder in der Kartenprojektion der Georeferenz-Parameter, etwa `EPSG:25832`
+  (oder eine UTM-Zone mit Datum ETRS89). Fehlt er, sagt die Palette das, und
+  das Modell geht ohne Georeferenz. Ebenso bei einem Maßstab ungleich 1 in den
+  Georeferenz-Parametern: das Modell geht im Maßstab 1, die Lage wäre sonst
+  ungenau.
 
 ## Rahmengröße
 

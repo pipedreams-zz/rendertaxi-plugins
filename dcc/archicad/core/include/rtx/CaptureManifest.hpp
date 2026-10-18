@@ -17,7 +17,8 @@
 // Felder, die sie kennt — 1.1.0 `source.host.capabilities`, 1.2.0 `camera`,
 // `geometry` und die Rolle `model`, 1.3.0 das PNG-Profil, 1.4.0
 // `camera.shift`, 1.5.0 `source.fileName`, 1.6.0 das Modell allein mit
-// `camera.resolution` und `modelOnlyCapture`. Welche Fassung gilt, entscheidet
+// `camera.resolution` und `modelOnlyCapture`. `geometry.georeference` steht
+// seit 1.2.0 im Vertrag; das Add-on schreibt ihn ab seiner Fassung 1.4.0 (RTX-A-013). Welche Fassung gilt, entscheidet
 // der Handshake (`CaptureWays.hpp`). Bis 1.1.x sind `camera` und `geometry`
 // immer `null`.
 #pragma once
@@ -128,6 +129,23 @@ struct CaptureCamera {
 	bool HasResolution () const { return resolutionWidth > 0 && resolutionHeight > 0; }
 };
 
+/**
+ * Der Block `geometry.georeference` (seit 1.2.0, Plugin-API §7.9) in der Form,
+ * die das Add-on schreibt (RTX-A-013, Q-04): Rahmen `model` ist der Exportraum
+ * (rechtshändig, +Y oben, Meter), `origin` die Lage seines Nullpunkts im
+ * Bezugssystem `epsg`, die Kette **eine** Drehung um +Y vom Rahmen `model` in
+ * den Gitterrahmen am Modellursprung — `rotationRadians` = −α, α der
+ * Datei-Nordwinkel (`georeferenz.md` 2.2). Ein Plugin kennt keinen
+ * Projektbezugsrahmen; eine Verschiebung steht deshalb nie in der Kette.
+ */
+struct CaptureGeoreference {
+	int epsg = 0;
+	double easting = 0.0;
+	double northing = 0.0;
+	double height = 0.0;
+	double rotationRadians = 0.0;
+};
+
 /** Der Block `geometry` (Abschnitt 11.2): wie der Exportraum im Weltraum des Hosts liegt. */
 struct CaptureGeometry {
 	std::string assetPath;
@@ -137,6 +155,9 @@ struct CaptureGeometry {
 	std::string upAxis = "z";
 	/** Ursprung des Exportraums in Metern, in den Achsen des Hosts; der Modellweg verschiebt nicht. */
 	double origin[3] = {0, 0, 0};
+	/** Ohne Georeferenz im Projekt fehlt der Block (`ReadArchicadGeoreference`). */
+	bool hasGeoreference = false;
+	CaptureGeoreference georeference;
 };
 
 struct CaptureIntent {

@@ -2320,6 +2320,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 				model.width = scene.width;
 				model.height = scene.height;
 			}
+			model.hasGeoLocation = ReadGeoLocation (model.geoLocation);
 		}
 
 		// --- Bild ------------------------------------------------------------
@@ -2557,6 +2558,8 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 				manifest.assets.push_back (out.Value ().asset);
 				manifest.hasGeometry = true;
 				manifest.geometry.assetPath = out.Value ().asset.path;
+				manifest.geometry.hasGeoreference = out.Value ().hasGeoreference;
+				manifest.geometry.georeference = out.Value ().georeference;
 				manifest.hasCamera = out.Value ().hasCamera;
 				manifest.camera = out.Value ().camera;
 				for (const std::string& line : out.Value ().notes) {

@@ -244,7 +244,10 @@ public:
  *   `merge`       `"objects"`: „Objekte behalten“; Vorgabe „nach Material“
  *
  * Antwort: Pfad, Bytes, Dreiecke, Kameras, Elemente, Körper, `rebuilding`
- * (0 Körper ohne Fehler) und der Zustand der Schnittebenen.
+ * (0 Körper ohne Fehler) und der Zustand der Schnittebenen. Seit 1.4.0
+ * (RTX-A-013) dazu `geoLocation` (die Rohwerte der Geo Location und der
+ * Abbildung des Vermessungspunkts), `georeference` (der Block, den das
+ * Manifest trüge; fehlt ohne) und `georeferenceNote` — für die Messung Q-04.
  */
 class ExportModelCommand : public API_AddOnCommand {
 public:
@@ -315,6 +318,7 @@ public:
 			input.extra = std::move (read.cameras);
 			viewWarning = read.warning;
 		}
+		input.hasGeoLocation = ReadGeoLocation (input.geoLocation);
 		const rtx::Result<rtx::ModelOutput> out = rtx::AssembleModel (input, directory, rtx::kCaptureHighestMinor, 0);
 		if (!out) {
 			Fail (response, out.GetError ().message);
@@ -331,6 +335,45 @@ public:
 		response.Add ("textures", static_cast<Int32> (out.Value ().textures));
 		response.Add ("texturesDownscaled", static_cast<Int32> (out.Value ().texturesDownscaled));
 		response.Add ("viewWarning", GS::UniString (viewWarning.c_str (), CC_UTF8));
+		if (input.hasGeoLocation) {
+			const rtx::ArchicadGeoLocation& raw = input.geoLocation;
+			const auto text = [] (const std::string& value) { return GS::UniString (value.c_str (), CC_UTF8); };
+			GS::ObjectState geo;
+			geo.Add ("name", text (raw.name));
+			geo.Add ("description", text (raw.description));
+			geo.Add ("geodeticDatum", text (raw.geodeticDatum));
+			geo.Add ("verticalDatum", text (raw.verticalDatum));
+			geo.Add ("mapProjection", text (raw.mapProjection));
+			geo.Add ("mapZone", text (raw.mapZone));
+			geo.Add ("eastings", raw.eastings);
+			geo.Add ("northings", raw.northings);
+			geo.Add ("orthogonalHeight", raw.orthogonalHeight);
+			geo.Add ("xAxisAbscissa", raw.xAxisAbscissa);
+			geo.Add ("xAxisOrdinate", raw.xAxisOrdinate);
+			geo.Add ("scale", raw.scale);
+			geo.Add ("surveyPointX", raw.surveyPoint[0]);
+			geo.Add ("surveyPointY", raw.surveyPoint[1]);
+			geo.Add ("surveyPointZ", raw.surveyPoint[2]);
+			geo.Add ("hasSurveyTransform", raw.hasSurveyTransform);
+			GS::ObjectState tmx;   // zeilenweise wie `API_Tranmat.tmx`
+			for (int i = 0; i < 12; ++i) tmx.Add (("t" + std::to_string (i)).c_str (), raw.surveyTransform[i]);
+			geo.Add ("surveyTransform", tmx);
+			response.Add ("geoLocation", geo);
+		}
+		if (out.Value ().hasGeoreference) {
+			const rtx::CaptureGeoreference& g = out.Value ().georeference;
+			GS::ObjectState block;
+			block.Add ("epsg", static_cast<Int32> (g.epsg));
+			block.Add ("easting", g.easting);
+			block.Add ("northing", g.northing);
+			block.Add ("height", g.height);
+			block.Add ("rotationRadians", g.rotationRadians);
+			response.Add ("georeference", block);
+		}
+		std::string georeferenceNote;
+		for (const std::string& line : out.Value ().notes)
+			if (line.rfind ("Georeferenz", 0) == 0) georeferenceNote = line;
+		response.Add ("georeferenceNote", GS::UniString (georeferenceNote.c_str (), CC_UTF8));
 		return response;
 	}
 };

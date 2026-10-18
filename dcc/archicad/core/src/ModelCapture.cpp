@@ -93,6 +93,13 @@ Result<ModelOutput> AssembleModel (const ModelInput& input, const std::string& d
 							 (scene.texturesDropped == 1 ? " Textur ließ" : " Texturen ließen") +
 							 " sich nicht lesen; dort geht nur die Farbe mit.");
 
+	if (input.hasGeoLocation) {
+		const GeoreferenceReading georeference = ReadArchicadGeoreference (input.geoLocation);
+		out.hasGeoreference = georeference.present;
+		out.georeference = georeference.block;
+		if (!georeference.note.empty ()) out.notes.push_back (georeference.note);
+	}
+
 	const std::string folder = directory + "/model";
 	const std::string local = directory + "/" + kModelPath;
 	const std::string bytes (file.Value ().bytes.begin (), file.Value ().bytes.end ());

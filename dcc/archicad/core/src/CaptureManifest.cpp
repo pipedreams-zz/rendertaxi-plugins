@@ -547,12 +547,56 @@ Status CaptureManifest::Validate () const
 			return Invalid ("geometry.axes.upAxis ist unbekannt.", "/geometry/axes/upAxis");
 		if (!AllFinite (geometry.origin))
 			return Invalid ("geometry.origin enthält keine endliche Zahl.", "/geometry/origin");
+		if (geometry.hasGeoreference) {
+			const CaptureGeoreference& g = geometry.georeference;
+			if (g.epsg < 1024 || g.epsg > 32767)
+				return Invalid ("geometry.georeference.epsg liegt außerhalb von [1024, 32767].",
+								"/geometry/georeference/epsg");
+			const double where[3] = {g.easting, g.northing, g.height};
+			if (!AllFinite (where) || !std::isfinite (g.rotationRadians))
+				return Invalid ("geometry.georeference enthält keine endliche Zahl.", "/geometry/georeference");
+		}
 	}
 
 	const Result<std::string> hash = ContentHash ();
 	if (!hash) return Status::Fail (hash.GetError ());
 	return Status::Ok ();
 }
+
+namespace {
+
+/** Der Block in der Feldreihenfolge des Schemas: `epsg`, `origin`, `axisConvention`, `unit`, `transformChain`. */
+JsonPtr GeoreferenceJson (const CaptureGeoreference& g)
+{
+	JsonPtr node = Json::MakeObject ();
+	node->Set ("epsg", Json::MakeInt (g.epsg));
+	JsonPtr origin = Json::MakeObject ();
+	origin->Set ("easting", Decimal (g.easting, kLength));
+	origin->Set ("northing", Decimal (g.northing, kLength));
+	origin->Set ("height", Decimal (g.height, kLength));
+	node->Set ("origin", origin);
+	JsonPtr axes = Json::MakeObject ();
+	axes->Set ("handedness", Json::MakeString ("right"));
+	axes->Set ("upAxis", Json::MakeString ("y"));
+	node->Set ("axisConvention", axes);
+	node->Set ("unit", Json::MakeString ("meter"));
+	JsonPtr step = Json::MakeObject ();
+	step->Set ("order", Json::MakeInt (1));
+	step->Set ("sourceFrame", Json::MakeString ("model"));
+	step->Set ("targetFrame", Json::MakeString ("project"));
+	step->Set ("kind", Json::MakeString ("rotation"));
+	JsonPtr parameters = Json::MakeObject ();
+	parameters->Set ("axis", Json::MakeString ("y"));
+	parameters->Set ("angleRadians", Decimal (g.rotationRadians, kAngle));
+	step->Set ("parameters", parameters);
+	step->Set ("provenance", Json::MakeString ("plugin-reported"));
+	JsonPtr chain = Json::MakeArray ();
+	chain->Append (step);
+	node->Set ("transformChain", chain);
+	return node;
+}
+
+} // namespace
 
 Result<JsonPtr> CaptureManifest::ToJson () const
 {
@@ -670,6 +714,7 @@ Result<JsonPtr> CaptureManifest::ToJson () const
 		axes->Set ("upAxis", Json::MakeString (geometry.upAxis));
 		node->Set ("axes", axes);
 		node->Set ("origin", Vector (geometry.origin, kLength));
+		if (geometry.hasGeoreference) node->Set ("georeference", GeoreferenceJson (geometry.georeference));
 		root->Set ("geometry", node);
 	} else {
 		root->Set ("geometry", Json::MakeNull ());
@@ -805,6 +850,25 @@ Result<CaptureManifest> CaptureManifest::Parse (const std::string& text, const s
 		m.geometry.upAxis = Text (geometry->Get ("axes"), "upAxis");
 		if (!Vector3 (geometry->Get ("origin"), m.geometry.origin))
 			return fail ("Die Geometrie des gespeicherten Manifests ist unvollständig.");
+		const JsonPtr georeference = geometry->Get ("georeference");
+		if (georeference != nullptr && georeference->GetKind () == Json::Kind::Object) {
+			// Nur die Form, die `GeoreferenceJson` schreibt: eine Drehung um +Y, Exportraum, Meter.
+			const JsonPtr chain = georeference->Get ("transformChain");
+			const JsonPtr step = chain != nullptr && chain->GetKind () == Json::Kind::Array && chain->Items ().size () == 1
+									 ? chain->Items ()[0]
+									 : nullptr;
+			const JsonPtr parameters = step ? step->Get ("parameters") : nullptr;
+			if (step == nullptr || Text (step, "kind") != "rotation" || Text (parameters, "axis") != "y")
+				return fail ("Die Georeferenz des gespeicherten Manifests hat eine fremde Form.");
+			m.geometry.hasGeoreference = true;
+			CaptureGeoreference& g = m.geometry.georeference;
+			g.epsg = static_cast<int> (Number (georeference, "epsg"));
+			const JsonPtr origin = georeference->Get ("origin");
+			g.easting = Number (origin, "easting");
+			g.northing = Number (origin, "northing");
+			g.height = Number (origin, "height");
+			g.rotationRadians = Number (parameters, "angleRadians");
+		}
 	}
 
 	const JsonPtr assets = root->Get ("assets");

@@ -68,6 +68,15 @@ struct SavedViewCameras {
 };
 SavedViewCameras ReadSavedViewCameras (const std::vector<rtx::SavedView>& views);
 
+/**
+ * Die Geo Location des Projekts (RTX-A-013, Q-04): `ACAPI_GeoLocation_GetGeoLocation`
+ * (seit Archicad 25) und die Drehung des Vermessungspunkts aus
+ * `ACAPI_SurveyPoint_GetSurveyPointTransformation`. Nur Rohwerte; den Block
+ * rechnet der Kern (`rtx::ReadArchicadGeoreference`). `false`, wenn Archicad
+ * die Geo Location nicht hergibt.
+ */
+bool ReadGeoLocation (rtx::ArchicadGeoLocation& location);
+
 /** Die 3D-Schnittebenen des Fensters (QA-10): eingeschaltet und wie viele. */
 struct CutPlanes {
 	bool readable = false;

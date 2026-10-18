@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "rtx/ArchicadCamera.hpp"
+#include "rtx/ArchicadGeoreference.hpp"
 #include "rtx/CaptureManifest.hpp"
 #include "rtx/Glb.hpp"
 #include "rtx/SavedViews.hpp"
@@ -49,6 +50,9 @@ struct ModelInput {
 	bool materials = true;
 	/** „Nach Material“ (Vorgabe); `false` ist „Objekte behalten“ mit den Element-GUIDs. */
 	bool mergeByMaterial = true;
+	/** Die Geo Location des Projekts (RTX-A-013); ohne Lesung fehlt `geometry.georeference`. */
+	bool hasGeoLocation = false;
+	ArchicadGeoLocation geoLocation;
 };
 
 struct ModelOutput {
@@ -64,7 +68,10 @@ struct ModelOutput {
 	int materials = 0;
 	int textures = 0;
 	int texturesDownscaled = 0;
-	/** Sätze für die Palette: Rückfall je Material, genäherte oder ausgelassene Kameras. */
+	/** `geometry.georeference` aus der Geo Location (`ReadArchicadGeoreference`). */
+	bool hasGeoreference = false;
+	CaptureGeoreference georeference;
+	/** Sätze für die Palette: Rückfall je Material, genäherte oder ausgelassene Kameras, nicht übertragene Georeferenz. */
 	std::vector<std::string> notes;
 };
 
@@ -74,7 +81,7 @@ SceneBox SceneBoxOf (const GlbScene& scene);
 /**
  * Stellt das Modell zusammen und schreibt es nach `<directory>/model/scene.glb`:
  * Kameras abbilden (die aktuelle zuerst), Grenzen prüfen (`FinishGlb`),
- * Datei schreiben, Hash bilden. `minor` ist die MINOR des Manifests, das
+ * Datei schreiben, Hash bilden, die Georeferenz lesen. `minor` ist die MINOR des Manifests, das
  * gesendet wird; ab 1.6 trägt der Kamerablock die Bildgröße, unter 1.4 entfällt
  * er bei einem Shift. Fehler: leeres Modell (`model_empty`), Grenzen,
  * unbrauchbare Kamera der Ansicht, Datei nicht schreibbar.

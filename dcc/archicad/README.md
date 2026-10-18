@@ -14,6 +14,22 @@ Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
 ## Änderungen
 
+### 1.4.0 (Georeferenz aus dem Projekt, RTX-A-013, Q-04)
+
+- **`geometry.georeference`** im Capture-Manifest, wenn das Modell mitgeht und das Projekt eine Georeferenz trägt:
+  aus `ACAPI_GeoLocation_GetGeoLocation` (Vermessungspunkt, Georeferenz-Parameter) und
+  `ACAPI_SurveyPoint_GetSurveyPointTransformation` (Drehung des Vermessungspunkts) rechnet
+  `rtx::ReadArchicadGeoreference` EPSG, die Lage des Projektursprungs in der Karte und den Datei-Nordwinkel α;
+  die Kette ist eine Drehung um +Y um −α (Plugin-API §7.9, `georeferenz.md` 2.2). Der Exportraum bleibt
+  unverschoben. Ohne Georeferenz fehlt der Block; ist sie gesetzt, aber unbrauchbar (kein EPSG-Code, keine
+  Kartenlage, Maßstab ≠ 1 — auch eine Gitterverzerrung wie 0,99994, weil die Datei 1 : 1 geht —, gekippter Vermessungspunkt), sagt die Palette warum.
+- **EPSG** aus dem Text: `EPSG:25832` in Name, Kartenprojektion, Zone oder Beschreibung; sonst eine UTM-Zone mit
+  Datum ETRS89 (`258zz`) oder WGS 84 mit Halbkugel (`326zz`/`327zz`).
+- `rendertaxi.ExportModel` nennt dazu die Rohwerte (`geoLocation`), den Block (`georeference`) und den Satz
+  (`georeferenceNote`); Messwerkzeug `tools/measure_georef.py` (QA-12 … QA-14).
+- Keine neue Manifest-Fassung: `geometry.georeference` steht seit 1.2.0 im Vertrag.
+- Fixture für den Lesepfad des Servers (RTX-M2-108): `fixtures/v1/model-georef/capture-manifest.json`.
+
 ### 1.3.1 (Update-Hinweis, RTX-P-022)
 
 - **Neue Version verfügbar:** Meldet der Server `update_available`, steht eine ruhige Zeile „Neue Version … verfügbar“
@@ -115,20 +131,21 @@ C++17-Standardbibliothek, der libcurl des Systems und Security.framework ab —
 keine neu aufgenommene Abhängigkeit im Sinne der Reiferichtlinie aus
 [`AGENTS.md`](../../../AGENTS.md).
 
-| Baustein          | Was er tut                                                                                                 |
-| ----------------- | ---------------------------------------------------------------------------------------------------------- |
-| `Canonical`       | Längenpräfigierte Kodierung und `contentHash` nach `architecture.md`, 8.2 und 8.6                          |
-| `CaptureManifest` | Erzeugt und **prüft** das Manifest, bevor etwas das Gerät verlässt — Fassungen 1.0.0 bis 1.6.0             |
-| `CaptureWays`     | Bild, Modell oder beides; Fassung aus dem Handshake, Rückfall gegen ältere Server (RTX-A-012)              |
-| `Glb`             | GLB-Schreiber des Modellwegs: Knoten je Element mit GUID, Grenzen vor dem Senden, Rückfall je Material     |
-| `ArchicadCamera`  | Kamera einer Ansicht als glTF-Kamera und Kamerablock: Perspektive, Zweifluchtpunkt als Shift, Parallel     |
-| `PluginApiClient` | Die elf Endpunkte der Plugin API v1 und die beiden Lesewege                                                |
-| `CaptureTransfer` | Der Zustandsautomat der Übernahme: anlegen, übertragen, Manifest, finalisieren, wiederaufnehmen            |
-| `TransferStore`   | Was einen Neustart von Archicad überlebt — Idempotenzschlüssel, angefangene Vorgänge, der letzte Vorschlag |
-| `TokenStore`      | macOS Keychain, Windows Credential Manager. Es gibt bewusst **keine** Dateifassung                         |
-| `Log`             | Redigiert Bearer-Kopfzeilen, Geheimnisfelder und Abfrageteile von URLs, bevor eine Zeile entsteht          |
-| `ViewCapture`     | Der Bildzugriff auf Archicad; Belege in [`../docs/capabilities.md`](../docs/capabilities.md)               |
-| `CapabilityProbe` | Die Messung hinter dem Menüpunkt „Bildzugriff messen"                                                      |
+| Baustein               | Was er tut                                                                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `Canonical`            | Längenpräfigierte Kodierung und `contentHash` nach `architecture.md`, 8.2 und 8.6                          |
+| `CaptureManifest`      | Erzeugt und **prüft** das Manifest, bevor etwas das Gerät verlässt — Fassungen 1.0.0 bis 1.6.0             |
+| `CaptureWays`          | Bild, Modell oder beides; Fassung aus dem Handshake, Rückfall gegen ältere Server (RTX-A-012)              |
+| `Glb`                  | GLB-Schreiber des Modellwegs: Knoten je Element mit GUID, Grenzen vor dem Senden, Rückfall je Material     |
+| `ArchicadCamera`       | Kamera einer Ansicht als glTF-Kamera und Kamerablock: Perspektive, Zweifluchtpunkt als Shift, Parallel     |
+| `ArchicadGeoreference` | Georeferenz aus der Geo Location: EPSG aus dem Text, Lage des Projektursprungs, Datei-Nordwinkel (Q-04)    |
+| `PluginApiClient`      | Die elf Endpunkte der Plugin API v1 und die beiden Lesewege                                                |
+| `CaptureTransfer`      | Der Zustandsautomat der Übernahme: anlegen, übertragen, Manifest, finalisieren, wiederaufnehmen            |
+| `TransferStore`        | Was einen Neustart von Archicad überlebt — Idempotenzschlüssel, angefangene Vorgänge, der letzte Vorschlag |
+| `TokenStore`           | macOS Keychain, Windows Credential Manager. Es gibt bewusst **keine** Dateifassung                         |
+| `Log`                  | Redigiert Bearer-Kopfzeilen, Geheimnisfelder und Abfrageteile von URLs, bevor eine Zeile entsteht          |
+| `ViewCapture`          | Der Bildzugriff auf Archicad; Belege in [`../docs/capabilities.md`](../docs/capabilities.md)               |
+| `CapabilityProbe`      | Die Messung hinter dem Menüpunkt „Bildzugriff messen"                                                      |
 
 ## Die Palette
 

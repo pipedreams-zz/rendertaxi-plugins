@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "rtx/ArchicadCamera.hpp"
+#include "rtx/ArchicadGeoreference.hpp"
 #include "rtx/CaptureManifest.hpp"
 #include "rtx/CaptureWays.hpp"
 #include "rtx/Glb.hpp"
@@ -31,8 +32,12 @@
 #include "rtx/Sha256.hpp"
 #include "rtx/TextureImage.hpp"
 #include "rtx/TransferStore.hpp"
+#include "Version.hpp"
 
 using namespace rtx;
+
+/** Das bekannte Projekt aus `GeoreferenceTest.cpp`. */
+ArchicadGeoLocation KnownGeoProject ();
 
 namespace {
 
@@ -1432,4 +1437,132 @@ RTX_TEST (NeuaufbauWirdAbgewartetUndGibtNachDerFristAuf)
 	wait.Stop ();
 	RTX_CHECK (!wait.Due (t0 + std::chrono::seconds (20)));
 	RTX_CHECK (!wait.Expired (t0 + std::chrono::seconds (20)));
+}
+
+// --- Georeferenz im Manifest (RTX-A-013, Q-04) --------------------------------------------
+
+namespace {
+
+/** `ModelManifest` mit dem Block aus dem bekannten Projekt. */
+CaptureManifest GeoreferencedManifest ()
+{
+	CaptureManifest manifest = ModelManifest ("1.6.0", true);
+	const GeoreferenceReading reading = ReadArchicadGeoreference (KnownGeoProject ());
+	RTX_CHECK (reading.present);
+	manifest.geometry.hasGeoreference = true;
+	manifest.geometry.georeference = reading.block;
+	return manifest;
+}
+
+} // namespace
+
+RTX_TEST (ManifestTraegtDieGeoreferenzDesProjekts)
+{
+	const CaptureManifest manifest = GeoreferencedManifest ();
+	const Result<std::string> text = manifest.Serialize ();
+	RTX_CHECK (text.IsOk ());
+	if (!text) return;
+	const JsonPtr root = Json::Parse (text.Value ());
+	const JsonPtr block = root->Get ("geometry")->Get ("georeference");
+	RTX_CHECK (block != nullptr);
+	if (block == nullptr) return;
+	RTX_CHECK_EQ (block->Get ("epsg")->IntOr (0), std::int64_t (25832));
+	RTX_CHECK_EQ (block->Get ("origin")->Get ("easting")->NumberOr (0), 294395.597044);
+	RTX_CHECK_EQ (block->Get ("origin")->Get ("northing")->NumberOr (0), 5628834.823612);
+	RTX_CHECK_EQ (block->Get ("origin")->Get ("height")->NumberOr (0), 173.0);
+	RTX_CHECK_EQ (block->Get ("axisConvention")->Get ("upAxis")->StringOr (""), std::string ("y"));
+	RTX_CHECK_EQ (block->Get ("unit")->StringOr (""), std::string ("meter"));
+	const auto& chain = block->Get ("transformChain")->Items ();
+	RTX_CHECK_EQ (chain.size (), std::size_t (1));
+	RTX_CHECK_EQ (chain[0]->Get ("kind")->StringOr (""), std::string ("rotation"));
+	RTX_CHECK_EQ (chain[0]->Get ("parameters")->Get ("axis")->StringOr (""), std::string ("y"));
+	RTX_CHECK_EQ (chain[0]->Get ("parameters")->Get ("angleRadians")->NumberOr (0), -0.296705973);
+	RTX_CHECK_EQ (chain[0]->Get ("provenance")->StringOr (""), std::string ("plugin-reported"));
+	// Der Block steht hinter origin, in der Reihenfolge des Schemas.
+	RTX_CHECK (text.Value ().find ("\"origin\": [") < text.Value ().find ("\"georeference\""));
+
+	// Fortsetzen: dieselben Bytes.
+	const Result<CaptureManifest> parsed = CaptureManifest::Parse (text.Value (), "/arbeit/vorgang");
+	RTX_CHECK (parsed.IsOk ());
+	if (parsed) RTX_CHECK_EQ (parsed.Value ().Serialize ().Value (), text.Value ());
+
+	// Ohne Georeferenz im Projekt kein Feld.
+	const std::string plain = ModelManifest ("1.6.0", true).Serialize ().Value ();
+	RTX_CHECK (plain.find ("georeference") == std::string::npos);
+
+	// Ein Code außerhalb des Schemas wird nie geschrieben.
+	CaptureManifest wrong = manifest;
+	wrong.geometry.georeference.epsg = 4;
+	RTX_CHECK (!wrong.Validate ());
+
+	const std::string sample = SamplePath ("-image-model-georef");
+	if (!sample.empty ()) RTX_CHECK (WriteTextFile (sample, text.Value ()));
+}
+
+RTX_TEST (ModellZusammenstellenLiestDieGeoreferenz)
+{
+	const std::string directory = TransferStore::DefaultWorkDirectory () + "/test-georef-" + RandomHex (6);
+	EnsureDirectory (directory);
+	ModelInput input;
+	input.scene = TestScene ();
+	input.current = {"RTX Perspektive", "current", Perspective (5, -15, 1.6, 5, 2, 1.5, 60, 0, false)};
+	input.hasGeoLocation = true;
+	input.geoLocation = KnownGeoProject ();
+	const Result<ModelOutput> out = AssembleModel (input, directory, 6, 209715200);
+	RTX_CHECK (out.IsOk ());
+	if (out) {
+		RTX_CHECK (out.Value ().hasGeoreference);
+		RTX_CHECK_EQ (out.Value ().georeference.epsg, 25832);
+		RTX_CHECK (out.Value ().notes.empty ());
+	}
+	// Teildaten: kein Block, ein Satz für die Palette.
+	input.geoLocation.name = "Lokales Netz";
+	input.geoLocation.mapProjection.clear ();
+	input.geoLocation.mapZone.clear ();
+	input.geoLocation.geodeticDatum.clear ();
+	const Result<ModelOutput> partial = AssembleModel (input, directory, 6, 209715200);
+	RTX_CHECK (partial.IsOk ());
+	if (partial) {
+		RTX_CHECK (!partial.Value ().hasGeoreference);
+		RTX_CHECK_EQ (partial.Value ().notes.size (), std::size_t (1));
+	}
+	// Maßstab ≠ 1 (Graphisofts Beispiel): kein Block, der Satz nennt den Maßstab.
+	input.geoLocation = KnownGeoProject ();
+	input.geoLocation.scale = 0.999941534119322;
+	const Result<ModelOutput> scaled = AssembleModel (input, directory, 6, 209715200);
+	RTX_CHECK (scaled.IsOk ());
+	if (scaled) {
+		RTX_CHECK (!scaled.Value ().hasGeoreference);
+		RTX_CHECK_EQ (scaled.Value ().notes.size (), std::size_t (1));
+		RTX_CHECK (scaled.Value ().notes.front ().find ("Maßstab") != std::string::npos);
+	}
+	// Ohne Lesung (Archicad gab nichts her): kein Block, kein Satz.
+	input.hasGeoLocation = false;
+	const Result<ModelOutput> unread = AssembleModel (input, directory, 6, 209715200);
+	RTX_CHECK (unread.IsOk () && !unread.Value ().hasGeoreference && unread.Value ().notes.empty ());
+	RemoveDirectory (directory);
+}
+
+/**
+ * Die Fixture für den Lesepfad des Servers (RTX-M2-108): `fixtures/v1/model-georef/capture-manifest.json`
+ * ist **byte-gleich** das, was dieser Kern für das bekannte Projekt schreibt — mit fester Kennung, Zeit und der
+ * Fassung aus `Version.hpp`. `RTX_WRITE_FIXTURES=1` schreibt sie neu.
+ */
+RTX_TEST (FixtureGeoreferenzIstDasErzeugnisDesKerns)
+{
+	CaptureManifest manifest = GeoreferencedManifest ();
+	manifest.captureId = "01a2c4e6-0f00-7000-8000-00000000a013";
+	manifest.createdAt = "2026-10-18T12:00:00.000Z";
+	manifest.source.pluginVersion = RTX_ADDON_VERSION;
+	const Result<std::string> text = manifest.Serialize ();
+	RTX_CHECK (text.IsOk ());
+	if (!text) return;
+	const std::string path = std::string (RTX_ADDON_FIXTURES) + "/model-georef/capture-manifest.json";
+	if (std::getenv ("RTX_WRITE_FIXTURES") != nullptr) {
+		EnsureDirectory (std::string (RTX_ADDON_FIXTURES) + "/model-georef");
+		RTX_CHECK (WriteTextFile (path, text.Value ()));
+	}
+	std::string stored;
+	RTX_CHECK (ReadTextFile (path, stored));
+	RTX_CHECK (stored == text.Value ());
 }
