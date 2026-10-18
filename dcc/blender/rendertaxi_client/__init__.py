@@ -15,6 +15,7 @@ Module:
 * ``store``     Anmeldung (0600), angefangene Übernahmen, Einstellungen
 * ``log``       Protokoll ohne Token, Pfade und Namen
 * ``glb``       exportierte GLB lesen: Dreiecke wie der Server, Hülle, Maßstab auf Meter setzen
+* ``model_import`` Rückweg: Exporte der Plattform listen, Kamera zurückrechnen, Bezug lesen (RTX-B-005)
 * ``schema/``   Kopie der drei Schemas aus ``integrations/_shared/contracts/v1``
 
 Nur Python-Standardbibliothek, Python ≥ 3.9 (Rhino 8), kein Hostmodul (``bpy``,

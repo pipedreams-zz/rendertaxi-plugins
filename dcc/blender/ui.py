@@ -3,8 +3,8 @@
 **Bildweg und Modellweg sind zwei Wege** (RTX-P-014, Nutzervorgabe vom 05.10.2026): sie laufen einzeln
 oder zusammen, und das Panel zeigt es so. Fünf aufklappbare Bereiche — **Verbindung**, **Projekt** (mit
 „Neues Projekt …", RTX-P-013), **Blickpunkt** (Ziel, Rahmen, Kameraname als Vorschlag), **Bild**
-(Ansicht oder Rendering, Datenpässe) und **Modell** (GLB und Kamera) —, Bild und Modell je mit einem
-Schalter im Kopf. Darunter steht fest der Bereich **Übernehmen**: was gesendet wird (Bild, Modell oder
+(Ansicht oder Rendering, Datenpässe) und **Modell** (GLB und Kamera; darin **Exporte aus rendertaxi**, der
+Rückweg RTX-B-005) —, Bild und Modell je mit einem Schalter im Kopf. Darunter steht fest der Bereich **Übernehmen**: was gesendet wird (Bild, Modell oder
 beides), der Knopf, Fortschritt, Ergebnis und „Im Browser öffnen". „Nur Modell" rendert nicht.
 Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 
@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import queue
 import shutil
+import tempfile
 import threading
 import zlib
 
@@ -37,8 +38,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import capture, export, settings
-from .rendertaxi_client import auth, frame, ways
+from . import capture, export, importer, settings
+from .rendertaxi_client import auth, frame, model_import, ways
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.transport import (PROJECT_NAME_MAX_LENGTH, UPDATE_DISMISS, UPDATE_LINK, ApiClient, ApiError,
                                           Cancelled, NewProject, Transfer, Unauthorized, UpdateNotice,
@@ -71,6 +72,9 @@ class State:
         self.job: Job | None = None
         self.deferred_viewpoints: str | None = None
         self.model_estimate: export.Estimate | None = None
+        # Rückweg (RTX-B-005): die Exporte je Projekt (``model_import.export_entries``), der letzte Import.
+        self.exports: dict[str, list[dict]] = {}
+        self.last_import: dict | None = None
 
 
 STATE = State()
@@ -1043,6 +1047,136 @@ class RTX_OT_discard(Operator):
         return {"FINISHED"}
 
 
+# --------------------------------------------------------------------------
+# Operatoren: Rückweg — Exporte aus rendertaxi (RTX-B-005)
+# --------------------------------------------------------------------------
+
+# Ohne bekannte Größe: höchstens so viel, wie ein Modell-Asset überhaupt sein darf (2 GiB).
+EXPORT_DOWNLOAD_MAX = 2 * 1024 * 1024 * 1024
+# Wie viele Exporte das Panel zeigt — der jüngste zuerst.
+EXPORTS_SHOWN = 8
+
+
+def _load_exports_work(server: str, token: str, project_id: str):
+    def work(job: Job) -> None:
+        entries = model_import.export_entries(ApiClient(server, token).model_exports(project_id))
+
+        def apply():
+            STATE.exports[project_id] = entries
+            _set_message("Keine Exporte in diesem Projekt." if not entries else
+                         f"{len(entries)} Export{'e' if len(entries) != 1 else ''} geladen.")
+
+        job.post(apply)
+
+    return work
+
+
+class RTX_OT_load_exports(Operator):
+    bl_idname = "rendertaxi.load_exports"
+    bl_label = "Exporte laden"
+    bl_description = "Die Exporte des gewählten Projekts aus rendertaxi laden (Modell › Exportieren… in der Webanwendung)"
+
+    def execute(self, context):
+        project_id = _props(context).project
+        if not STATE.connected or not project_id or project_id == "NONE":
+            _set_error("Erst verbinden und ein Projekt wählen.")
+            return {"CANCELLED"}
+        token = CredentialStore(settings.user_dir()).token(STATE.server)
+        return {"FINISHED"} if start_job("exports", _load_exports_work(STATE.server, token, project_id)) \
+            else {"CANCELLED"}
+
+
+def _main_window_override():
+    """Den Import im Takt des Hauptfadens mit einem Fenster ausführen, wenn eins da ist."""
+    import contextlib
+
+    try:
+        windows = bpy.context.window_manager.windows
+    except AttributeError:
+        windows = []
+    if bpy.context.window is None and len(windows):
+        return bpy.context.temp_override(window=windows[0])
+    return contextlib.nullcontext()
+
+
+def _import_work(server: str, token: str, entry: dict, replace: bool):
+    """Herunterladen im Hintergrund, importieren im Hauptfaden — eine halbe Datei bleibt nie liegen."""
+
+    def work(job: Job) -> None:
+        folder = tempfile.mkdtemp(prefix="rdtxai-export-")
+        path = os.path.join(folder, "export.glb")
+        limit = entry.get("byteSize") if isinstance(entry.get("byteSize"), int) else EXPORT_DOWNLOAD_MAX
+        try:
+            ApiClient(server, token).download_asset(entry["assetId"], path, max_bytes=limit, cancel=job.cancel)
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+
+        def apply():
+            try:
+                with _main_window_override():
+                    result = importer.import_export(bpy.context, path, entry, replace=replace)
+            except importer.ImportProblem as error:
+                _set_error(str(error))
+                return
+            except Exception as error:  # nie still: in die Konsole, und eine lesbare Zeile ins Panel
+                log_exception("Import gescheitert", error)
+                _set_error("Import gescheitert — Details in der Konsole (Debug-Schalter).")
+                return
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+            STATE.last_import = result
+            models = "1 Modell" if result["instances"] == 1 else f"{result['instances']} Modelle"
+            cameras = "1 Kamera" if result["cameras"] == 1 else f"{result['cameras']} Kameras"
+            where = "georeferenziert" if result["origin"] is not None else "am Ursprung"
+            _set_message(f"Importiert in „{result['collection']}“: {models}, {cameras}, {where}.")
+
+        job.post(apply)
+
+    return work
+
+
+class RTX_OT_import_export(Operator):
+    bl_idname = "rendertaxi.import_export"
+    bl_label = "Importieren"
+    bl_description = ("Den Export in eine eigene Sammlung importieren — je Modell ein Objekt, Kameras mit Objektiv "
+                      "und Shift; steht er schon in der Szene, wird er nach Rückfrage ersetzt")
+
+    asset_id: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+    replace: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+    def _entry(self, context) -> dict | None:
+        project_id = _props(context).project
+        return next((e for e in STATE.exports.get(project_id, []) if e["assetId"] == self.asset_id), None)
+
+    def invoke(self, context, event):
+        existing = importer.find_collection(self.asset_id)
+        if existing is not None:
+            self.replace = True
+            return context.window_manager.invoke_confirm(
+                self, event, title="Export ersetzen?",
+                message=f"„{existing.name}“ steht schon in der Szene. Sammlung und ihre Objekte ersetzen?",
+                confirm_text="Ersetzen", icon="WARNING")
+        return self.execute(context)
+
+    def execute(self, context):
+        entry = self._entry(context)
+        if not STATE.connected or entry is None:
+            _set_error("Dieser Export steht nicht in der Liste. Exporte neu laden.")
+            return {"CANCELLED"}
+        if not entry["hasFile"]:
+            _set_error("Dieser Export hat noch keine Datei.")
+            return {"CANCELLED"}
+        existing = importer.find_collection(entry["assetId"])
+        if existing is not None and not self.replace:
+            _set_error(f"Dieser Export steht schon in der Szene („{existing.name}“). Zum Ersetzen erneut "
+                       "„Importieren“ wählen und bestätigen.")
+            return {"CANCELLED"}
+        token = CredentialStore(settings.user_dir()).token(STATE.server)
+        return {"FINISHED"} if start_job("import", _import_work(STATE.server, token, entry, self.replace)) \
+            else {"CANCELLED"}
+
+
 class RTX_OT_count_model(Operator):
     bl_idname = "rendertaxi.count_model"
     bl_label = "Modell neu zählen"
@@ -1269,6 +1403,7 @@ class RTX_PT_panel(Panel):
             column = body.column()
             column.active = props.send_model
             self._model(column, context, props)
+            self._exports(body, props, busy)
 
         # -- Übernehmen (fest) ----------------------------------------------
         self._transfer(layout.box(), context, props, busy)
@@ -1330,6 +1465,43 @@ class RTX_PT_panel(Panel):
                                     mf.camera_lens_allowed(mf.model_contract_version(STATE.handshake)))
         if why:
             _wrapped(layout, f"Ohne Kamera: {why}", "ERROR" if chosen.model_only else "INFO")
+
+    def _exports(self, layout, props, busy):
+        """Rückweg (RTX-B-005): die Exporte des Projekts, je einer mit „Importieren" oder „Ersetzen"."""
+        header, body = layout.panel("RTX_section_exports", default_closed=False)
+        header.label(text="Exporte aus rendertaxi", icon="IMPORT")
+        if body is None:
+            return
+        if not props.project or props.project == "NONE":
+            _wrapped(body, "Erst ein Projekt wählen.", "INFO")
+            return
+        row = body.row()
+        row.enabled = not busy
+        row.operator(RTX_OT_load_exports.bl_idname, icon="FILE_REFRESH")
+        entries = STATE.exports.get(props.project)
+        if entries is None:
+            return
+        if not entries:
+            _wrapped(body, "Keine Exporte in diesem Projekt. In rendertaxi: Blickpunkt › Allgemein › Exportieren…",
+                     "INFO")
+            return
+        for entry in entries[:EXPORTS_SHOWN]:
+            box = body.box()
+            _wrapped(box, entry["name"], "FILE_3D")
+            created = model_import.created_text(entry)
+            _wrapped(box, f"{created} · {model_import.entry_summary(entry)}" if created
+                     else model_import.entry_summary(entry))
+            if not entry["hasFile"]:
+                _wrapped(box, "Noch ohne Datei.", "INFO")
+                continue
+            existing = importer.find_collection(entry["assetId"])
+            row = box.row()
+            row.enabled = not busy
+            button = row.operator(RTX_OT_import_export.bl_idname, text="Ersetzen" if existing else "Importieren",
+                                  icon="IMPORT")
+            button.asset_id = entry["assetId"]
+        if len(entries) > EXPORTS_SHOWN:
+            _wrapped(body, f"Die {EXPORTS_SHOWN} jüngsten von {len(entries)} Exporten.", "INFO")
 
     def _transfer(self, layout, context, props, busy):
         """Der feste Bereich „Übernehmen": was gesendet wird, der Knopf, Fortschritt und Ergebnis."""
@@ -1399,6 +1571,8 @@ CLASSES = (
     RTX_OT_resume,
     RTX_OT_discard,
     RTX_OT_count_model,
+    RTX_OT_load_exports,
+    RTX_OT_import_export,
     RTX_OT_open_result,
     RTX_OT_open_update,
     RTX_OT_dismiss_update,

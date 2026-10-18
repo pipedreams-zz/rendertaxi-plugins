@@ -170,6 +170,11 @@ class ApiClient:
             parsed = {}
         if status in expected:
             return parsed if isinstance(parsed, dict) else {}
+        raise self._failure(method, path, status, parsed, request_id)
+
+    @staticmethod
+    def _failure(method: str, path: str, status: int, parsed, request_id: str) -> "ApiError":
+        """Die Fehlerantwort des Servers als lesbarer Fehler — und eine Zeile ins Protokoll."""
         error = parsed.get("error") if isinstance(parsed, dict) else None
         error = error if isinstance(error, dict) else {}
         details = error.get("details") if isinstance(error.get("details"), dict) else {}
@@ -179,7 +184,7 @@ class ApiClient:
         cls = Unauthorized if status == 401 else ApiError
         log(" ".join(part for part in (f"{method} {path.split('?')[0]} → {status}", code, reason,
                                          f"(X-Request-Id {request_id or '—'})") if part))
-        raise cls(message, status=status, code=code, reason=reason, request_id=request_id, details=details)
+        return cls(message, status=status, code=code, reason=reason, request_id=request_id, details=details)
 
     # -- Handshake und Anmeldung -----------------------------------------
 
@@ -303,6 +308,85 @@ class ApiClient:
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             raise ApiError("Die Übertragung einer Datei brach ab. Die Übernahme lässt sich fortsetzen.",
                            code="network", reason=type(error).__name__) from None
+
+
+    # -- Rückweg: Exporte laden (RTX-B-005) ---------------------------------
+
+    def model_exports(self, project_id: str) -> list[dict]:
+        """Die Modell-Assets eines Projekts, aus denen ``model_import.export_entries`` die Exporte liest.
+
+        Über die Asset-Liste der Plattform (``GET /projects/{id}/assets?kind=model``), die jüngsten
+        zuerst; höchstens 2000 Modelle — mehr passt in keine Liste eines Panels.
+        """
+        items: list[dict] = []
+        cursor = None
+        base = f"/projects/{urllib.parse.quote(project_id)}/assets?kind=model&limit=100"
+        for _ in range(20):
+            query = base + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+            page = self.request("GET", query)
+            items.extend(i for i in page.get("items", []) if isinstance(i, dict))
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+        return items
+
+    def download_asset(self, asset_id: str, target: str, *, max_bytes: int, cancel=None) -> int:
+        """Die Datei eines Assets nach ``target`` laden (``GET /assets/{id}/content``) — die Zahl der Bytes.
+
+        Gestreamt in Stücken; ``cancel`` (``threading.Event``) bricht zwischen zwei Stücken ab
+        (``Cancelled``), mehr als ``max_bytes`` bricht mit einem Satz ab. Eine halbe Datei bleibt nie
+        liegen. ``404`` heißt: nicht (mehr) da, nicht fertig oder ohne Datei — der Satz sagt es so.
+        """
+        path = f"/assets/{urllib.parse.quote(asset_id)}/content"
+        headers = {"Accept": "*/*"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = urllib.request.Request(f"{self.server_url}/api/v1{path}", method="GET", headers=headers)
+        written = 0
+        try:
+            with self._open(request, UPLOAD_TIMEOUT_SECONDS) as response, open(target, "wb") as handle:
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise Cancelled()
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise ApiError(f"Die Datei ist größer als {max_bytes // 1048576} MB und wird nicht geladen.",
+                                       code="too_large")
+                    handle.write(chunk)
+        except urllib.error.HTTPError as error:
+            with error:
+                status = error.code
+                raw = error.read() or b""
+                request_id = error.headers.get("x-request-id", "") if error.headers else ""
+            _remove(target)
+            try:
+                parsed = json.loads(raw.decode("utf-8")) if raw else {}
+            except (ValueError, UnicodeDecodeError):
+                parsed = {}
+            failure = self._failure("GET", path, status, parsed, request_id)
+            if status == 404:
+                raise ApiError("Der Export hat keine Datei (gelöscht, noch nicht fertig oder kein Zugriff mehr). "
+                               "Liste aktualisieren.", status=404, code=failure.code,
+                               request_id=request_id) from None
+            raise failure from None
+        except (urllib.error.URLError, OSError, TimeoutError) as error:
+            _remove(target)
+            raise ApiError("Der Server ist nicht erreichbar. Netzwerk und Serveradresse prüfen.",
+                           code="network", reason=type(error).__name__) from None
+        except BaseException:
+            _remove(target)
+            raise
+        return written
+
+
+def _remove(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------------

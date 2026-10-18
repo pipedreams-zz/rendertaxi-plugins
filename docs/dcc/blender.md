@@ -11,7 +11,7 @@ Ergebnisbearbeitung bleiben in der Webanwendung.
 Voraussetzung: Blender 4.5 LTS, 5.1 oder 5.2 LTS (macOS, Windows, Linux) — ab
 Extension 0.5.0; ältere Fassungen der Extension brauchen 5.2. Die Zip
 `rendertaxi-blender4.5-<Version>-<Release>.zip` (etwa
-`rendertaxi-blender4.5-0.8.1-2026.10.09.zip`; die Zahl nach „blender" ist die
+`rendertaxi-blender4.5-0.9.0-2026.10.18.zip`; die Zahl nach „blender" ist die
 Mindestversion) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
@@ -151,6 +151,32 @@ Der Server muss den Modellweg kennen; tut er es nicht, sagt das Panel es, und
 übernommen wird nur ohne Modell. Ein Modell **allein** nimmt der Server ab
 Capture-Manifest 1.6 an; ein älterer Server bekommt stattdessen Bild und
 Modell, und das Panel sagt es vorher.
+
+## Exporte aus rendertaxi laden (ab 0.9.0)
+
+Was in rendertaxi exportiert wurde (**Blickpunkt › Allgemein › Exportieren…** oder Rechtsklick im
+Strukturbaum), lässt sich zurück in Blender holen — Modelle mit ihrer Lage und die Kameras des
+Blickpunkts.
+
+1. Unter **Projekt** das Projekt wählen.
+2. Im Bereich **Modell** unter **Exporte aus rendertaxi** auf **Exporte laden** klicken. Die Liste
+   zeigt je Export Name, Zeitpunkt, wie viele Modelle und Kameras er trägt und seinen Bezug.
+3. **Importieren** legt eine eigene Sammlung „rendertaxi <Export> <Datum>" an. Darin hängt alles an
+   einem Wurzelobjekt gleichen Namens: je Modell ein eigenes Objekt (nichts wird verschmolzen) und
+   die Kameras mit Brennweite, Sensor und **Shift**, wie sie in rendertaxi gespeichert sind.
+
+- **Lage:** Ein Export mit Bezug „Nullpunkt des Rahmens" liegt am Ursprung. Ein georeferenzierter
+  Export behält seine kleinen Koordinaten; das Wurzelobjekt trägt den Versatz (Ost, Nord, Höhe) und
+  die Drehung um den Nordwinkel, und der Bezug steht als Text in seinen Eigenschaften
+  (**Object Properties › Custom Properties › rendertaxi_origin**). Blender speichert die Lage eines
+  Objekts mit etwa sieben Stellen: bei Landeskoordinaten ist sie auf rund einen halben Meter genau —
+  der genaue Wert ist der Text.
+- **Bildformat:** Die Kameras gelten für das Seitenverhältnis des Rahmens (Eigenschaft
+  `rendertaxi_frame_aspect` am Kameraobjekt). Die Auflösung der Szene ändert der Import nicht.
+- **Noch einmal importieren:** Steht derselbe Export schon in der Szene, heißt der Knopf
+  **Ersetzen** und fragt vorher; die Sammlung wird ersetzt, nicht verdoppelt.
+- Was nicht geht, sagt das Panel unten: keine Verbindung, ein Export ohne Datei, eine Datei, die
+  Blender nicht importieren konnte.
 
 ## Rahmengröße
 
