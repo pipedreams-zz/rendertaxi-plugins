@@ -1,0 +1,17 @@
+# Golden Fixtures werden byte-gleich mit dem verglichen, was der Archicad-Kern
+# schreibt (FixtureGeoreferenzIstDasErzeugnisDesKerns in ModelWayTest.cpp), und
+# der Kern schreibt LF. Der Windows-Runner checkt mit core.autocrlf=true aus und
+# legte die Fixture sonst als CRLF auf die Platte; der Vergleich scheiterte dann
+# nur am Zeilenende. Im Quell-Repository steht dieselbe Regel in der
+# .gitattributes der Wurzel (#664); hier lauten die Pfade die des Spiegels.
+#
+# Nur Textdateien werden normalisiert. Die Normalisierung darf Binaerdateien nie
+# beruehren: ein `text eol=lf` auf PNG oder GLB veraendert sie beim `git add`
+# bytegenau (PNG-Kopf enthaelt CR LF). Darum stehen die Endungen einzeln da, und
+# Binaerdateien sind ausdruecklich `binary`.
+dcc/archicad/fixtures/**/*.json text eol=lf
+_shared/fixtures/**/*.json text eol=lf
+dcc/archicad/fixtures/**/*.png binary
+dcc/archicad/fixtures/**/*.glb binary
+_shared/fixtures/**/*.png binary
+_shared/fixtures/**/*.glb binary
