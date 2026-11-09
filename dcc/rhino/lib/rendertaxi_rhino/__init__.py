@@ -149,6 +149,10 @@ def _session():
     except Exception:  # noqa: BLE001 — ohne das Ereignis bricht Rhino eine Übertragung beim Beenden selbst ab
         pass
     log(f"Palette bereit ({host.PLUGIN_VERSION}, {host.build_text()}, Rhino {host.host_version()})")
+    untested = host.untested_note()
+    if untested:  # neuer als geprüft: läuft, sagt es (RTX-P-023)
+        log(untested)
+        Rhino.RhinoApp.WriteLine(f"{host.MARK}: {untested}")
     session.controller.restore_session()
     return session
 

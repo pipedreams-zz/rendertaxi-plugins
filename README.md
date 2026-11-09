@@ -14,7 +14,7 @@ Webanwendung verlinkt dieselbe Seite unter **Verbundene Geräte › Plugins heru
 | --------- | -------------- | ------------------------------------------------- | --------- |
 | Archicad  | `dcc/archicad` | Archicad 28 (macOS universell, Win x64)           | verfügbar |
 | Blender   | `dcc/blender`  | Blender 4.5 LTS, 5.1, 5.2 LTS (macOS, Win, Linux) | Vorschau  |
-| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026 (macOS, Win)                       | Vorschau  |
+| Cinema 4D | `dcc/cinema4d` | Cinema 4D 2026, 2027 (macOS, Win)                 | Vorschau  |
 | Rhino     | `dcc/rhino`    | Rhino 8 (macOS, Win)                              | Vorschau  |
 
 Jedes Plugin zählt seine Version eigenständig. Releases tragen ein Datum

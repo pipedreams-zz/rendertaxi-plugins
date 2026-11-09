@@ -1,4 +1,4 @@
-# rendertaxi.ai für Cinema 4D 2026
+# rendertaxi.ai für Cinema 4D 2026 und 2027
 
 Das Plugin übergibt die **aktuelle Ansicht** oder das **gerenderte Bild** an
 rendertaxi.ai — auf Wunsch zusammen mit dem **Modell** und der Kamera —, ordnet es einem Projekt und einem Blickpunkt zu — neu oder als
@@ -7,10 +7,12 @@ Generierung und Ergebnisbearbeitung bleiben in der Webanwendung.
 
 ## Installation
 
-Voraussetzung: Cinema 4D **2026** (macOS oder Windows); ältere Fassungen
-werden nicht unterstützt — das Plugin lädt dort, zeigt aber nur einen Hinweis.
-Die Zip `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (etwa
-`rendertaxi-cinema4d2026-0.8.0-2026.10.18.zip`) von der
+Voraussetzung: Cinema 4D **2026** oder **2027** (macOS oder Windows) — an
+diesen Fassungen ist das Plugin geprüft. Eine neuere Fassung läuft; der
+Fenstertitel sagt dann „ungeprüft“. Ältere Fassungen werden nicht unterstützt —
+das Plugin lädt dort, zeigt aber nur einen Hinweis. Dieselbe Zip gilt für beide
+Fassungen: `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (die Zahl im Namen
+ist die Mindestversion; etwa `rendertaxi-cinema4d2026-0.8.1-2026.11.09.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 Das Plugin ist Python — kein Installationsprogramm, kein Build.

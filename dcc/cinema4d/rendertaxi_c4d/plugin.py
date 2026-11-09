@@ -7,7 +7,9 @@ und kommt mit dem Layout zurück (``RestoreLayout``).
 
 Älter als Cinema 4D ``host.HOST_MAJOR``: das Plugin lädt trotzdem, meldet im
 Protokoll, dass die Fassung nicht passt, und der Befehl zeigt dieselbe Meldung
-(``c4d.gui.MessageDialog``) statt des Fensters — kein Fehler beim Laden.
+(``c4d.gui.MessageDialog``) statt des Fensters — kein Fehler beim Laden. Neuer
+als die geprüften Fassungen (``host.TESTED_VERSIONS``): das Plugin läuft,
+Protokoll und Fenstertitel sagen „ungeprüft“ (RTX-P-023).
 
 Symbol (RTX-P-019, #332): das rdtx.ai-Zeichen aus ``res/``, von
 ``integrations/_shared/icons/render.py`` erzeugt — Papier auf dunkler, Tinte auf
@@ -98,6 +100,9 @@ def register() -> bool:
         log(host.unsupported_text())
         return bool(c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=icon(),
                                                        help=HELP, dat=UnsupportedCommand()))
+    untested = host.untested_note()
+    if untested:
+        log(untested)
     COMMAND = RendertaxiCommand()
     ok = c4d.plugins.RegisterCommandPlugin(id=host.PLUGIN_ID, str=TITLE, info=0, icon=icon(), help=HELP, dat=COMMAND)
     if not ok:

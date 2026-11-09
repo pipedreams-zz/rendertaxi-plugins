@@ -125,6 +125,18 @@ RTX_TEST (DerselbeSchluesselMitAnderemNamenIstEinKonflikt)
 	RTX_CHECK_EQ (client.platform.ProjectsNamed ("Haus B"), 0);
 }
 
+RTX_TEST (EinVergebenerNameNenntDenSatzDesFeldfehlers)
+{
+	// RTX-P-023: die Hauptmeldung ist „Die Anfrage ist ungültig.“, der Satz steht im Feldfehler.
+	SignedIn client;
+	RTX_CHECK (client.api->CreateProject ("Haus A", NewUuidV7 (), nullptr).IsOk ());
+	const Result<ProjectSummary> taken = client.api->CreateProject ("Haus A", NewUuidV7 (), nullptr);
+	RTX_CHECK (!taken.IsOk ());
+	RTX_CHECK_EQ (taken.GetError ().message,
+				  std::string ("In dieser Organisation gibt es bereits ein Projekt mit dem Namen \"Haus A\"."));
+	RTX_CHECK_EQ (client.platform.ProjectsNamed ("Haus A"), 1);
+}
+
 RTX_TEST (EineRolleOhneAnlagerechtBekommtEinenSatzStattEinesStatuscodes)
 {
 	SignedIn client;

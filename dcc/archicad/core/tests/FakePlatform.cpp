@@ -39,7 +39,8 @@ MockResponse Json200 (int status, const std::string& body)
 /** Das einheitliche Fehlerformat von `/api/v1` (§3). */
 MockResponse ApiError (int status, const std::string& code, const std::string& message,
 					   const std::string& reason = {}, const std::string& fieldPath = {},
-					   const std::string& fieldCode = {}, long long intervalDetail = 0)
+					   const std::string& fieldCode = {}, long long intervalDetail = 0,
+					   const std::string& fieldMessage = {})
 {
 	JsonPtr error = Json::MakeObject ();
 	error->Set ("code", Json::MakeString (code));
@@ -55,7 +56,7 @@ MockResponse ApiError (int status, const std::string& code, const std::string& m
 		JsonPtr item = Json::MakeObject ();
 		item->Set ("path", Json::MakeString (fieldPath));
 		item->Set ("code", Json::MakeString (fieldCode));
-		item->Set ("message", Json::MakeString (message));
+		item->Set ("message", Json::MakeString (fieldMessage.empty () ? message : fieldMessage));
 		JsonPtr list = Json::MakeArray ();
 		list->Append (item);
 		error->Set ("fieldErrors", list);
@@ -969,6 +970,15 @@ MockResponse FakePlatform::Dispatch (const MockRequest& request)
 								 "Derselbe Schlüssel mit anderem Inhalt.");
 			project = Project {known->second.second, name};
 		} else {
+			// Wie die Plattform (RTX-P-023): ein vergebener Name ist ein Feldfehler, die Hauptmeldung
+			// bleibt allgemein, der Satz steht nur im Feldfehler.
+			for (const Project& existing : projects) {
+				if (existing.name == name)
+					return ApiError (400, "validation_failed", "Die Anfrage ist ungültig.", {}, "name",
+									 "already_taken", 0,
+									 "In dieser Organisation gibt es bereits ein Projekt mit dem Namen \"" +
+										 name + "\".");
+			}
 			project = Project {rtx::NewUuidV7 (), name};
 			projectByKey[key] = {name, project.id};
 			projects.insert (projects.begin (), project);

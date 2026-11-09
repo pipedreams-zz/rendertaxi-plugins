@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>rendertaxi</string>
 	<key>CFBundleGetInfoString</key>
-	<string>rdtx.ai für Archicad 28, 1.4.0</string>
+	<string>rdtx.ai für Archicad 28, 1.4.1</string>
 	<key>CFBundleIconFile</key>
 	<string>ArchiCADPlugin.icns</string>
 	<key>CFBundleIdentifier</key>
@@ -33,19 +33,19 @@
 	<key>DTCompiler</key>
 	<string>com.apple.compilers.llvm.clang.1_0</string>
 	<key>DTPlatformBuild</key>
-	<string>25F70</string>
+	<string>26B118</string>
 	<key>DTPlatformName</key>
 	<string>macosx</string>
 	<key>DTPlatformVersion</key>
-	<string>26.5</string>
+	<string>27.2</string>
 	<key>DTSDKBuild</key>
-	<string>25F70</string>
+	<string>26B118</string>
 	<key>DTSDKName</key>
-	<string>macosx26.5</string>
+	<string>macosx27.2</string>
 	<key>DTXcode</key>
-	<string>2660</string>
+	<string>2720</string>
 	<key>DTXcodeBuild</key>
-	<string>17F113</string>
+	<string>27B52</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSRequiresCarbon</key>

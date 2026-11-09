@@ -48,13 +48,16 @@ class ApiError(Exception):
     """Ein Fehler, den der Nutzer lesen kann — mit Code für das Protokoll."""
 
     def __init__(self, message: str, *, status: int = 0, code: str = "", reason: str = "",
-                 request_id: str = "", details: dict | None = None):
+                 request_id: str = "", details: dict | None = None,
+                 field_errors: list[dict] | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.reason = reason
         self.request_id = request_id
         self.details = details or {}
+        # ``error.fieldErrors`` der Antwort: je Eintrag ``path``, ``code``, ``message`` (RTX-P-023).
+        self.field_errors = field_errors or []
 
 
 class Unauthorized(ApiError):
@@ -63,6 +66,27 @@ class Unauthorized(ApiError):
 
 class Cancelled(Exception):
     pass
+
+
+def _field_errors(raw) -> list[dict]:
+    """``error.fieldErrors`` als Liste — fremde Eingabe: nur Einträge mit Text, nur drei Felder."""
+    if not isinstance(raw, list):
+        return []
+    found = []
+    for entry in raw[:20]:
+        if isinstance(entry, dict):
+            found.append({key: str(entry.get(key) or "") for key in ("path", "code", "message")})
+    return found
+
+
+def _field_message(field_errors: list[dict]) -> str:
+    """Die Sätze der Feldfehler, jeder einmal, in der Reihenfolge der Antwort."""
+    seen: list[str] = []
+    for entry in field_errors:
+        text = entry["message"].strip()
+        if text and text not in seen:
+            seen.append(text)
+    return " ".join(seen[:3])
 
 
 # --------------------------------------------------------------------------
@@ -180,11 +204,17 @@ class ApiClient:
         details = error.get("details") if isinstance(error.get("details"), dict) else {}
         code = str(error.get("code") or "")
         reason = str(details.get("reason") or "")
-        message = str(error.get("message") or f"Der Server antwortete {status}.")
+        field_errors = _field_errors(error.get("fieldErrors"))
+        # Der konkrete Satz steht im Feldfehler, die Hauptmeldung ist dann nur „Die Anfrage ist
+        # ungültig.“ (RTX-P-023): der Nutzer liest den Feldsatz, ohne ihn die Hauptmeldung.
+        concrete = _field_message(field_errors)
+        message = concrete or str(error.get("message") or f"Der Server antwortete {status}.")
+        fields = ",".join(f"{e['path']}:{e['code']}" for e in field_errors if e["path"] or e["code"])
         cls = Unauthorized if status == 401 else ApiError
-        log(" ".join(part for part in (f"{method} {path.split('?')[0]} → {status}", code, reason,
+        log(" ".join(part for part in (f"{method} {path.split('?')[0]} → {status}", code, reason, fields,
                                          f"(X-Request-Id {request_id or '—'})") if part))
-        return cls(message, status=status, code=code, reason=reason, request_id=request_id, details=details)
+        return cls(message, status=status, code=code, reason=reason, request_id=request_id, details=details,
+                   field_errors=field_errors)
 
     # -- Handshake und Anmeldung -----------------------------------------
 

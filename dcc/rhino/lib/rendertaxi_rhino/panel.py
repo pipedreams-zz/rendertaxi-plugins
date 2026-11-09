@@ -367,7 +367,9 @@ class RdtxView:
                                             self.resume_row, self.progress, self.progress_text, self.cancel,
                                             self.message, self.open_result)
         # Fuß
-        self.footer = _label(f"{host.MARK} {host.PLUGIN_VERSION} · {host.build_text()}", wrap=False)
+        untested = host.untested_note()  # RTX-P-023: eine neuere Fassung läuft „ungeprüft“
+        self.footer = _label(f"{host.MARK} {host.PLUGIN_VERSION} · {host.build_text()}"
+                             + (f" · {untested}" if untested else ""), wrap=False)
         self.about = _button("Über …", self._guarded(self._show_about))
 
         body = self._section(None, self.connection, self.project_group, self.viewpoint_group, self.image_group,

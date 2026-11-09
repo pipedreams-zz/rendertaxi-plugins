@@ -8,11 +8,16 @@ Hier — und nur hier — stehen die Kennungen des Plugins:
   finden und bei der nächsten Übernahme eine neue bekommen.
 * ``PLUGIN_VERSION`` — die eine Quelle der Pluginversion;
   ``scripts/pack.sh`` im öffentlichen Spiegel liest sie hier.
-* ``HOST_MAJOR`` — die Cinema-4D-Fassung, für die das Plugin gebaut und
-  gegen deren Dokumentation (Python SDK 2026.0.0, Python 3.11.4) es belegt ist.
-  Zugleich die Mindestversion: eine Kompatibilität mit 2025 belegt die
-  2026-Dokumentation nicht. Eine ältere Fassung lädt das Plugin trotzdem —
-  sie bekommt statt des Fensters eine klare Meldung (``supported``).
+* ``TESTED_VERSIONS`` — die Cinema-4D-Fassungen, an denen das Plugin geprüft
+  ist (RTX-P-023): 2026 gegen die Dokumentation (Python SDK 2026.0.0,
+  Python 3.11.4) und am Host, 2027 am Host des Nutzers. Die eine Liste für
+  README, Anleitung und die Seite „Plugins“ (``tests/test_plugin.py`` hält sie
+  zusammen). Eine neuere, nicht genannte Fassung läuft mit dem Hinweis
+  „ungeprüft“ (``untested_note``); eine ältere bekommt statt des Fensters eine
+  klare Meldung (``supported``) — eine Kompatibilität mit 2025 ist nicht belegt.
+* ``HOST_MAJOR`` — die älteste geprüfte Fassung, also die Mindestversion und
+  der Name der Zip (``rendertaxi-cinema4d2026-…``); ``scripts/pack.sh`` liest
+  sie hier. Immer ``min(TESTED_VERSIONS)``.
 
 Kein ``c4d``-Import auf Modulebene außer für ``host_version``: der Client
 wird beim Laden konfiguriert, bevor irgendetwas anderes geschieht.
@@ -23,10 +28,12 @@ from __future__ import annotations
 import os
 
 from . import rendertaxi_client as client
+from .rendertaxi_client import hostversion
 
 # Registrierte Plugin-ID (vom Nutzer am 01.10.2026 genannt; die Entwicklungs-ID 1000001 entfällt).
 PLUGIN_ID = 1070762
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.8.1"
+TESTED_VERSIONS = (2026, 2027)
 HOST_MAJOR = 2026
 
 KEY = "cinema-4d"
@@ -63,18 +70,36 @@ def host_version() -> str:
     return f"{number // 1000}.{(number % 1000) // 100}.{number % 100}"
 
 
-def supported() -> bool:
-    """Läuft eine Fassung ab ``HOST_MAJOR``? Nie eine Ausnahme — im Zweifel „nein"."""
+def _found_major() -> int | None:
     try:
-        return _version_number() // 1000 >= HOST_MAJOR
+        return _version_number() // 1000
     except Exception:  # noqa: BLE001 — ein unbekanntes c4d darf das Laden nicht verhindern
-        return False
+        return None
+
+
+def version_state() -> str:
+    """``tested``, ``untested`` oder ``too_old`` (``hostversion.state``) — nie eine Ausnahme."""
+    return hostversion.state(_found_major(), TESTED_VERSIONS)
+
+
+def supported() -> bool:
+    """Läuft eine Fassung ab ``HOST_MAJOR``? Geprüft oder neuer und ungeprüft — im Zweifel „nein"."""
+    return version_state() != hostversion.TOO_OLD
+
+
+def _found() -> str:
+    try:
+        return host_version()
+    except Exception:  # noqa: BLE001
+        return "unbekannt"
+
+
+def untested_note() -> str | None:
+    """„Cinema 4D 2028.0.0 ist ungeprüft (geprüft: 2026 und 2027).“ — oder ``None`` in einer geprüften Fassung."""
+    if version_state() != hostversion.UNTESTED:
+        return None
+    return hostversion.untested_note(LABEL, _found(), TESTED_VERSIONS)
 
 
 def unsupported_text() -> str:
-    try:
-        found = host_version()
-    except Exception:  # noqa: BLE001
-        found = "unbekannt"
-    return (f"rendertaxi.ai {PLUGIN_VERSION} braucht Cinema 4D {HOST_MAJOR} oder neuer "
-            f"(gefunden: {found}). Bitte die passende Fassung des Plugins verwenden.")
+    return hostversion.too_old_text("rendertaxi.ai", PLUGIN_VERSION, LABEL, _found(), TESTED_VERSIONS)

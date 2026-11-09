@@ -1,0 +1,14 @@
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "Die Anfrage ist ungültig.",
+    "requestId": "0199a1f0-0000-7000-8000-0000000000ff",
+    "fieldErrors": [
+      {
+        "path": "name",
+        "code": "already_taken",
+        "message": "In dieser Organisation gibt es bereits ein Projekt mit dem Namen \"Schule Weberberg\"."
+      }
+    ]
+  }
+}

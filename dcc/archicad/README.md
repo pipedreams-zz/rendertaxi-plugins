@@ -14,6 +14,12 @@ Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
 ## Änderungen
 
+### 1.4.1 (Feldfehler, RTX-P-023)
+
+- **Vergebener Projektname:** Scheitert „Projekt anlegen …“ an einem Namen, den ein aktives Projekt schon trägt, zeigt das Plugin den Satz des Servers („In dieser Organisation gibt es bereits ein Projekt mit dem Namen …“) statt „Die Anfrage ist ungültig.“ — `PluginApiClient::ErrorFromResponse` nimmt die Sätze aus `fieldErrors`, die Kurzform `(name: already_taken)` nur noch, wenn kein Satz da ist. Ein Projekt im Papierkorb sperrt den Namen nicht mehr (Migration 0103).
+- **Fassungen:** Ein Add-on ist gegen das DevKit einer Archicad-Fassung gebaut und lädt nur dort (Archicad 28); eine
+  Versionsliste mit „ungeprüft“ gibt es deshalb nicht.
+
 ### 1.4.0 (Georeferenz aus dem Projekt, RTX-A-013, Q-04)
 
 - **`geometry.georeference`** im Capture-Manifest, wenn das Modell mitgeht und das Projekt eine Georeferenz trägt:

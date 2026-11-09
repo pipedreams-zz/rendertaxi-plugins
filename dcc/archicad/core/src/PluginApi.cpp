@@ -2,8 +2,10 @@
 
 #include "rtx/UrlHost.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <vector>
 
 #include "rtx/Ids.hpp"
 #include "rtx/Log.hpp"
@@ -379,6 +381,9 @@ Error PluginApiClient::ErrorFromResponse (const HttpResponse& response) const
 	std::string message;
 	std::string reason;
 	std::string fieldSummary;
+	// Die Sätze der Feldfehler, jeder einmal (RTX-P-023): bei `already_taken` steht der konkrete
+	// Satz nur dort, die Hauptmeldung ist dann „Die Anfrage ist ungültig.“.
+	std::vector<std::string> fieldMessages;
 
 	if (node != nullptr && node->GetKind () == Json::Kind::Object) {
 		if (const JsonPtr error = node->Get ("error")) {
@@ -391,6 +396,10 @@ Error PluginApiClient::ErrorFromResponse (const HttpResponse& response) const
 					for (const JsonPtr& item : fields->Items ()) {
 						if (!fieldSummary.empty ()) fieldSummary += "; ";
 						fieldSummary += TextField (item, "path") + ": " + TextField (item, "code");
+						const std::string text = TextField (item, "message");
+						if (!text.empty () && fieldMessages.size () < 3 &&
+							std::find (fieldMessages.begin (), fieldMessages.end (), text) == fieldMessages.end ())
+							fieldMessages.push_back (text);
 					}
 				}
 			}
@@ -420,6 +429,11 @@ Error PluginApiClient::ErrorFromResponse (const HttpResponse& response) const
 		else if (response.status == 403) code = errc::Forbidden;
 		else if (response.status == 409) code = errc::IdempotencyConflict;
 		else code = errc::Transport;
+	}
+	if (!fieldMessages.empty ()) {
+		message.clear ();
+		for (const std::string& text : fieldMessages) message += (message.empty () ? "" : " ") + text;
+		return Error (code, message);
 	}
 	if (message.empty ())
 		message = "Der Server antwortete mit HTTP " + std::to_string (response.status) + ".";

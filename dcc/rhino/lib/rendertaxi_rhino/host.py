@@ -11,9 +11,12 @@ Hier — und nur hier — stehen die Kennungen des Plugins:
 * ``PLUGIN_VERSION`` — die eine Quelle der Pluginversion;
   ``integrations/rhino/scripts/pack.sh`` und der öffentliche Spiegel lesen sie
   hier, ``rdtxai.rhproj`` trägt dieselbe Zahl (``tests/test_plugin.py`` prüft es).
-* ``HOST_MAJOR`` — die Rhino-Fassung, für die das Plugin gebaut und an der es
-  gemessen ist (Rhino 8.35, CPython 3.9.10). Zugleich die Mindestversion: eine
-  ältere Fassung bekommt statt des Fensters eine klare Meldung (``supported``).
+* ``TESTED_VERSIONS`` — die Rhino-Fassungen, an denen das Plugin geprüft ist
+  (Rhino 8.35, CPython 3.9.10). Wie bei Cinema 4D (RTX-P-023): eine neuere,
+  nicht genannte Fassung läuft mit dem Hinweis „ungeprüft“ (``untested_note``),
+  eine ältere bekommt statt des Fensters eine klare Meldung (``supported``).
+* ``HOST_MAJOR`` — die älteste geprüfte Fassung, also die Mindestversion und
+  ``rh8`` im Paketnamen. Immer ``min(TESTED_VERSIONS)``.
 
 Kein ``Rhino``-Import auf Modulebene: der Client wird beim Laden konfiguriert,
 bevor irgendetwas anderes geschieht, und die Tests laufen ohne Rhino.
@@ -24,10 +27,12 @@ from __future__ import annotations
 import os
 
 from . import rendertaxi_client as client
+from .rendertaxi_client import hostversion
 
 PLUGIN_GUID = "b47606d7-0da9-4f5b-86c4-43f5b32f1865"
 PANEL_GUID = "5d0c8a3e-2f71-4b9a-9c6e-7a1f3b2d4e60"
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.5.1"
+TESTED_VERSIONS = (8,)
 HOST_MAJOR = 8
 
 KEY = "rhino"
@@ -58,21 +63,39 @@ def host_version() -> str:
     return str(Rhino.RhinoApp.Version)
 
 
-def supported() -> bool:
-    """Läuft eine Fassung ab ``HOST_MAJOR``? Nie eine Ausnahme — im Zweifel „nein"."""
+def _found_major() -> int | None:
     try:
-        return int(host_version().split(".")[0]) >= HOST_MAJOR
+        return int(host_version().split(".")[0])
     except Exception:  # noqa: BLE001 — ein unbekanntes Rhino darf das Laden nicht verhindern
-        return False
+        return None
+
+
+def version_state() -> str:
+    """``tested``, ``untested`` oder ``too_old`` (``hostversion.state``) — nie eine Ausnahme."""
+    return hostversion.state(_found_major(), TESTED_VERSIONS)
+
+
+def supported() -> bool:
+    """Läuft eine Fassung ab ``HOST_MAJOR``? Geprüft oder neuer und ungeprüft — im Zweifel „nein"."""
+    return version_state() != hostversion.TOO_OLD
+
+
+def _found() -> str:
+    try:
+        return host_version()
+    except Exception:  # noqa: BLE001
+        return "unbekannt"
+
+
+def untested_note() -> str | None:
+    """„Rhino 9.1.… ist ungeprüft (geprüft: 8).“ — oder ``None`` in einer geprüften Fassung."""
+    if version_state() != hostversion.UNTESTED:
+        return None
+    return hostversion.untested_note(LABEL, _found(), TESTED_VERSIONS)
 
 
 def unsupported_text() -> str:
-    try:
-        found = host_version()
-    except Exception:  # noqa: BLE001
-        found = "unbekannt"
-    return (f"{MARK} {PLUGIN_VERSION} braucht Rhino {HOST_MAJOR} oder neuer "
-            f"(gefunden: {found}). Bitte die passende Fassung des Plugins verwenden.")
+    return hostversion.too_old_text(MARK, PLUGIN_VERSION, LABEL, _found(), TESTED_VERSIONS)
 
 
 def build_text() -> str:

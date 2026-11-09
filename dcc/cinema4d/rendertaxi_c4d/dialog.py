@@ -210,7 +210,9 @@ class RendertaxiDialog(gui.GeDialog):
         self._camera_rows = None
         self._mask_rows = None
         self._export_rows = None
-        self.SetTitle(f"rendertaxi.ai {host.PLUGIN_VERSION}")
+        # Eine neuere, nicht geprüfte Fassung läuft — der Titel sagt es (RTX-P-023).
+        untested = host.untested_note()
+        self.SetTitle(f"rendertaxi.ai {host.PLUGIN_VERSION}" + (f" · {untested}" if untested else ""))
         self.GroupBegin(ID_MAIN, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, 1, 0, "")
         self.GroupBorderSpace(8, 8, 8, 8)
         # Die Tabs nehmen den Platz, der übrig ist; „Übernehmen“ darunter bleibt so klein wie sein Inhalt.
