@@ -26,6 +26,7 @@ import os
 import re
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -319,26 +320,37 @@ class ApiClient:
         return self.request("POST", f"/plugin/captures/{capture_id}/abort", body={},
                             headers={"Idempotency-Key": key})
 
-    def put_file(self, ticket: dict, path: str) -> int:
-        """Der eine bedingte ``PUT`` an den Objektspeicher — ohne ``Authorization``."""
-        with open(path, "rb") as handle:
-            data = handle.read()
-        headers = {str(k): str(v) for k, v in (ticket.get("requiredHeaders") or {}).items()}
-        request = urllib.request.Request(ticket["uploadUrl"], data=data,
-                                         method=ticket.get("method") or "PUT", headers=headers)
-        try:
-            with self._open(request, UPLOAD_TIMEOUT_SECONDS) as response:
-                return response.status
-        except urllib.error.HTTPError as error:
-            error.close()
-            if error.code == 412:
-                return 412  # liegt schon da; ``complete`` prüft
-            raise ApiError(f"Die Übertragung einer Datei scheiterte ({error.code}).",
-                           status=error.code, code="upload_failed") from None
-        except (urllib.error.URLError, OSError, TimeoutError) as error:
-            raise ApiError("Die Übertragung einer Datei brach ab. Die Übernahme lässt sich fortsetzen.",
-                           code="network", reason=type(error).__name__) from None
+    def put_file(self, ticket: dict, path: str, *, progress=None, cancel=None) -> int:
+        """Der eine bedingte ``PUT`` an den Objektspeicher — ohne ``Authorization``, **strömend** (RTX-C4D-013).
 
+        Die Datei geht in Stücken zu ``UPLOAD_CHUNK_BYTES`` aus der Datei auf die Leitung, nie ganz in den Speicher;
+        ``Content-Length`` steht vorher fest (der Objektspeicher nimmt kein ``chunked``). Der Vertrag bleibt: ein
+        ``PUT`` je Datei. ``progress(gesendet, gesamt)`` hört nach jedem Stück, wie weit es ist; ``cancel``
+        (``threading.Event``) bricht zwischen zwei Stücken ab (``Cancelled``) — die Datei bleibt beim Server
+        ``uploading`` und geht beim Fortsetzen mit demselben Versuch noch einmal.
+        """
+        total = os.path.getsize(path)
+        headers = {str(k): str(v) for k, v in (ticket.get("requiredHeaders") or {}).items()}
+        if not any(name.lower() == "content-length" for name in headers):
+            headers["Content-Length"] = str(total)
+        with open(path, "rb") as handle:
+            body = _Chunks(handle, total, progress, cancel)
+            request = urllib.request.Request(ticket["uploadUrl"], data=body,
+                                             method=ticket.get("method") or "PUT", headers=headers)
+            try:
+                with self._open(request, UPLOAD_TIMEOUT_SECONDS) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                error.close()
+                if error.code == 412:
+                    return 412  # liegt schon da; ``complete`` prüft
+                raise ApiError(f"Die Übertragung einer Datei scheiterte ({error.code}).",
+                               status=error.code, code="upload_failed") from None
+            except (urllib.error.URLError, OSError, TimeoutError) as error:
+                if cancel is not None and cancel.is_set():
+                    raise Cancelled() from None
+                raise ApiError("Die Übertragung einer Datei brach ab. Die Übernahme lässt sich fortsetzen.",
+                               code="network", reason=type(error).__name__) from None
 
     # -- Rückweg: Exporte laden (RTX-B-005) ---------------------------------
 
@@ -410,6 +422,40 @@ class ApiClient:
             _remove(target)
             raise
         return written
+
+
+# Ein Stück des strömenden Uploads: groß genug für wenige Systemaufrufe, klein genug für einen ruhigen Fortschritt
+# und einen schnellen Abbruch.
+UPLOAD_CHUNK_BYTES = 1 << 20
+
+
+class _Chunks:
+    """Der Körper eines ``PUT``: die Datei Stück für Stück — mit Fortschritt und Abbruch zwischen den Stücken.
+
+    ``http.client`` sendet ein iterierbares Objekt Stück für Stück, wenn ``Content-Length`` gesetzt ist. Keine Datei
+    liegt ganz im Speicher. Eine Datei, die beim Senden kürzer wird als angekündigt, bricht ab statt still zu fehlen.
+    """
+
+    def __init__(self, handle, total: int, progress=None, cancel=None):
+        self.handle = handle
+        self.total = total
+        self.progress = progress
+        self.cancel = cancel
+        self.sent = 0
+
+    def __iter__(self):
+        if self.progress is not None:
+            self.progress(0, self.total)
+        while self.sent < self.total:
+            if self.cancel is not None and self.cancel.is_set():
+                raise Cancelled()
+            chunk = self.handle.read(min(UPLOAD_CHUNK_BYTES, self.total - self.sent))
+            if not chunk:
+                raise OSError("Die Datei wurde beim Übertragen kürzer.")
+            yield chunk
+            self.sent += len(chunk)
+            if self.progress is not None:
+                self.progress(self.sent, self.total)
 
 
 def _remove(path: str) -> None:
@@ -597,6 +643,35 @@ def supports_model(handshake: dict | None) -> bool:
     return major == 1 and minor >= int(mf.MODEL_CONTRACT_VERSION.split(".")[1])
 
 
+class _FileProgress:
+    """Der Fortschritt einer Datei als Satz und Gesamtprozent — höchstens alle ``INTERVAL`` Sekunden, das Ende immer.
+
+    Der Satz nennt die Bytes der Datei („Modell übertragen 123 / 480 MB“), die Prozent gelten für alle Dateien der
+    Übernahme nach Bytes (10 … 80 %).
+    """
+
+    INTERVAL = 0.25
+
+    def __init__(self, report, role: str, before: int, total: int):
+        self.report = report
+        self.role = role
+        self.before = before
+        self.total = total
+        self.last = 0.0
+        self.shown = None
+
+    def __call__(self, sent: int, size: int) -> None:
+        now = time.monotonic()
+        if sent < size and now - self.last < self.INTERVAL:
+            return
+        shown = (ways.transfer_progress(self.role, sent, size),
+                 10 + (70 * min(self.before + sent, self.total)) // self.total)
+        if shown == self.shown:
+            return
+        self.last, self.shown = now, shown
+        self.report(*shown)
+
+
 class Transfer:
     """Führt eine vorbereitete Übernahme aus — oder setzt eine angefangene fort.
 
@@ -684,8 +759,12 @@ class Transfer:
             if files and all(_settled(f) for f in files):
                 break
             moved = False
-            outstanding = max(len(files), 1)
-            for index, file in enumerate(files):
+            # Der Gesamtfortschritt nach Bytes (RTX-C4D-013): 10 … 80 % über die Dateien, die noch fehlen.
+            sizes = {path: int(asset.get("byteSize") or 0) for path, asset in present.items()}
+            remaining = [f for f in files if not _settled(f) and f.get("state") != "received"]
+            total_bytes = max(sum(sizes.get(f.get("path"), 0) for f in remaining), 1)
+            done_bytes = 0
+            for file in files:
                 self._check_cancel()
                 state = file.get("state")
                 if _settled(file) or state == "received":
@@ -696,7 +775,9 @@ class Transfer:
                 if asset is None:
                     raise ApiError(f"Der Server erwartet eine Datei, die diese Aufnahme nicht enthält: {file.get('path')}",
                                    code="asset_unexpected")
-                self.progress(ways.transfer_step(asset["role"]), 10 + (70 * index) // outstanding)
+                size = sizes.get(asset["path"], 0)
+                announced = _FileProgress(self.progress, asset["role"], done_bytes, total_bytes)
+                announced(0, size)
                 attempt = file.get("attempt", 0) if state == "uploading" else file.get("attempt", 0) + 1
                 begun = self.api.file_action(capture_id, key, "begin", asset["path"], attempt)
                 if _settled(begun.get("file") or {}):
@@ -705,7 +786,9 @@ class Transfer:
                 ticket = begun.get("ticket")
                 if not ticket:
                     break  # Session nimmt nichts mehr an; der Zustand entscheidet
-                status = self.api.put_file(ticket, os.path.join(directory, *asset["path"].split("/")))
+                status = self.api.put_file(ticket, os.path.join(directory, *asset["path"].split("/")),
+                                           progress=announced, cancel=self.cancel)
+                done_bytes += size
                 log(f"{asset['role']}: PUT {status}, {asset['byteSize']} Bytes")
                 completed = self.api.file_action(capture_id, key, "complete", asset["path"],
                                                  (begun.get("file") or {}).get("attempt", attempt))

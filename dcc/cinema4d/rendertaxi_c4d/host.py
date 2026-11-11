@@ -32,7 +32,7 @@ from .rendertaxi_client import hostversion
 
 # Registrierte Plugin-ID (vom Nutzer am 01.10.2026 genannt; die Entwicklungs-ID 1000001 entfällt).
 PLUGIN_ID = 1070762
-PLUGIN_VERSION = "0.8.1"
+PLUGIN_VERSION = "0.8.2"
 TESTED_VERSIONS = (2026, 2027)
 HOST_MAJOR = 2026
 

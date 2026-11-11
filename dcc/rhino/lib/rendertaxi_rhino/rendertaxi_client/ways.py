@@ -131,6 +131,23 @@ def transfer_step(role: str) -> str:
     return f"Bild übertragen ({role_label(role)})"
 
 
+def megabytes_of(sent: int, total: int) -> str:
+    """„123 / 480 MB“ — der Stand einer Datei beim Übertragen (1 MB = 1 048 576 Bytes, wie die Grenze des Servers).
+
+    Unter 10 MB mit einer Nachkommastelle und Komma, sonst ganze MB.
+    """
+    def number(value: int) -> str:
+        mb = value / 1048576
+        return f"{mb:.1f}".replace(".", ",") if total < 10 * 1048576 else f"{int(mb)}"
+
+    return f"{number(max(0, min(sent, total)))} / {number(total)} MB"
+
+
+def transfer_progress(role: str, sent: int, total: int) -> str:
+    """Der Fortschritt innerhalb einer Datei (RTX-C4D-013): „Modell übertragen 123 / 480 MB“."""
+    return f"{transfer_step(role)} {megabytes_of(sent, total)}"
+
+
 def ways_of(roles) -> Plan:
     """Welche Wege eine Rollenliste trägt — ein Manifest (``present``) oder das Ergebnis (``assetIds``)."""
     roles = set(roles)

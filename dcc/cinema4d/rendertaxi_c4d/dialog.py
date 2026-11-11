@@ -53,6 +53,7 @@ ID_CONNECT = 1014
 ID_OPEN_LOGIN = 1015
 ID_CANCEL = 1016
 ID_SIGN_OUT = 1017
+ID_ADDRESS_NOTE = 1018  # „Serveradresse aktualisiert …“ (RTX-C4D-013), verborgen ohne Hinweis
 ID_GRP_SETTINGS = 1020
 ID_SERVER = 1021
 ID_DEVICE = 1022
@@ -120,6 +121,17 @@ ID_CAMERAS = 1240  # die Gruppe der Kameraliste, neu gefüllt, wenn sich die Kam
 ID_CAMERA_NOTE = 1241
 ID_CAMERA_FIRST = 1300  # bis 1300 + MAX_CAMERAS - 1
 MAX_CAMERAS = 40
+# RTX-C4D-013: „Alle“ und „Keine“ über der Kameraliste; je Liste eine Scroll-Gruppe fester Höhe.
+ID_CAMERAS_ALL = 1246
+ID_CAMERAS_NONE = 1247
+ID_CAMERAS_SCROLL = 1248
+ID_MASKS_SCROLL = 1254
+ID_EXPORTS_SCROLL = 1273
+# Die Höhe einer Liste: so viele Zeilen sind sichtbar, der Rest rollt — die Fensterhöhe hängt nicht an der Zahl der
+# Kameras, Masken oder Exporte (Bild 8 aus #1052: 40 Kameras machten das Fenster höher als den Schirm). Eine Zeile mit
+# Häkchen oder Knopf rechnet mit ``ROW_PIXELS`` Pixeln; die echte Zeilenhöhe misst erst die Hostprobe (QC-21).
+LIST_ROWS = 7
+ROW_PIXELS = 20
 # Rückweg (RTX-C4D-012): „Exporte laden“, die Liste (je Export Text und Knopf), ein Satz darunter.
 ID_EXPORTS_LOAD = 1270
 ID_EXPORTS = 1271  # die Gruppe der Liste, neu gefüllt, wenn sich Exporte oder ihr Stand im Dokument ändern
@@ -170,6 +182,8 @@ class RendertaxiDialog(gui.GeDialog):
         self._mask_rows: list[tuple[int, str]] | None = None
         # Die Exportliste im Tab „Modell“: (Asset-Kennung, Beschriftung, Knopftext) je Zeile.
         self._export_rows: list[tuple[str, str, str]] | None = None
+        # Vor jeder blockierenden Phase zeichnet der Controller über diese Stelle das Fenster neu (RTX-C4D-013).
+        controller.redraw = self._redraw_progress
 
     # -- Aufbau ---------------------------------------------------------------
 
@@ -186,6 +200,20 @@ class RendertaxiDialog(gui.GeDialog):
         self._gadgets[element_id] = self.AddComboBox(element_id, c4d.BFH_SCALEFIT, 0, 0)
         for index, label in enumerate(labels):
             self.AddChild(element_id, index, label)
+
+    def _scroll_begin(self, element_id: int) -> None:
+        """Eine Scroll-Gruppe mit fester Höhe (``LIST_ROWS`` Zeilen), Rollbalken nur bei Bedarf — ``GroupEnd`` schließt sie."""
+        self._gadgets[element_id] = self.ScrollGroupBegin(
+            element_id, c4d.BFH_SCALEFIT | c4d.BFV_TOP,
+            c4d.SCROLLGROUP_VERT | c4d.SCROLLGROUP_AUTOVERT | c4d.SCROLLGROUP_BORDERIN, 0, LIST_ROWS * ROW_PIXELS)
+
+    def _show_list(self, scroll_id: int, rows: int) -> None:
+        """Eine leere Liste belegt keinen Platz: ihre Scroll-Gruppe ist dann verborgen."""
+        key = -scroll_id
+        if self._shown_lines.get(key) != bool(rows):
+            self.HideElement(scroll_id, not rows)
+            self._shown_lines[key] = bool(rows)
+            self.LayoutChanged(ID_MAIN)
 
     def _tab_begin(self, tab: str) -> None:
         """Ein Tab: seine Gruppe, darin — außer bei „Verbindung" — der Satz ohne Verbindung und der Inhalt."""
@@ -222,6 +250,7 @@ class RendertaxiDialog(gui.GeDialog):
         self._text(ID_STATUS)
         self._text(ID_CODE)
         self._text(ID_SERVER_TEXT)
+        self._text(ID_ADDRESS_NOTE)
         self.GroupBegin(0, c4d.BFH_SCALEFIT, 4, 1, "")
         self._gadgets[ID_CONNECT] = self.AddButton(ID_CONNECT, c4d.BFH_SCALEFIT, 0, 0, "Verbinden")
         self._gadgets[ID_OPEN_LOGIN] = self.AddButton(ID_OPEN_LOGIN, c4d.BFH_SCALEFIT, 0, 0, "Im Browser öffnen")
@@ -280,7 +309,10 @@ class RendertaxiDialog(gui.GeDialog):
                                  ("object-id", "Objekt-ID"), ("material-id", "Material-ID"), ("mask", "Masken")):
             self._gadgets[ID_PASS[spec_role]] = self.AddCheckbox(ID_PASS[spec_role], c4d.BFH_SCALEFIT, 0, 0, label)
         self.GroupEnd()
-        self.GroupBegin(ID_MASKS, c4d.BFH_SCALEFIT, 4, 0, "")  # vier Spalten wie die Pässe, jede aktive Maske sichtbar
+        # Vier Spalten wie die Pässe; mehr als ``LIST_ROWS`` Zeilen rollen (RTX-C4D-013).
+        self._scroll_begin(ID_MASKS_SCROLL)
+        self.GroupBegin(ID_MASKS, c4d.BFH_SCALEFIT | c4d.BFV_TOP, 4, 0, "")
+        self.GroupEnd()
         self.GroupEnd()
         for line in range(MASK_NOTE_LINES):
             self._text(ID_MASK_NOTE + line)
@@ -301,13 +333,21 @@ class RendertaxiDialog(gui.GeDialog):
         self._gadgets[ID_MODEL_COUNT] = self.AddButton(ID_MODEL_COUNT, c4d.BFH_LEFT, 0, 0, "Neu zählen")
         for line in range(LINES):
             self._text(ID_MODEL_HINT + line)
+        self.GroupBegin(0, c4d.BFH_SCALEFIT, 3, 1, "")
         self._text(0, "Kameras der Szene")
-        self.GroupBegin(ID_CAMERAS, c4d.BFH_SCALEFIT, 1, 0, "")
+        self._gadgets[ID_CAMERAS_ALL] = self.AddButton(ID_CAMERAS_ALL, c4d.BFH_RIGHT, 0, 0, "Alle")
+        self._gadgets[ID_CAMERAS_NONE] = self.AddButton(ID_CAMERAS_NONE, c4d.BFH_RIGHT, 0, 0, "Keine")
+        self.GroupEnd()
+        self._scroll_begin(ID_CAMERAS_SCROLL)
+        self.GroupBegin(ID_CAMERAS, c4d.BFH_SCALEFIT | c4d.BFV_TOP, 1, 0, "")
+        self.GroupEnd()
         self.GroupEnd()
         self._text(ID_CAMERA_NOTE)
         self._text(0, "Exporte aus rendertaxi")
         self._gadgets[ID_EXPORTS_LOAD] = self.AddButton(ID_EXPORTS_LOAD, c4d.BFH_LEFT, 0, 0, "Exporte laden")
-        self.GroupBegin(ID_EXPORTS, c4d.BFH_SCALEFIT, 2, 0, "")
+        self._scroll_begin(ID_EXPORTS_SCROLL)
+        self.GroupBegin(ID_EXPORTS, c4d.BFH_SCALEFIT | c4d.BFV_TOP, 2, 0, "")
+        self.GroupEnd()
         self.GroupEnd()
         self._text(ID_EXPORTS_NOTE)
         self._tab_end("model")
@@ -431,6 +471,7 @@ class RendertaxiDialog(gui.GeDialog):
             self.SetString(ID_STATUS, "Nicht verbunden")
             self.SetString(ID_CODE, "")
         self.SetString(ID_SERVER_TEXT, state.server)
+        self._lines(ID_ADDRESS_NOTE, controller.address_notice, 1, width=NOTE_WIDTH)
         self._enable(ID_CONNECT, not busy and not state.connected)
         self._enable(ID_OPEN_LOGIN, bool(state.code))
         self._enable(ID_CANCEL, busy)
@@ -455,17 +496,31 @@ class RendertaxiDialog(gui.GeDialog):
         self._refresh_send(form, state, busy)
 
         # Status
-        if state.progress:
-            text, percent = state.progress
-            self.SetString(ID_PROGRESS, f"{text} ({percent} %)")
-        elif busy and state.job.label != "connect":
-            self.SetString(ID_PROGRESS, "Bitte warten …")
-        else:
-            self.SetString(ID_PROGRESS, "")
+        self.SetString(ID_PROGRESS, self._progress_text())
         self._lines(ID_MESSAGE, state.error or state.message)
         has_result = bool(state.result and state.result.get("openUrl"))
         self._enable(ID_OPEN_RESULT, has_result)
         self.SetString(ID_RESULT, "Übernahme abgeschlossen." if has_result else "")
+
+    def _progress_text(self) -> str:
+        state = self.controller.state
+        if state.progress:
+            text, percent = state.progress
+            return f"{text} ({percent} %)"
+        if self.controller.busy() and state.job.label != "connect":
+            return "Bitte warten …"
+        return ""
+
+    def _redraw_progress(self) -> None:
+        """Nur die Fortschrittszeile neu setzen — vor einer blockierenden Phase, mitten in der Übernahme.
+
+        Kein volles ``refresh``: das läse Kameras, Pässe und Masken neu, während das Dokument gerade gerendert oder
+        exportiert wird. Das Neuzeichnen selbst (``GeUpdateUI``) übernimmt der Controller über den Adapter.
+        """
+        try:
+            self.SetString(ID_PROGRESS, self._progress_text())
+        except Exception as error:  # noqa: BLE001 — nie wegen einer Anzeige abbrechen
+            log_exception("Fortschritt nicht anzeigbar", error)
 
     def _refresh_target(self, form, state, busy: bool) -> None:
         self._fill(ID_PROJECT, "— Projekt wählen —", state.projects, form.project_id)
@@ -558,6 +613,7 @@ class RendertaxiDialog(gui.GeDialog):
                                                                         0, 0, label)
             self.LayoutChanged(ID_MASKS)
             self._mask_rows = wanted
+        self._show_list(ID_MASKS_SCROLL, len(wanted))
         usable = form.capture_kind == BEAUTY and "mask" in form.passes and not busy
         for index, row in enumerate(shown):
             self.SetBool(ID_MASK_FIRST + index, row["checked"])
@@ -601,6 +657,7 @@ class RendertaxiDialog(gui.GeDialog):
                     ID_EXPORT_FIRST + 2 * index + 1, c4d.BFH_RIGHT, 0, 0, button)
             self.LayoutChanged(ID_EXPORTS)
             self._export_rows = wanted
+        self._show_list(ID_EXPORTS_SCROLL, len(wanted))
         for index, row in enumerate(rows):
             self._enable(ID_EXPORT_FIRST + 2 * index + 1, not busy and row["hasFile"])
         self.SetString(ID_EXPORTS_NOTE, controller.exports_note())
@@ -622,7 +679,11 @@ class RendertaxiDialog(gui.GeDialog):
                                                                           0, 0, label)
             self.LayoutChanged(ID_CAMERAS)
             self._camera_rows = wanted
+        self._show_list(ID_CAMERAS_SCROLL, len(wanted))
         usable = form.send_model and form.send_extra_cameras and not busy
+        choosable = [row for row in shown if not row["render"]]
+        self._enable(ID_CAMERAS_ALL, usable and any(not row["checked"] for row in choosable))
+        self._enable(ID_CAMERAS_NONE, usable and any(row["checked"] for row in choosable))
         for index, row in enumerate(shown):
             self.SetBool(ID_CAMERA_FIRST + index, row["checked"])
             self._enable(ID_CAMERA_FIRST + index, usable and not row["render"])
@@ -732,6 +793,10 @@ class RendertaxiDialog(gui.GeDialog):
             actions[element_id]()
         elif element_id == ID_TABS:
             self._follow_tab()
+        elif element_id in (ID_CAMERAS_ALL, ID_CAMERAS_NONE):
+            # Nur die gezeigten Kameras: was nicht in der Liste steht, bekommt kein Häkchen, das niemand sieht.
+            keys = [key for key, _label in (self._camera_rows or [])]
+            controller.set_extra_cameras(keys, element_id == ID_CAMERAS_ALL)
         elif element_id == ID_SAVE_SETTINGS:
             controller.save_settings(self.GetString(ID_SERVER), self.GetString(ID_DEVICE), self.GetBool(ID_DEBUG))
         elif element_id == ID_PROJECT:

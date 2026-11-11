@@ -12,7 +12,7 @@ diesen Fassungen ist das Plugin geprüft. Eine neuere Fassung läuft; der
 Fenstertitel sagt dann „ungeprüft“. Ältere Fassungen werden nicht unterstützt —
 das Plugin lädt dort, zeigt aber nur einen Hinweis. Dieselbe Zip gilt für beide
 Fassungen: `rendertaxi-cinema4d2026-<Version>-<Release>.zip` (die Zahl im Namen
-ist die Mindestversion; etwa `rendertaxi-cinema4d2026-0.8.1-2026.11.09.zip`) von der
+ist die Mindestversion; etwa `rendertaxi-cinema4d2026-0.8.2-2026.11.12.zip`) von der
 [Release-Seite](https://github.com/pipedreams-zz/rendertaxi-plugins/releases/latest)
 laden (in der Webanwendung unter **Verbundene Geräte › Plugins herunterladen**).
 Das Plugin ist Python — kein Installationsprogramm, kein Build.

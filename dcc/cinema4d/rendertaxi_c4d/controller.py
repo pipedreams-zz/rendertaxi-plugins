@@ -8,9 +8,14 @@ Cinema 4D prüfbar.
 **Faden-Regel.** Netzaufrufe laufen in einem Hintergrundfaden (``Job``), damit
 Cinema 4D bedienbar bleibt. Der Faden fasst ``c4d`` nie an: Ergebnisse reicht
 er über ``Job.post`` weiter; ``pump`` spielt sie im Hauptfaden ein (der
-Dialog ruft es aus seinem Timer). Aufnahme und Rendern laufen im Hauptfaden
-und blockieren die Oberfläche für ihre Dauer, mit Fortschritt in der
-Statusleiste (QC-07) — außer der Beauty mit einem anderen Renderer als dem
+Dialog ruft es aus seinem Timer). Aufnahme, Rendern und die Teile des
+Modell-Exports, die ``c4d`` brauchen (``Polygonize``, ``SaveDocument``), laufen im
+Hauptfaden und blockieren die Oberfläche für ihre Dauer — jede Phase ist vorher
+in Fenster und Statusleiste angekündigt, das Fenster neu gezeichnet
+(``phases.Phases``, RTX-C4D-013, QC-07). Was danach ohne ``c4d`` geht —
+Maßstab, Materialregel, Prüfsumme, Manifest, Upload —, läuft im Hintergrundfaden;
+das eine, was dort doch ``c4d`` braucht (Texturen verkleinern, ``BaseBitmap``),
+reicht er mit ``Job.call_in_main`` in den Hauptfaden und wartet. Außer der Beauty mit einem anderen Renderer als dem
 Viewport Renderer: sie rendert sichtbar im Picture Viewer, in einem Faden des
 Hosts (``Rendering``, RTX-C4D-010), und ``pump`` fragt nach, wie weit sie ist.
 
@@ -27,11 +32,13 @@ import queue
 import shutil
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 
 from . import host  # noqa: F401 — setzt den Host des Clients, bevor ihn jemand benutzt
 from .rendertaxi_client import auth, frame, ways
 from .rendertaxi_client import model_import
+from .rendertaxi_client import phases as ph
 from .rendertaxi_client import manifest as mf
 from .rendertaxi_client.log import log_exception, set_debug
 from .rendertaxi_client.store import CredentialStore, SettingsStore, TransferStore, has_local_material
@@ -53,6 +60,9 @@ DEFAULT_SETTINGS = {"serverUrl": DEFAULT_SERVER_URL, "deviceName": "", "debugLog
                     "dataPassBitDepth": mf.DEFAULT_DATA_PASS_BIT_DEPTH, "lastTab": "connection",
                     "sendImage": True, "sendModel": False, "sendExtraCameras": False, "extraCameras": {},
                     "masksOff": [], "modelWithoutMaterials": False, "modelMerge": "material"}
+# Steht noch die alte Vorgabe ``https://dev.rendertaxi.ai`` in den Einstellungen, gilt die neue — einmal gesagt, im Tab
+# „Verbindung“, bis neu verbunden oder gesichert ist (RTX-C4D-013). Das Token der alten Adresse geht nie an die neue.
+ADDRESS_UPDATED = f"Serveradresse aktualisiert: {DEFAULT_SERVER_URL.split('//', 1)[1]}. Bitte neu verbinden."
 # Die zwei Formen der GLB-Datei (``glbmaterials.MERGE_MODES``), in der Reihenfolge der Auswahl im Tab „Modell“.
 MODEL_MERGES = ("material", "objects")
 # Höchstens so viele gemerkte Dokumente mit Kamerawahl; das älteste fällt heraus.
@@ -84,6 +94,13 @@ EXPORTS_SHOWN = 8
 EXPORT_NAME_SHOWN = 32
 # Ohne bekannte Größe: höchstens so viel, wie ein Modell-Asset überhaupt sein darf (2 GiB).
 EXPORT_DOWNLOAD_MAX = 2 * 1024 * 1024 * 1024
+# So lange wartet der Hintergrundfaden auf den Hauptfaden (``Job.call_in_main``), bevor er mit einem Satz aufgibt —
+# der Timer des Fensters ruft ``pump`` alle 250 ms; ein geschlossenes Fenster ruft nie.
+MAIN_CALL_TIMEOUT = 120.0
+MAIN_THREAD_GONE = ("Cinema 4D hat die Arbeit im Hauptfaden nicht angenommen (Fenster geschlossen?). "
+                    "Fenster offen lassen und erneut übernehmen.")
+# Vor „Neu zählen“ (RTX-C4D-013): die Zählung startet nicht mehr von selbst — sie macht einen Probe-Export.
+NOT_COUNTED = "Größe noch nicht gezählt. „Neu zählen“ macht dafür einen Probe-Export (bei großen Szenen dauert das)."
 
 
 class ImportProblem(RuntimeError):
@@ -140,6 +157,21 @@ def masks_and_index(files: list, planned: list, contract_version: str, handshake
     return kept, others, contract_version
 
 
+@dataclass
+class Collected:
+    """Was ``collect_capture`` im Hauptfaden einsammelt und ``finish_capture`` im Hintergrund braucht — ohne ``c4d``."""
+
+    handshake: dict
+    files: list
+    planned: list
+    contract_version: str
+    written: object  # ``export.Written`` oder ``None`` ohne Modell
+    camera: dict | None
+    materials: bool
+    merge: str
+    fields: dict  # die Felder von ``mf.ManifestInput``, die aus dem Dokument kommen
+
+
 class State:
     def __init__(self):
         self.reset()
@@ -179,6 +211,42 @@ class Job:
     def post(self, callback) -> None:
         self.inbox.put(callback)
 
+    def call_in_main(self, function, *args, timeout: float | None = None):
+        """``function(*args)`` im Hauptfaden ausführen und auf das Ergebnis warten — aus dem Hintergrundfaden.
+
+        Für das eine, was ohne ``c4d`` nicht geht (``BaseBitmap``). ``pump`` führt es aus; ein Abbruch wirkt während
+        des Wartens (``Cancelled``), ohne Antwort binnen ``MAIN_CALL_TIMEOUT`` gibt der Faden mit einem Satz auf.
+        Eine Ausnahme im Hauptfaden kommt hier wieder heraus.
+        """
+        done = threading.Event()
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["value"] = function(*args)
+            except BaseException as error:  # noqa: BLE001 — zurück in den Faden, der wartet
+                box["error"] = error
+            finally:
+                done.set()
+
+        if self.cancel.is_set():
+            raise Cancelled()
+        self.post(run)
+        end = time.monotonic() + (MAIN_CALL_TIMEOUT if timeout is None else timeout)
+        while not done.wait(0.05):
+            if self.cancel.is_set():
+                raise Cancelled()
+            if time.monotonic() > end:
+                raise ApiError(MAIN_THREAD_GONE, code="main_thread")
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
+    def phases(self, report) -> ph.Phases:
+        """Phasen im Hintergrund: die Ankündigung geht über ``post`` an ``report`` im Hauptfaden (Fenster, Statusleiste)."""
+        return ph.Phases(lambda text, percent: self.post(lambda: report(text, percent)))
+
+
     def _run(self) -> None:
         controller = self.controller
         try:
@@ -201,11 +269,38 @@ class Job:
         state = self.controller.state
         if state.job is self:
             state.job = None
+            if state.progress is not None:
+                self.controller.adapter.status("", -1)  # die Statusleiste der Hintergrundphasen räumen
             state.progress = None
             state.code = None
         deferred, state.deferred_viewpoints = state.deferred_viewpoints, None
         if deferred:
             self.controller._request_viewpoints(deferred)
+
+
+class MainScale:
+    """``scale_image`` für die Materialregel im Hintergrund: die Arbeit im Hauptfaden, ein Fehler bleibt nicht still.
+
+    ``glbmaterials.shrink_image`` lässt eine Textur weg, deren Verkleinern scheitert; scheitert hier aber nur der Weg in
+    den Hauptfaden (Abbruch, Fenster zu), merkt sich das ``failure`` — der Aufrufer bricht danach ab, statt ein Modell
+    ohne Textur zu senden.
+    """
+
+    def __init__(self, job: "Job", scale_image):
+        self.job = job
+        self.scale_image = scale_image
+        self.failure: BaseException | None = None
+
+    def __call__(self, data: bytes, mime: str, factor: float):
+        try:
+            return self.job.call_in_main(self.scale_image, data, mime, factor)
+        except (Cancelled, ApiError) as error:
+            self.failure = self.failure or error
+            raise
+
+    def check(self) -> None:
+        if self.failure is not None:
+            raise self.failure
 
 
 class Controller:
@@ -223,6 +318,8 @@ class Controller:
         self.model_estimate: tuple[str, int, int, int | None, str | None] | None = None
         # „Neues Projekt …": derselbe Name nach einem Fehlschlag sendet denselben Idempotenzschlüssel.
         self.new_project_intent = NewProject()
+        # Die alte Vorgabe der Serveradresse: heraus aus der Datei, einmal gesagt (RTX-C4D-013).
+        self.address_notice = ADDRESS_UPDATED if self._retire_old_server() else ""
         # Die gemerkte Wahl der Wege; ``settings`` fällt bei jedem Fehler auf die Vorgaben (Regel 3).
         remembered = self.settings()
         self.form.send_image = remembered["sendImage"]
@@ -232,6 +329,8 @@ class Controller:
         self.form.model_merge = remembered["modelMerge"] if remembered["modelMerge"] in MODEL_MERGES else "material"
         # Das Rendern im Picture Viewer (``Rendering`` des Hosts): nur das jüngste, solange es zur Einstellung passt.
         self.rendering = None
+        # Das Fenster setzt hier sein Neuzeichnen ein: vor jeder blockierenden Phase (RTX-C4D-013).
+        self.redraw = lambda: None
         # Wem die Kamerawahl in ``form.extra_cameras`` gehört: das Dokument selbst und seine Kennung (F-01, #310).
         self._camera_document: str | None = None
         self._camera_owner = None
@@ -254,6 +353,12 @@ class Controller:
         except (OSError, ValueError):  # Ordner nicht anlegbar oder unzulässiger Pfad
             return dict(DEFAULT_SETTINGS)
 
+    def _retire_old_server(self) -> bool:
+        try:
+            return SettingsStore(self._directory(), DEFAULT_SETTINGS).retire_old_server()
+        except (OSError, ValueError):  # Ordner nicht anlegbar: ``settings`` liest ohnehin die Vorgabe
+            return False
+
     def save_settings(self, server_url: str, device_name: str, debug_logging: bool) -> bool:
         """Einstellungen sichern; eine unzulässige Adresse wird nicht gesichert, sondern erklärt."""
         try:
@@ -265,6 +370,7 @@ class Controller:
         SettingsStore(self._directory(), DEFAULT_SETTINGS).save(
             {"serverUrl": server, "deviceName": device_name.strip()[:64], "debugLogging": bool(debug_logging)})
         set_debug(debug_logging)
+        self.address_notice = ""
         if changed_server and self.state.job is None:
             self.restore_session()
             self._set_message("Einstellungen gesichert. Die Anmeldung gilt je Serveradresse.")
@@ -412,6 +518,7 @@ class Controller:
             self.state.identity = identity
             self.state.handshake = handshake
             self.state.message = ""
+            self.address_notice = ""
             self.notice.offer(handshake)
 
         job.post(apply)
@@ -785,8 +892,7 @@ class Controller:
     def set_send_model(self, on: bool) -> None:
         self.form.send_model = bool(on)
         self._remember_ways()
-        if self.form.send_model:
-            self.count_model()
+        # Kein Zählen von selbst (RTX-C4D-013): es macht einen Probe-Export; „Neu zählen“ startet es.
 
     def chosen_ways(self) -> ways.Plan | None:
         """Was gesendet wird (``ways.plan``) — ``None``, wenn weder Bild noch Modell gewählt ist."""
@@ -971,6 +1077,22 @@ class Controller:
             self.form.extra_cameras.discard(key)
         self._remember_cameras()
 
+    def set_extra_cameras(self, keys, on: bool) -> None:
+        """„Alle“ und „Keine“ über der Kameraliste (RTX-C4D-013): die genannten Kameras auf einmal wählen oder abwählen.
+
+        Die Kamera der Renderansicht bleibt, wie sie ist — sie geht immer mit; ein Schlüssel ohne Kamera zählt nicht.
+        """
+        rows = {row["key"]: row for row in self.camera_rows()}
+        for key in keys:
+            row = rows.get(key)
+            if row is None or row["render"]:
+                continue
+            if on:
+                self.form.extra_cameras.add(key)
+            else:
+                self.form.extra_cameras.discard(key)
+        self._remember_cameras()
+
     def _remember_cameras(self) -> None:
         """Die Wahl unter der Kennung des Dokuments merken — ohne Kennung gilt sie bis zur ersten Übernahme."""
         try:
@@ -1000,9 +1122,7 @@ class Controller:
             SettingsStore(self._directory(), DEFAULT_SETTINGS).save(values)
         except (OSError, ValueError):  # die Wahl gilt trotzdem, nur nicht über den Neustart hinaus
             pass
-        self.model_estimate = None  # die Größe hängt an der Wahl: neu zählen
-        if self.form.send_model:
-            self.count_model()
+        self.model_estimate = None  # die Größe hängt an der Wahl: neu zählen — erst auf „Neu zählen“ (RTX-C4D-013)
 
     def set_send_extra_cameras(self, on: bool) -> None:
         self.form.send_extra_cameras = bool(on)
@@ -1018,19 +1138,48 @@ class Controller:
         rows = self.camera_rows()
         return [row["key"] for row in rows if row["checked"] and not row["render"]]
 
-    def count_model(self) -> None:
-        """Sichtbare Objekte und Dreiecke zählen — auf Wunsch, nicht bei jedem Zeichnen (Polygonize kostet)."""
+    def count_model(self) -> bool:
+        """„Neu zählen“: sichtbare Objekte, Dreiecke und die Dateigröße an einem Probe-Export — nur auf Wunsch.
+
+        Polygonisieren und den Probe-Export schreiben gehen nur im Hauptfaden; beide sind vorher angekündigt
+        (RTX-C4D-013). Materialregel und Größe laufen danach im Hintergrund (Vorgang ``count``, abbrechbar).
+        """
         self.model_estimate = None
         if self.model_problem():
-            return
+            return False
+        if self.state.job is not None:
+            self._set_error("Es läuft schon ein Vorgang. Erst abwarten oder abbrechen.")
+            return False
+        kind, materials, merge = self.form.capture_kind, not self.form.model_without_materials, self.form.model_merge
+        steps = self._main_phases()
         try:
-            counted = self.adapter.model_estimate(self.form.capture_kind, not self.form.model_without_materials,
-                                                  self.form.model_merge)
+            probe = self.adapter.model_estimate_write(kind, materials, steps)
         except (RuntimeError, OSError) as error:  # export.ExportError ist ein RuntimeError
             log_exception("Modellgröße nicht bestimmbar", error)
-            return
-        self.model_estimate = (self.form.capture_kind, counted.objects, counted.triangles,
-                               getattr(counted, "byte_size", None), getattr(counted, "size_problem", None))
+            return False
+        finally:
+            self.state.progress = None
+            self.adapter.status("", -1)
+
+        def work(job: Job) -> None:
+            scale = MainScale(job, self.adapter.scale_image)
+            counted = self.adapter.model_estimate_finish(probe, materials, merge, scale,
+                                                         job.phases(self._progress_in_main))
+            scale.check()
+            estimate = (kind, counted.objects, counted.triangles, getattr(counted, "byte_size", None),
+                        getattr(counted, "size_problem", None))
+            job.post(lambda: setattr(self, "model_estimate", estimate))
+
+        return self.start_job("count", work)
+
+    def _main_phases(self) -> ph.Phases:
+        """Phasen im Hauptfaden: Fenster und Statusleiste nennen die Phase, das Fenster ist neu gezeichnet — dann erst
+        beginnt sie (RTX-C4D-013)."""
+        def redraw() -> None:
+            self.redraw()
+            self.adapter.update_ui()
+
+        return ph.Phases(self._progress_in_main, redraw)
 
     def model_hint(self) -> str:
         """Größe, Grenzen und was nicht mitgeht — der Text im Tab „Modell".
@@ -1048,7 +1197,7 @@ class Controller:
         limit = f" (höchstens {megabytes(cap)})" if cap else ""
         estimate = self.model_estimate
         if estimate is None or estimate[0] != self.form.capture_kind:
-            parts.append("Größe noch nicht gezählt („Neu zählen“).")
+            parts.append(NOT_COUNTED)
             if cap:
                 parts.append(f"Modelldatei höchstens {megabytes(cap)}.")
         else:
@@ -1073,9 +1222,18 @@ class Controller:
     # -- Übernahme ------------------------------------------------------------
 
     def build_capture(self, directory: str, rendered=None) -> bytes:
-        """Aufnehmen, Manifest bauen und lokal prüfen — im Hauptfaden.
+        """Aufnehmen, Manifest bauen und lokal prüfen — in einem Zug im Hauptfaden (Tests, Prüflauf).
 
         ``rendered``: das Ergebnis des Renderns im Picture Viewer — dann wird nicht noch einmal gerendert.
+        „Übernehmen“ ruft die beiden Hälften getrennt: ``collect_capture`` im Hauptfaden, ``finish_capture`` im
+        Hintergrund (RTX-C4D-013).
+        """
+        collected = self.collect_capture(directory, rendered)
+        return self.finish_capture(collected, self.adapter.scale_image, self._main_phases())
+
+    def collect_capture(self, directory: str, rendered=None, steps=None) -> "Collected":
+        """Der Teil der Übernahme, der ``c4d`` braucht — im Hauptfaden: rendern, die GLB schreiben, Kamera und
+        Laufzeitprobe lesen, die Angaben des Dokuments fürs Manifest einsammeln.
 
         **Drei Fälle** (RTX-P-014, ``ways.plan``): nur Bild, nur Modell, Bild und Modell. Nur mit Modell wird
         **nicht gerendert**: es gehen die GLB und die Kamera der Renderansicht, deren Bildgröße die der
@@ -1087,6 +1245,7 @@ class Controller:
         gemerkte Bittiefe (8 oder 16 Bit). Gegen einen Server mit 1.5.0 geht der Name der gespeicherten Datei als
         ``source.fileName`` mit (RTX-P-013), nie ihr Ordner.
         """
+        steps = steps or self._main_phases()
         handshake = self.state.handshake or {}
         limits = handshake.get("limits") or {}
         problem = self.mask_problem()
@@ -1119,52 +1278,74 @@ class Controller:
                 self._progress_in_main, self.data_pass_bit_depth(), rendered, self.chosen_masks())
             if masks_unsupported:
                 planned.append(mf.PlannedRole("mask", "images/mask.png", mf.PNG_MEDIA_TYPE, masks_need_1_8_note))
-        camera = geometry = None
+        camera = written = None
         if chosen.model:
             if chosen.image:
                 width, height = files[0].image["width"], files[0].image["height"]
             else:
                 width, height = self.document_size()
             contract_version = mf.model_contract_version(handshake)
-            model, geometry, camera = self.adapter.export_model(
-                self.form.capture_kind, directory, (width, height), self._progress_in_main,
+            written, camera = self.adapter.write_model(
+                self.form.capture_kind, directory, (width, height), steps,
                 mf.camera_lens_allowed(contract_version), self.chosen_cameras(),
-                not self.form.model_without_materials, self.form.model_merge)
+                not self.form.model_without_materials)
             if camera is not None:
                 # Die Bildgröße der Kamera; ``build_manifest`` schreibt sie erst ab 1.6.0.
                 camera["resolution"] = {"width": int(width), "height": int(height)}
-            files.append(model)
             if chosen.model_only:
                 view_name = self.adapter.camera_name() or "Renderansicht"
-        files, planned, contract_version = masks_and_index(files, planned, contract_version, handshake)
         try:
             file_name = self.adapter.document_file_name()
         except (RuntimeError, AttributeError, TypeError):  # ohne Dateinamen geht der Capture trotzdem
             file_name = None
+        return Collected(
+            handshake=handshake, files=files, planned=planned, contract_version=contract_version, written=written,
+            camera=camera, materials=not self.form.model_without_materials, merge=self.form.model_merge,
+            fields=dict(
+                host_version=self.adapter.host_version(),
+                capabilities=capabilities,
+                platform_project_id=self.form.project_id,
+                source_project_key=self.adapter.document_key(create=True),
+                project_display_name=self.adapter.document_name(),
+                view_display_name=view_name,
+                source_file_name=file_name,
+            ))
+
+    def finish_capture(self, collected: "Collected", scale_image, steps) -> bytes:
+        """Der Teil der Übernahme **ohne** ``c4d`` — im Hintergrundfaden (RTX-C4D-013): die GLB fertig machen
+        (Maßstab, extras, Materialregel, Prüfsumme), das Manifest bauen und lokal prüfen. Gibt die Manifestbytes.
+
+        ``scale_image`` verkleinert Texturen; im Hintergrund reicht der Aufrufer es in den Hauptfaden (``MainScale``).
+        """
+        handshake = collected.handshake
+        files = list(collected.files)
+        geometry = None
+        if collected.written is not None:
+            model, geometry = self.adapter.finish_model(collected.written, collected.materials, collected.merge,
+                                                        scale_image, steps)
+            files.append(model)
+        steps.begin(ph.MANIFEST, 90)
+        files, planned, contract_version = masks_and_index(files, list(collected.planned),
+                                                           collected.contract_version, handshake)
         data = mf.ManifestInput(
             capture_id=mf.uuid_v7(),
             created_at=mf.timestamp_utc(),
-            host_version=self.adapter.host_version(),
             plugin_version=mf.plugin_version(),
             machine=auth.machine(),
-            capabilities=capabilities,
-            platform_project_id=self.form.project_id,
-            source_project_key=self.adapter.document_key(create=True),
-            project_display_name=self.adapter.document_name(),
-            view_display_name=view_name,
             files=files,
             planned=planned,
-            camera=camera,
+            camera=collected.camera,
             geometry=geometry,
-            source_file_name=file_name,
             contract_version=contract_version,
+            **collected.fields,
         )
         manifest = mf.build_manifest(data)
         problems = mf.validate_manifest(manifest)
         if problems:
             raise ValueError(mf.invalid_capture(problems))
         raw = mf.serialize(manifest)
-        problem = mf.check_limits(manifest, len(raw), limits)
+        problem = mf.check_limits(manifest, len(raw), handshake.get("limits") or {})
+        steps.end()
         if problem:
             raise ValueError(problem)
         return raw
@@ -1204,7 +1385,6 @@ class Controller:
             self._set_error("Nicht verbunden.")
             return False
         directory = None
-        pending = None
         try:
             target = frame.target(self.form.project_id, self.form.target_mode, name=self.form.viewpoint_name,
                                   viewpoint_id=self.form.viewpoint_id, fit_to_capture=self.form.fit_to_capture,
@@ -1219,53 +1399,88 @@ class Controller:
             os.makedirs(directory, mode=0o700, exist_ok=True)
             self.state.progress = (f"{ways.steps(chosen)[0]} …", 0)
             self.state.result = None
-            raw = self.build_capture(directory, rendered)
-            pending = prepare(transfers, key, self.state.server, target, raw, directory)
+            collected = self.collect_capture(directory, rendered)
         except (ValueError, OSError, RuntimeError) as error:  # capture.CaptureError ist ein RuntimeError
             self.state.progress = None
-            if pending is None and directory:
+            if directory:
                 shutil.rmtree(directory, ignore_errors=True)  # nichts angelegt: keine Reste
             self._set_error(str(error))
             return False
         finally:
             self.adapter.status("", -1)
         self.state.message = chosen.hint or ""
-        return self.start_job("transfer", self._transfer_work(self.state.server, credentials.token(self.state.server),
-                                                              key, pending))
+        server = self.state.server
+        work = self._capture_work(server, credentials.token(server), key, target, directory, collected)
+        if not self.start_job("transfer", work):
+            shutil.rmtree(directory, ignore_errors=True)
+            return False
+        return True
+
+    def _capture_work(self, server: str, token: str | None, document_key: str, target: dict, capture_dir: str,
+                      collected: "Collected"):
+        """Im Hintergrund: GLB fertig machen, Manifest, den Vorgang sichern (``prepare``) — dann übertragen.
+
+        Scheitert es vor ``prepare``, bleibt nichts liegen: der Capture-Ordner ist weg, kein Vorgang gespeichert —
+        wie bisher im Hauptfaden.
+        """
+        directory = self._directory()  # im Hauptfaden: der Nutzerordner kommt aus c4d
+
+        def work(job: Job) -> None:
+            transfers = TransferStore(directory)
+            scale = MainScale(job, self.adapter.scale_image)
+            try:
+                raw = self.finish_capture(collected, scale, job.phases(self._progress_in_main))
+                scale.check()
+                if job.cancel.is_set():
+                    raise Cancelled()
+                pending = prepare(transfers, document_key, server, target, raw, capture_dir)
+            except Cancelled:
+                shutil.rmtree(capture_dir, ignore_errors=True)
+                raise
+            except (ValueError, OSError, RuntimeError) as error:  # export.ExportError ist ein RuntimeError
+                shutil.rmtree(capture_dir, ignore_errors=True)
+                raise ApiError(str(error), code="local_capture") from None
+            except BaseException:
+                shutil.rmtree(capture_dir, ignore_errors=True)
+                raise
+            self._run_transfer(job, ApiClient(server, token), directory, document_key, pending)
+
+        return work
 
     def _transfer_work(self, server: str, token: str | None, document_key: str, pending: dict):
         directory = self._directory()  # im Hauptfaden: der Nutzerordner kommt aus c4d
 
         def work(job: Job) -> None:
-            api = ApiClient(server, token)
-
-            def progress(text: str, percent: int) -> None:
-                job.post(lambda: setattr(self.state, "progress", (text, percent)))
-
-            outcome = Transfer(api, TransferStore(directory), document_key, job.cancel, progress).run(pending)
-            project_id = pending["target"]["projectId"]
-
-            def apply():
-                self.state.result = {
-                    "captureId": outcome["captureId"],
-                    "openUrl": outcome["result"].get("openUrl"),
-                    "viewpointId": outcome["result"].get("viewpointId"),
-                }
-                # Was angekommen ist, aus dem Abschlussbeleg je Weg — und was am Blickpunkt stehen blieb.
-                update = (pending["target"].get("viewpoint") or {}).get("mode") == frame.UPDATE
-                self.state.message = ways.result_text(outcome["result"], update)
-                # Der Name ist vergeben: das Feld folgt wieder der Kamera (RTX-C4D-011), auch wenn er getippt war.
-                if not update:
-                    self.form.suggested_viewpoint_name = self.form.viewpoint_name
-                    self.suggest_viewpoint_name()
-
-            job.post(apply)
-            # Neuer Blickpunkt: die Liste neu lesen, damit er gleich wählbar ist.
-            viewpoints = [(v["id"], v.get("name") or v["id"]) for v in api.viewpoints(project_id) if v.get("id")]
-            desired = api.desired_outputs(project_id)
-            job.post(lambda: self._apply_viewpoints(project_id, viewpoints, desired))
+            self._run_transfer(job, ApiClient(server, token), directory, document_key, pending)
 
         return work
+
+    def _run_transfer(self, job: Job, api: ApiClient, directory: str, document_key: str, pending: dict) -> None:
+        def progress(text: str, percent: int) -> None:
+            job.post(lambda: self._progress_in_main(text, percent))
+
+        outcome = Transfer(api, TransferStore(directory), document_key, job.cancel, progress).run(pending)
+        project_id = pending["target"]["projectId"]
+
+        def apply():
+            self.state.result = {
+                "captureId": outcome["captureId"],
+                "openUrl": outcome["result"].get("openUrl"),
+                "viewpointId": outcome["result"].get("viewpointId"),
+            }
+            # Was angekommen ist, aus dem Abschlussbeleg je Weg — und was am Blickpunkt stehen blieb.
+            update = (pending["target"].get("viewpoint") or {}).get("mode") == frame.UPDATE
+            self.state.message = ways.result_text(outcome["result"], update)
+            # Der Name ist vergeben: das Feld folgt wieder der Kamera (RTX-C4D-011), auch wenn er getippt war.
+            if not update:
+                self.form.suggested_viewpoint_name = self.form.viewpoint_name
+                self.suggest_viewpoint_name()
+
+        job.post(apply)
+        # Neuer Blickpunkt: die Liste neu lesen, damit er gleich wählbar ist.
+        viewpoints = [(v["id"], v.get("name") or v["id"]) for v in api.viewpoints(project_id) if v.get("id")]
+        desired = api.desired_outputs(project_id)
+        job.post(lambda: self._apply_viewpoints(project_id, viewpoints, desired))
 
     def resume(self) -> bool:
         key = self.adapter.document_key(create=False)

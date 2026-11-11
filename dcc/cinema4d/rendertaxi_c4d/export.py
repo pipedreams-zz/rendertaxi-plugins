@@ -85,6 +85,7 @@ from . import capture
 from .rendertaxi_client import glb
 from .rendertaxi_client import glbmaterials
 from .rendertaxi_client import manifest as mf
+from .rendertaxi_client import phases as ph
 from .rendertaxi_client.log import log, log_exception
 
 VIEWPORT = "viewport"
@@ -852,42 +853,103 @@ class Estimate:
     size_problem: str | None = None
 
 
+class _NoPhases:
+    """Ohne Ankündigung (Tests, Messskripte): ``begin`` und ``end`` tun nichts."""
+
+    def begin(self, name: str, percent: int, *, blocking: bool = False) -> None:
+        pass
+
+    def end(self) -> None:
+        pass
+
+
+NO_PHASES = _NoPhases()
+
+
+@dataclass
+class Probe:
+    """Der Probeexport der Zählung, geschrieben im Hauptfaden — ``estimate_finish`` misst ihn ohne ``c4d``."""
+
+    objects: int
+    triangles: int
+    folder: str | None = None
+    target: str | None = None
+    problem: str | None = None
+    material_names: dict = field(default_factory=dict)
+
+
+def estimate_write(doc, kind: str, materials: bool = True, steps=NO_PHASES) -> Probe:
+    """Der Teil der Zählung mit ``c4d``: polygonisieren, zählen und — wenn es passt — die GLB in einen temporären Ordner
+    schreiben. **Im Hauptfaden**, blockierend; jede Phase ist vorher angekündigt (RTX-C4D-013)."""
+    steps.begin(ph.POLYGONIZE, 10, blocking=True)
+    prepared = prepare(doc, kind, materials=materials)
+    probe = Probe(prepared.objects, prepared.triangles, material_names=dict(prepared.material_names))
+    try:
+        if prepared.triangles == 0:
+            probe.problem = "keine sichtbare Geometrie"
+        elif prepared.triangles > MAX_TRIANGLES:
+            probe.problem = "zu viele Dreiecke für einen Export"
+        else:
+            probe.folder = tempfile.mkdtemp(prefix="rendertaxi-zaehlen-")
+            probe.target = os.path.join(probe.folder, "scene.glb")
+            steps.begin(ph.WRITE_GLB, 40, blocking=True)
+            try:
+                _save(prepared.document, probe.target)
+            except Exception as error:  # noqa: BLE001 — die Zählung gilt trotzdem, nur ohne Größe, mit Grund
+                log_exception("Dateigröße des Modells nicht messbar", error)
+                probe.problem = _probe_problem(error)
+                probe.target = None
+    except BaseException:
+        if probe.folder is not None:
+            shutil.rmtree(probe.folder, ignore_errors=True)
+        raise
+    finally:
+        c4d.documents.KillDocument(prepared.document)
+        steps.end()
+    return probe
+
+
+def estimate_finish(probe: Probe, materials: bool = True, merge: str = MERGE_BY_MATERIAL, scale_image=None,
+                    steps=NO_PHASES) -> Estimate:
+    """Der Teil der Zählung **ohne** ``c4d`` (Hintergrundfaden): die Materialregel auf dem Probeexport, die Größe, und
+    der temporäre Ordner ist danach weg — auch bei einem Fehler. ``scale_image`` verkleinert Texturen; der Aufrufer
+    reicht es in den Hauptfaden (``BaseBitmap``)."""
+    byte_size = None
+    problem = probe.problem
+    try:
+        if probe.target is not None:
+            steps.begin(ph.MATERIALS, 70)
+            try:
+                glbmaterials.apply_material_rule(probe.target, materials=materials, merge=merge,
+                                                 scale_image=scale_image, material_names=probe.material_names)
+                byte_size = os.path.getsize(probe.target)
+            except Exception as error:  # noqa: BLE001 — die Zählung gilt trotzdem, nur ohne Größe, mit Grund
+                log_exception("Dateigröße des Modells nicht messbar", error)
+                problem = _probe_problem(error)
+    finally:
+        steps.end()
+        if probe.folder is not None:
+            shutil.rmtree(probe.folder, ignore_errors=True)
+    log(f"Modell gezählt: {probe.objects} Objekte, {probe.triangles} Dreiecke, "
+        f"{'—' if byte_size is None else byte_size} Bytes{f' ({problem})' if problem else ''}")
+    return Estimate(probe.objects, probe.triangles, byte_size, problem)
+
+
+def _probe_problem(error: BaseException) -> str:
+    return "Probeexport fehlgeschlagen" if isinstance(error, (ExportError, OSError)) \
+        else f"Probeexport fehlgeschlagen ({type(error).__name__})"
+
+
 def estimate(doc, kind: str, materials: bool = True, merge: str = MERGE_BY_MATERIAL) -> Estimate:
     """Sichtbare Objekte, Dreiecke und die Dateigröße — der Hinweis im Dialog, **bevor** übernommen wird.
 
     Die Größe kommt aus einem Export derselben Objekte mit demselben Exporter in ein temporäres Verzeichnis, das danach
     gelöscht wird (Nutzerwunsch vom 10.10.2026: „nach Neu zählen Dateigröße anzeigen“). Ohne Kameras; die fehlen in
     der Größe (je Kamera einige hundert Bytes). Mit der Materialregel wie beim Senden: verkleinerte Texturen zählen
-    mit ihrer neuen Größe.
+    mit ihrer neuen Größe. In einem Zug: ``estimate_write`` (Hauptfaden) und ``estimate_finish`` (ohne ``c4d``) —
+    das Plugin ruft die beiden getrennt, mit dem zweiten Teil im Hintergrund (RTX-C4D-013).
     """
-    prepared = prepare(doc, kind, materials=materials)
-    byte_size = None
-    problem = None
-    folder = None
-    try:
-        if prepared.triangles == 0:
-            problem = "keine sichtbare Geometrie"
-        elif prepared.triangles > MAX_TRIANGLES:
-            problem = "zu viele Dreiecke für einen Export"
-        else:
-            folder = tempfile.mkdtemp(prefix="rendertaxi-zaehlen-")
-            target = os.path.join(folder, "scene.glb")
-            try:
-                _save(prepared.document, target)
-                glbmaterials.apply_material_rule(target, materials=materials, merge=merge, scale_image=scale_image,
-                                                 material_names=prepared.material_names)
-                byte_size = os.path.getsize(target)
-            except Exception as error:  # noqa: BLE001 — die Zählung gilt trotzdem, nur ohne Größe, mit Grund
-                log_exception("Dateigröße des Modells nicht messbar", error)
-                problem = "Probeexport fehlgeschlagen" if isinstance(error, (ExportError, OSError)) \
-                    else f"Probeexport fehlgeschlagen ({type(error).__name__})"
-    finally:
-        c4d.documents.KillDocument(prepared.document)
-        if folder is not None:
-            shutil.rmtree(folder, ignore_errors=True)
-    log(f"Modell gezählt: {prepared.objects} Objekte, {prepared.triangles} Dreiecke, "
-        f"{'—' if byte_size is None else byte_size} Bytes{f' ({problem})' if problem else ''}")
-    return Estimate(prepared.objects, prepared.triangles, byte_size, problem)
+    return estimate_finish(estimate_write(doc, kind, materials), materials, merge, scale_image)
 
 
 # --------------------------------------------------------------------------
@@ -972,18 +1034,27 @@ class Model:
     exporter_scale: float  # gemessen: GLB-Einheiten je Einheit des Dokuments, vor der Korrektur
 
 
-def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=(),
-                 materials: bool = True, merge: str = MERGE_BY_MATERIAL) -> Model:
-    """Die sichtbaren Objekte, die Kamera der Renderansicht und die gewählten Kameras als GLB nach
-    ``directory/model/scene.glb`` — geprüft, in Metern.
+@dataclass
+class Written:
+    """Die geschriebene GLB und was ``finish_model`` ohne ``c4d`` über sie wissen muss (Einheiten des Dokuments)."""
 
-    ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). ``extra_cameras``: die
-    Schlüssel weiterer Kameras (``scene_cameras``). ``materials`` und ``merge``: die Materialregel
-    (``capture-manifest.md`` 11.6) — „ohne Materialien“ und „nach Material“ oder „Objekte behalten“; sie läuft auf
-    der exportierten Datei, nach Maßstab und Kameras. Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen
-    tragen keinen Pfad.
-    """
+    target: str
+    meters: float
+    triangles: int
+    low: list
+    high: list
+    cameras: int
+    lenses: dict
+    material_names: dict
+
+
+def write_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=(),
+                materials: bool = True, steps=NO_PHASES) -> Written:
+    """Der Teil des Exports mit ``c4d``: polygonisieren (``Polygonize``) und die GLB schreiben (``SaveDocument``) —
+    **im Hauptfaden**, blockierend; jede Phase ist vorher angekündigt (RTX-C4D-013). Die Datei liegt danach unter
+    ``directory/model/scene.glb``, noch ohne Maßstab, extras und Materialregel."""
     meters = meters_per_unit(doc)
+    steps.begin(ph.POLYGONIZE, 10, blocking=True)
     prepared = prepare(doc, kind, size, extra_cameras, materials)
     try:
         if prepared.objects == 0 or prepared.triangles == 0:
@@ -993,9 +1064,22 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
                               f"{MAX_TRIANGLES:,} an.".replace(",", " "))
         target = os.path.join(directory, *MODEL_PATH.split("/"))
         os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+        steps.begin(ph.WRITE_GLB, 30, blocking=True)
         _save(prepared.document, target)
     finally:
         c4d.documents.KillDocument(prepared.document)
+        steps.end()
+    return Written(target, meters, prepared.triangles, prepared.low, prepared.high, prepared.cameras,
+                   dict(prepared.lenses), dict(prepared.material_names))
+
+
+def finish_model(written: Written, materials: bool = True, merge: str = MERGE_BY_MATERIAL, scale_image=None,
+                 steps=NO_PHASES) -> Model:
+    """Der Teil des Exports **ohne** ``c4d`` — darf im Hintergrundfaden laufen (RTX-C4D-013, Faden-Regel ADR 0035):
+    die GLB prüfen, auf Meter setzen, Objektiv und Shift der Kameras eintragen, die Materialregel anwenden
+    (Zusammenführen, Texturen verkleinern) und die Prüfsumme bilden. Nur ``scale_image`` braucht ``c4d``
+    (``BaseBitmap``); der Aufrufer reicht es in den Hauptfaden."""
+    target = written.target
     try:
         document = glb.read_glb_json(target)
         triangles = glb.glb_triangles(document)
@@ -1009,24 +1093,28 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
     if triangles > MAX_TRIANGLES:
         raise ExportError(f"Das Modell hat {triangles:,} Dreiecke; der Server nimmt höchstens "
                           f"{MAX_TRIANGLES:,} an.".replace(",", " "))
-    factor = exporter_scale(prepared.low, prepared.high, *bounds)
+    meters = written.meters
+    factor = exporter_scale(written.low, written.high, *bounds)
     correction = meters / factor
     if abs(correction - 1.0) > SCALE_TOLERANCE:
         glb.scale_scene(target, correction)
     try:
-        described = write_camera_extras(target, prepared.lenses) if prepared.cameras else 0
+        described = write_camera_extras(target, written.lenses) if written.cameras else 0
     except Exception:  # noqa: BLE001 — die Datei ist nicht vertrauenswürdig: ohne extras lädt sie wie bisher
         described = 0  # (Shift 0, Objektiv aus yfov); die Aufnahme bricht nie daran ab
+    steps.begin(ph.MATERIALS, 50)
     try:
         report = glbmaterials.apply_material_rule(target, materials=materials, merge=merge, scale_image=scale_image,
-                                                  material_names=prepared.material_names)
+                                                  material_names=written.material_names)
     except glb.GlbError as error:
         raise ExportError(str(error)) from None
+    steps.begin(ph.CHECKSUM, 80)
     sha, size = mf.sha256_file(target)
+    steps.end()
     scaled = (f"Maßstab des Exporters {factor:g} je Einheit gemessen, auf Meter gesetzt ({correction:g})"
               if abs(correction - 1.0) > SCALE_TOLERANCE else "Maßstab des Exporters in Metern gemessen")
-    cameras = {0: "ohne Kameras", 1: "1 Kamera"}.get(prepared.cameras, f"{prepared.cameras} Kameras")
-    if prepared.cameras:
+    cameras = {0: "ohne Kameras", 1: "1 Kamera"}.get(written.cameras, f"{written.cameras} Kameras")
+    if written.cameras:
         cameras += f", davon {described} mit Objektiv und Shift (extras)"
     note = (f"glTF 2.0 binär aus dem glTF-Exporter von Cinema 4D (Flip Z): sichtbare Objekte polygonisiert, "
             f"Weltkoordinaten, Normalen wie in Cinema 4D, ohne Animation; {glbmaterials.report_note(report, materials)}; "
@@ -1034,6 +1122,22 @@ def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = 
     file = mf.CaptureFile(role="model", path=MODEL_PATH, media_type=mf.MODEL_MEDIA_TYPE, image=None,
                           note=note, byte_size=size, sha256=sha)
     return Model(file, geometry_dict(meters), meters, triangles, factor)
+
+
+def export_model(doc, kind: str, directory: str, size: tuple[int, int] | None = None, extra_cameras=(),
+                 materials: bool = True, merge: str = MERGE_BY_MATERIAL) -> Model:
+    """Die sichtbaren Objekte, die Kamera der Renderansicht und die gewählten Kameras als GLB nach
+    ``directory/model/scene.glb`` — geprüft, in Metern.
+
+    ``size``: die Maße des aufgenommenen Bildes (Seitenverhältnis der Kameras in der Datei). ``extra_cameras``: die
+    Schlüssel weiterer Kameras (``scene_cameras``). ``materials`` und ``merge``: die Materialregel
+    (``capture-manifest.md`` 11.6) — „ohne Materialien“ und „nach Material“ oder „Objekte behalten“; sie läuft auf
+    der exportierten Datei, nach Maßstab und Kameras. Die Datei bleibt im Capture-Verzeichnis (0700); Meldungen
+    tragen keinen Pfad. In einem Zug: ``write_model`` (Hauptfaden) und ``finish_model`` (ohne ``c4d``) — das Plugin
+    ruft die beiden getrennt, mit dem zweiten Teil im Hintergrund (RTX-C4D-013).
+    """
+    written = write_model(doc, kind, directory, size, extra_cameras, materials)
+    return finish_model(written, materials, merge, scale_image)
 
 
 def scale_image(data: bytes, mime: str, factor: float):

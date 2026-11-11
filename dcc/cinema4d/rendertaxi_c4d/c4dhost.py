@@ -1,6 +1,8 @@
 """Die Brücke vom Controller zu Cinema 4D — Nutzerordner, Dokument, Aufnahme, Statusleiste.
 
-Alles hier läuft im Hauptfaden. Die Anmeldung liegt im Einstellungsordner des
+Alles hier läuft im Hauptfaden — außer ``model_estimate_finish`` und ``finish_model``: sie fassen ``c4d`` nicht an
+und laufen im Hintergrundfaden (RTX-C4D-013); was dort doch ``c4d`` braucht (``scale_image``), reicht der Controller
+in den Hauptfaden. Die Anmeldung liegt im Einstellungsordner des
 Nutzers (``c4d.storage.GeGetC4DPath(c4d.C4D_PATH_PREFS)``), Unterordner
 ``rendertaxi``, Dateien mit Modus 0600 — nie im Dokument (ADR 0035).
 """
@@ -132,24 +134,51 @@ class Cinema4DAdapter:
 
     def model_estimate(self, kind: str, materials: bool = True,
                        merge: str = export.MERGE_BY_MATERIAL) -> export.Estimate:
+        """Die Zählung in einem Zug (Messskripte); das Fenster nimmt ``model_estimate_write`` und ``…_finish``."""
         return export.estimate(capture.active_document(), kind, materials, merge)
+
+    def model_estimate_write(self, kind: str, materials: bool, steps) -> export.Probe:
+        """Polygonisieren und Probeexport — Hauptfaden, blockierend, jede Phase vorher angekündigt."""
+        return export.estimate_write(capture.active_document(), kind, materials, steps)
+
+    def model_estimate_finish(self, probe: export.Probe, materials: bool, merge: str, scale_image,
+                              steps) -> export.Estimate:
+        """Materialregel und Größe des Probeexports — **ohne** ``c4d``, im Hintergrundfaden."""
+        return export.estimate_finish(probe, materials, merge, scale_image, steps)
+
+    def scale_image(self, data: bytes, mime: str, factor: float):
+        """Eine Textur verkleinern (``BaseBitmap``) — nur im Hauptfaden."""
+        return export.scale_image(data, mime, factor)
 
     def camera_problem(self, size: tuple[int, int], lens_and_shift: bool = False) -> str | None:
         return export.camera_problem(capture.active_document(), size, lens_and_shift)
 
-    def export_model(self, kind: str, directory: str, size: tuple[int, int], progress, lens_and_shift: bool = False,
-                     extra_cameras=(), materials: bool = True, merge: str = export.MERGE_BY_MATERIAL):
-        """``(Datei, geometry, camera)`` — GLB der sichtbaren Objekte mit der Kamera der Renderansicht und den
-        gewählten weiteren Kameras, und die Kamera für ein Bild ``size``.
+    def write_model(self, kind: str, directory: str, size: tuple[int, int], steps, lens_and_shift: bool = False,
+                    extra_cameras=(), materials: bool = True):
+        """``(written, camera)`` — die GLB der sichtbaren Objekte mit der Kamera der Renderansicht und den gewählten
+        weiteren Kameras, noch ohne Materialregel und Prüfsumme, und die Kamera für ein Bild ``size``. Hauptfaden.
 
-        ``lens_and_shift``: der Server setzt Manifest 1.4.0 um — die Kamera trägt Objektiv und Shift. ``materials``
-        und ``merge``: „ohne Materialien“ und die Zusammenführung (RTX-P-021).
+        ``lens_and_shift``: der Server setzt Manifest 1.4.0 um — die Kamera trägt Objektiv und Shift. ``materials``:
+        „ohne Materialien“ (RTX-P-021). Den Rest macht ``finish_model`` im Hintergrund (RTX-C4D-013).
         """
         doc = capture.active_document()
-        progress("Modell exportieren", 10)
-        model = export.export_model(doc, kind, directory, size, extra_cameras, materials, merge)
-        progress("Modell exportieren", 100)
-        return model.file, model.geometry, export.camera_block(doc, size, model.meters, lens_and_shift)
+        written = export.write_model(doc, kind, directory, size, extra_cameras, materials, steps)
+        return written, export.camera_block(doc, size, written.meters, lens_and_shift)
+
+    def finish_model(self, written, materials: bool, merge: str, scale_image, steps):
+        """``(Datei, geometry)`` — Maßstab, extras, Materialregel und Prüfsumme der GLB, **ohne** ``c4d``."""
+        model = export.finish_model(written, materials, merge, scale_image, steps)
+        return model.file, model.geometry
+
+    def update_ui(self) -> None:
+        """Das Fenster und die Statusleiste **jetzt** neu zeichnen, bevor eine blockierende Phase beginnt (RTX-C4D-013).
+
+        ``GeUpdateUI`` (``c4d.gui``) zeichnet die Oberfläche sofort; fehlt es in einer Fassung, bleibt es beim
+        nächsten Ereignis — kein Fehler.
+        """
+        update = getattr(gui, "GeUpdateUI", None) or getattr(c4d, "GeUpdateUI", None)
+        if update is not None:
+            update()
 
     def status(self, text: str, percent: int) -> None:
         """Fortschritt in der Statusleiste; ``percent < 0`` räumt sie."""

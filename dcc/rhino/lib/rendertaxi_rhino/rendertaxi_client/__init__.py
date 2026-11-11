@@ -14,6 +14,7 @@ Module:
 * ``ways``      Bildweg und Modellweg: was gesendet wird, Rückfall, Schritte und Ergebnis je Weg
 * ``store``     Anmeldung (0600), angefangene Übernahmen, Einstellungen
 * ``log``       Protokoll ohne Token, Pfade und Namen
+* ``phases``    benannte Phasen einer langen Arbeit: vorher angekündigt, Laufzeit im Protokoll (RTX-C4D-013)
 * ``glb``       exportierte GLB lesen: Dreiecke wie der Server, Hülle, Maßstab auf Meter setzen
 * ``model_import`` Rückweg: Exporte der Plattform listen, Kamera zurückrechnen, Bezug lesen (RTX-B-005)
 * ``schema/``   Kopie der drei Schemas aus ``integrations/_shared/contracts/v1``

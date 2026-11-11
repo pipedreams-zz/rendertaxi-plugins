@@ -9,7 +9,8 @@
   Vorgangsschlüssel und die Dateien einer angefangenen Übernahme, damit sie
   einen Neustart überlebt; dazu der zuletzt gewählte Blickpunkt je Dokument.
 * **Einstellungen** (``settings.json``) für Hosts ohne eigene
-  Einstellungsablage (Cinema 4D): Serveradresse, Gerätename, Debug-Schalter.
+  Einstellungsablage (Cinema 4D, Rhino): Serveradresse, Gerätename, Debug-Schalter —
+  nur, was von der Vorgabe abweicht (RTX-C4D-013).
 
 **Ein gemerkter Zustand darf das Laden nie verhindern.** Jede Datei hier wird
 so gelesen, dass eine kaputte, fremde oder fehlende Datei zum leeren Zustand
@@ -175,12 +176,32 @@ class TransferStore:
         self._save(data)
 
 
+# Die alte Vorgabe der Serveradresse (bis RTX-INFRA-031, 14.10.2026). Bis 0.8.1 schrieb ``SettingsStore.save`` bei
+# jedem Merken **alle** Schlüssel zurück, auch die Vorgabe — so steht sie in vielen ``settings.json`` fest, und ein
+# Plugin folgt keiner Umleitung (RTX-C4D-013). Nur genau diese eine Adresse wird umgeschrieben; jede andere
+# gespeicherte Adresse bleibt, wie sie ist.
+RETIRED_SERVER_URL = "https://dev.rendertaxi.ai"
+SERVER_KEY = "serverUrl"
+
+
+def is_retired_server(value) -> bool:
+    """Ist ``value`` die alte Vorgabe (mit oder ohne Schrägstrich am Ende, ohne Rücksicht auf Leerraum)?"""
+    return isinstance(value, str) and value.strip().rstrip("/") == RETIRED_SERVER_URL
+
+
 class SettingsStore:
     """Einstellungen mit festen Vorgaben — ein fremder oder kaputter Wert fällt auf die Vorgabe.
 
-    Nur für Hosts ohne eigene Einstellungsablage (Cinema 4D). Nimmt nur die
+    Nur für Hosts ohne eigene Einstellungsablage (Cinema 4D, Rhino). Nimmt nur die
     Schlüssel der Vorgaben an, und nur mit deren Typ: ein Token hat hier
     keinen Platz.
+
+    **In der Datei steht nur, was vom Vorgabewert abweicht** (RTX-C4D-013): ``save``
+    schreibt die ausdrücklich gesetzten Schlüssel; ein Wert gleich der Vorgabe
+    wird nicht gespeichert, damit eine spätere neue Vorgabe greift. Die alte
+    Vorgabe der Serveradresse (``RETIRED_SERVER_URL``) gilt beim Laden als nicht
+    gesetzt; ``retire_old_server`` entfernt sie aus der Datei und sagt, ob sie
+    dort stand.
     """
 
     FILE = "settings.json"
@@ -189,23 +210,58 @@ class SettingsStore:
         self.path = os.path.join(directory, self.FILE)
         self.defaults = dict(defaults)
 
-    def load(self) -> dict:
+    def _stored(self) -> dict:
+        """Was in der Datei steht — nur bekannte Schlüssel mit dem Typ der Vorgabe, ohne die alte Serveradresse."""
         stored = read_json(self.path).get("settings")
         stored = stored if isinstance(stored, dict) else {}
-        values = dict(self.defaults)
+        kept = {}
         for key, default in self.defaults.items():
             value = stored.get(key)
-            if type(value) is type(default):
-                values[key] = value
+            if type(value) is not type(default):
+                continue
+            if value == default or (key == SERVER_KEY and is_retired_server(value)):
+                continue  # eine Vorgabe (auch eine von 0.8.1 mitgeschriebene) gilt ohnehin
+            kept[key] = value
+        return kept
+
+    def load(self) -> dict:
+        values = dict(self.defaults)
+        values.update(self._stored())
         return values
 
     def save(self, values: dict) -> dict:
-        merged = self.load()
+        stored = self._stored()
         for key, default in self.defaults.items():
-            if key in values and type(values[key]) is type(default):
-                merged[key] = values[key]
-        write_json_private(self.path, {"version": 1, "settings": merged})
+            if key not in values or type(values[key]) is not type(default):
+                continue
+            if values[key] == default or (key == SERVER_KEY and is_retired_server(values[key])):
+                stored.pop(key, None)
+            else:
+                stored[key] = values[key]
+        write_json_private(self.path, {"version": 1, "settings": stored})
+        merged = dict(self.defaults)
+        merged.update(stored)
         return merged
+
+    def retire_old_server(self) -> bool:
+        """Steht die alte Vorgabe der Serveradresse in der Datei? Dann heraus damit — ``True`` (einmal).
+
+        Danach gilt die Vorgabe des Plugins. Lässt sich die Datei nicht schreiben, gilt die Vorgabe trotzdem
+        (``load`` überspringt die alte Adresse), und die Antwort bleibt ``True``. Wirft nie.
+        """
+        try:
+            raw = read_json(self.path)
+            stored = raw.get("settings")
+            if SERVER_KEY not in self.defaults or not isinstance(stored, dict) \
+                    or not is_retired_server(stored.get(SERVER_KEY)):
+                return False
+            try:
+                write_json_private(self.path, {"version": 1, "settings": self._stored()})
+            except OSError:
+                pass
+            return True
+        except Exception:  # noqa: BLE001 — Regel: ein gemerkter Zustand verhindert nie das Laden
+            return False
 
 
 def remove_local_data(directory: str) -> list[str]:
