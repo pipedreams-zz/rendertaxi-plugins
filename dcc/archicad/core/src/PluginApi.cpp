@@ -929,7 +929,7 @@ Status PluginApiClient::Abort (const std::string& captureId, const std::string& 
 	return Status::Fail (ErrorFromResponse (response.Value ()));
 }
 
-UpdateHint UpdateHintOf (const HandshakeInfo& handshake)
+UpdateHint UpdateHintOf (const HandshakeInfo& handshake, const std::string& serverUrl)
 {
 	UpdateHint hint;
 	if (handshake.updateStatus != "update_available") return hint;
@@ -948,7 +948,12 @@ UpdateHint UpdateHintOf (const HandshakeInfo& handshake)
 	}
 	if (digits && dots == 2) hint.version = version;
 	hint.text = hint.version.empty () ? "Eine neue Version ist verfügbar" : "Neue Version " + hint.version + " verfügbar";
-	if (handshake.updateUrl.rfind ("https://", 0) == 0) hint.url = handshake.updateUrl;
+	if (handshake.updateUrl.rfind ("https://", 0) == 0) {
+		hint.url = handshake.updateUrl;
+	} else if (!serverUrl.empty () && PluginApiClient::IsTokenSafeBaseUrl (serverUrl)) {
+		// RTX-P-025: die Seite „Plugins“ des verbundenen Servers, mit der Karte von Archicad.
+		hint.url = TrimTrailingSlash (serverUrl) + "/plugins#archicad";
+	}
 	return hint;
 }
 

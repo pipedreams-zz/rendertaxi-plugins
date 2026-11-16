@@ -255,6 +255,22 @@ RTX_TEST (UpdateHinweisNenntFassungUndLinkUndBlockiertNicht)
 		RTX_CHECK (hint.show && hint.url.empty () && hint.version.empty ());
 	}
 	{
+		// RTX-P-025: ohne brauchbare Adresse vom Server die Seite „Plugins“ des verbundenen Servers.
+		HandshakeInfo older;
+		older.updateStatus = "update_available";
+		RTX_CHECK_EQ (UpdateHintOf (older, "https://app.rendertaxi.ai/").url,
+					  std::string ("https://app.rendertaxi.ai/plugins#archicad"));
+		RTX_CHECK_EQ (UpdateHintOf (older, "http://127.0.0.1:4100").url,
+					  std::string ("http://127.0.0.1:4100/plugins#archicad"));
+		RTX_CHECK (UpdateHintOf (older, "http://evil.example").url.empty ());
+		RTX_CHECK (UpdateHintOf (older).url.empty ());
+		older.updateUrl = "https://example.com/dl";
+		RTX_CHECK_EQ (UpdateHintOf (older, "https://app.rendertaxi.ai").url, std::string ("https://example.com/dl"));
+		older.updateUrl = "http://evil.example/x";
+		RTX_CHECK_EQ (UpdateHintOf (older, "https://app.rendertaxi.ai").url,
+					  std::string ("https://app.rendertaxi.ai/plugins#archicad"));
+	}
+	{
 		const auto [info, hint] = hintFor ("update_required", "https://app.rendertaxi.ai/plugins", "1.3.2");
 		RTX_CHECK (info.BlocksTransfer ());
 		RTX_CHECK (!hint.show);

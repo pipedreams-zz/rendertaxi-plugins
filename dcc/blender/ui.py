@@ -259,7 +259,7 @@ def _connected(job: Job, api: ApiClient, handshake: dict, identity: dict) -> Non
         STATE.identity = identity
         STATE.handshake = handshake
         STATE.message = ""
-        NOTICE.offer(handshake)
+        NOTICE.offer(handshake, api.server_url)
 
     job.post(apply)
     _load_targets(job, api)

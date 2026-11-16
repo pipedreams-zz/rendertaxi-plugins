@@ -14,6 +14,13 @@ Aktivierung entstehen auf der Plattform, nicht im Add-on.
 
 ## Änderungen
 
+### 1.4.2 (Knopf „Zur Download-Seite“, RTX-P-025)
+
+- **Der Hinweis „Neue Version verfügbar“ hat immer den Knopf „Zur Download-Seite“** — vorher nur „Ausblenden“, weil
+  der Server keine Adresse nannte. Der Server nennt jetzt die Seite „Plugins“ (oder die Adresse aus dem Admin);
+  nennt er keine, öffnet der Knopf `<Serveradresse>/plugins#archicad`. Die Seite zeigt die Karte dieses Programms.
+  Der Knopf öffnet den Browser und lädt nichts selbst herunter; „Ausblenden“ bleibt.
+
 ### 1.4.1 (Feldfehler, RTX-P-023)
 
 - **Vergebener Projektname:** Scheitert „Projekt anlegen …“ an einem Namen, den ein aktives Projekt schon trägt, zeigt das Plugin den Satz des Servers („In dieser Organisation gibt es bereits ein Projekt mit dem Namen …“) statt „Die Anfrage ist ungültig.“ — `PluginApiClient::ErrorFromResponse` nimmt die Sätze aus `fieldErrors`, die Kurzform `(name: already_taken)` nur noch, wenn kein Satz da ist. Ein Projekt im Papierkorb sperrt den Namen nicht mehr (Migration 0103).
@@ -39,7 +46,7 @@ Aktivierung entstehen auf der Plattform, nicht im Add-on.
 ### 1.3.1 (Update-Hinweis, RTX-P-022)
 
 - **Neue Version verfügbar:** Meldet der Server `update_available`, steht eine ruhige Zeile „Neue Version … verfügbar“
-  im Bereich „Verbindung“ der Palette, mit „Zur Downloadseite“ und „Ausblenden“; alles darunter rückt um eine Zeile nach unten. Das Plugin arbeitet normal weiter; die Zeile bleibt für diese Sitzung ausgeblendet, bis eine neuere
+  im Bereich „Verbindung“ der Palette, mit „Zur Download-Seite“ und „Ausblenden“; alles darunter rückt um eine Zeile nach unten. Das Plugin arbeitet normal weiter; die Zeile bleibt für diese Sitzung ausgeblendet, bis eine neuere
   Fassung erscheint. `update_required` blockiert wie bisher. Das Plugin lädt nichts selbst herunter.
   Regel: [`docs/api/plugin-api-v1.md`, Abschnitt 4](../../../docs/api/plugin-api-v1.md).
 

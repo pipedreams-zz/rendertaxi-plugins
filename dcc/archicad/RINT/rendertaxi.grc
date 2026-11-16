@@ -189,10 +189,10 @@
 
 /* **Neue Version** (RTX-P-022, #545) — eine ruhige Zeile im Bereich
    „Verbindung“, nur bei `update_available`: Fassung, Link auf die
-   Downloadseite, für diese Sitzung ausblendbar. Alles darunter rückt um 30
+   Download-Seite, für diese Sitzung ausblendbar. Alles darunter rückt um 30
    nach unten. */
 /* [ 54] */ LeftText            20  124  190   20  SmallPlain  vCenter  ""
-/* [ 55] */ Button             214  122  120   24  SmallPlain  "Zur Downloadseite"
+/* [ 55] */ Button             214  122  120   24  SmallPlain  "Zur Download-Seite"
 /* [ 56] */ Button             338  122   70   24  SmallPlain  "Ausblenden"
 }
 

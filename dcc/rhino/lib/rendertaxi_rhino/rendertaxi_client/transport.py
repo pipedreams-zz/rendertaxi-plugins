@@ -585,18 +585,46 @@ def handshake_problem(handshake: dict) -> str | None:
 #: Die Hinweiszeile bei ``update_available`` (RTX-P-022) — ruhig, ohne Alarmton (``docs/design/gui-shell/texte/``).
 UPDATE_HINT = "Neue Version {version} verfügbar"
 UPDATE_HINT_WITHOUT_VERSION = "Eine neue Version ist verfügbar"
-#: Die Beschriftung des Links auf ``update.url`` und des Knopfs, der die Zeile für diese Sitzung ausblendet.
-UPDATE_LINK = "Zur Downloadseite"
+#: Die Beschriftung des Knopfs auf die Download-Seite und des Knopfs, der die Zeile für diese Sitzung ausblendet;
+#: in allen vier Hosts gleich (RTX-P-025, Archicad: ``RINT/rendertaxi.grc``).
+UPDATE_LINK = "Zur Download-Seite"
 UPDATE_DISMISS = "Ausblenden"
+#: Die Seite „Plugins“ der Plattform — der Rückfall, wenn der Server keine Adresse nennt (RTX-P-025).
+DOWNLOAD_PAGE_PATH = "/plugins"
+_HOST_KEY = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-def handshake_hint(handshake: dict | None) -> dict | None:
+def fallback_download_url(server_url: str | None, host_key: str | None = None) -> str | None:
+    """``<Serveradresse>/plugins#<Host>`` — oder ``None`` ohne brauchbare Serveradresse (RTX-P-025).
+
+    Ein Server vor RTX-P-025 nennt in ``update.url`` keine Adresse; der Knopf „Zur Download-Seite“ führt dann
+    auf die Seite „Plugins“ des Servers, mit dem das Plugin verbunden ist. Die Serveradresse durchläuft dieselbe
+    Prüfung wie beim Verbinden (TLS, Klartext nur für localhost).
+    """
+    try:
+        server = normalize_server_url(server_url or "")
+    except ValueError:
+        return None
+    anchor = f"#{host_key}" if host_key and _HOST_KEY.match(host_key) else ""
+    return f"{server}{DOWNLOAD_PAGE_PATH}{anchor}"
+
+
+def _host_key() -> str | None:
+    try:
+        return current().key
+    except RuntimeError:
+        return None
+
+
+def handshake_hint(handshake: dict | None, server_url: str | None = None) -> dict | None:
     """Die Hinweiszeile bei ``update_available`` — ``{"text", "url", "version"}`` oder ``None`` (RTX-P-022).
 
     Eine Regel für alle Python-Hosts, das Archicad-Add-on spiegelt sie in C++: ``update_required`` blockiert
     weiter über ``handshake_problem`` und ist hier kein Hinweis; ``current`` und ``unknown`` geben nichts.
     ``update.latestVersion`` fehlt bei einem Server vor RTX-P-022 — dann steht der Satz ohne Zahl. Ein Link
-    nur auf ``https``: das Plugin öffnet keine fremde Adresse aus einer kaputten Antwort.
+    aus dem Handshake nur auf ``https``: das Plugin öffnet keine fremde Adresse aus einer kaputten Antwort.
+    Fehlt er, gilt ``<server_url>/plugins#<Host>`` (RTX-P-025) — der Knopf ist damit immer da, sobald das
+    Plugin mit einem Server verbunden ist.
     """
     update = (handshake or {}).get("update") or {}
     if update.get("status") != "update_available":
@@ -605,6 +633,8 @@ def handshake_hint(handshake: dict | None) -> dict | None:
     version = version if isinstance(version, str) and _VERSION.match(version) else None
     url = update.get("url")
     url = url if isinstance(url, str) and url.startswith("https://") else None
+    if url is None:
+        url = fallback_download_url(server_url, _host_key())
     text = UPDATE_HINT.format(version=version) if version else UPDATE_HINT_WITHOUT_VERSION
     return {"text": text, "url": url, "version": version}
 
@@ -614,14 +644,15 @@ class UpdateNotice:
 
     Jeder Handshake liefert den Hinweis neu; ``offer`` zeigt ihn, bis der Nutzer ihn ausblendet — dann bleibt
     er für dieselbe Version bis zum Neustart des Hosts weg. Eine neuere Version zeigt ihn wieder.
+    ``server_url`` ist die Adresse, mit der der Handshake lief — der Rückfall des Links (RTX-P-025).
     """
 
     def __init__(self) -> None:
         self.hint: dict | None = None
         self._dismissed: str | None = None
 
-    def offer(self, handshake: dict | None) -> dict | None:
-        hint = handshake_hint(handshake)
+    def offer(self, handshake: dict | None, server_url: str | None = None) -> dict | None:
+        hint = handshake_hint(handshake, server_url)
         key = (hint or {}).get("version") or ""
         self.hint = None if hint is None or (self._dismissed is not None and self._dismissed == key) else hint
         return self.hint

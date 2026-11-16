@@ -31,7 +31,7 @@ from .rendertaxi_client import hostversion
 
 PLUGIN_GUID = "b47606d7-0da9-4f5b-86c4-43f5b32f1865"
 PANEL_GUID = "5d0c8a3e-2f71-4b9a-9c6e-7a1f3b2d4e60"
-PLUGIN_VERSION = "0.5.1"
+PLUGIN_VERSION = "0.5.2"
 TESTED_VERSIONS = (8,)
 HOST_MAJOR = 8
 

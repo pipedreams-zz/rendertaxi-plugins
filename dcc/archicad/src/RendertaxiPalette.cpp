@@ -1593,7 +1593,7 @@ void RendertaxiPalette::StartSignIn ()
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
-			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value (), api->BaseUrl ());
 			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 			shared.dirty = true;
@@ -1726,7 +1726,7 @@ void RendertaxiPalette::RefreshProjectList ()
 		std::lock_guard<std::mutex> guard (shared.mutex);
 		if (handshake) {
 			shared.canvasDefault = handshake.Value ().canvasDefault;
-			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value (), api->BaseUrl ());
 			shared.highestMinor = rtx::HighestCaptureMinor (handshake.Value ());
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 		}
@@ -2520,7 +2520,7 @@ void RendertaxiPalette::StartCapture (CaptureSource source)
 		{
 			std::lock_guard<std::mutex> guard (shared.mutex);
 			shared.canvasDefault = handshake.Value ().canvasDefault;
-			shared.updateHint = rtx::UpdateHintOf (handshake.Value ());
+			shared.updateHint = rtx::UpdateHintOf (handshake.Value (), api->BaseUrl ());
 			shared.highestMinor = minor;
 			shared.maxGeometryBytes = handshake.Value ().limits.maxGeometryBytes;
 		}

@@ -126,6 +126,12 @@ struct HandshakeInfo {
  * `rendertaxi_client.transport.handshake_hint`: „Neue Version {latestVersion}
  * verfügbar“, ohne Fassung „Eine neue Version ist verfügbar“; ein Link nur auf
  * `https`. `update_required` ist kein Hinweis, er blockiert (`BlocksTransfer`).
+ *
+ * RTX-P-025: nennt der Server keine brauchbare Adresse, führt der Knopf
+ * „Zur Download-Seite“ auf `<serverUrl>/plugins#archicad` — dieselbe Regel wie
+ * `fallback_download_url` im Python-Client; die Serveradresse nur, wenn sie
+ * ein Token tragen dürfte (`IsTokenSafeBaseUrl`: https, Klartext nur an die
+ * Schleife). Ohne `serverUrl` bleibt die Adresse leer.
  */
 struct UpdateHint {
 	bool show = false;
@@ -134,7 +140,7 @@ struct UpdateHint {
 	std::string version;
 };
 
-UpdateHint UpdateHintOf (const HandshakeInfo& handshake);
+UpdateHint UpdateHintOf (const HandshakeInfo& handshake, const std::string& serverUrl = std::string ());
 
 /** Das Gerät, wie `auth/device` und `plugin/me` es führen (§5.1). */
 struct DeviceIdentity {

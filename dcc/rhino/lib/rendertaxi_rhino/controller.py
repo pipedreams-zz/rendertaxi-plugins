@@ -346,7 +346,7 @@ class Controller:
             self.state.identity = identity
             self.state.handshake = handshake
             self.state.message = ""
-            self.notice.offer(handshake)
+            self.notice.offer(handshake, api.server_url)
 
         job.post(apply)
         self._load_targets(job, api)
